@@ -28,6 +28,32 @@ function cleanAmdGpuName(raw) {
         .trim();
 }
 
+function cleanIntelGpuName(raw) {
+    return String(raw || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
+ * Intel Arc discrete / built-in Arc only — not plain UHD / Iris Xe / HD Graphics.
+ * Names often look like `Intel(R) Arc(TM) A770 Graphics`.
+ * @param {string} name
+ * @returns {boolean}
+ */
+function isIntelArcGpuName(name) {
+    const s = String(name || '');
+    if (!/intel/i.test(s)) return false;
+    if (/uhd\s*graphics|iris\s*(xe|plus)?|hd\s*graphics/i.test(s) && !/\barc\b/i.test(s)) {
+        return false;
+    }
+    // Strip (R)/(TM) noise so Arc A770 / Arc Graphics match cleanly.
+    const compact = s.replace(/\((?:R|TM|C)\)/gi, ' ').replace(/\s+/g, ' ');
+    if (/\barc\s*(a|b)?\d{3,4}\b/i.test(compact)) return true;
+    if (/\barc\s*graphics\b/i.test(compact)) return true;
+    if (/battlemage|alchemist|xe[\s-]?hpg|xe[\s-]?lpg/i.test(compact)) return true;
+    return false;
+}
+
 function resolveAmdRocmSuffix(gpuName) {
     if (/9060|9070|9000/i.test(gpuName)) return 'gfx120x_all';
     if (/7600|7700|7800|7900|7000/i.test(gpuName)) return 'gfx110x_all';
@@ -61,7 +87,15 @@ function buildFriendlyRecommendation(info) {
         return lines.join('\n');
     }
 
-    lines.push('未检测到 NVIDIA 或 AMD 独立显卡。');
+    if (info.vendor === 'intel' && info.detected) {
+        lines.push(`检测到 Intel Arc 显卡：${info.gpuName}`);
+        lines.push('本地大模型推荐安装 SYCL 运行时（也可改用 Vulkan）。');
+        lines.push('安装完成后，在参数里把「设备」选为「GPU（Intel · XPU）」即可加速 Qwen3 / SenseVoice / Demucs。');
+        lines.push('Whisper / CTranslate2 仍走 CPU。');
+        return lines.join('\n');
+    }
+
+    lines.push('未检测到 NVIDIA / AMD / Intel Arc 独立显卡。');
     lines.push('可以下载 CPU 版 TransWithAI 用处理器转写，或在「设备」里选择 Modal 云端推理。');
     return lines.join('\n');
 }
@@ -69,6 +103,8 @@ function buildFriendlyRecommendation(info) {
 function suggestedDeviceForInfo(info) {
     if (info?.vendor === 'nvidia' && info.detected) return 'cuda';
     if (info?.vendor === 'amd' && info.detected) return 'amd';
+    // Intel Arc：引擎听写 / Demucs 用 XPU PyTorch
+    if (info?.vendor === 'intel' && info.detected) return 'intel';
     return 'cpu';
 }
 
@@ -161,10 +197,53 @@ async function detectAmdGpu() {
     }
 }
 
+async function detectIntelGpu() {
+    try {
+        if (process.platform === 'win32') {
+            const lines = await listWindowsVideoControllers();
+            const intelRaw = lines.find((l) => isIntelArcGpuName(l) && !/microsoft\s*basic/i.test(l));
+            if (!intelRaw) return { vendor: 'intel', detected: false };
+            return withRecommendation({
+                vendor: 'intel',
+                detected: true,
+                gpuName: cleanIntelGpuName(intelRaw),
+            });
+        }
+        if (process.platform === 'linux') {
+            try {
+                const { stdout } = await execFileAsync('lspci', ['-nn'], {
+                    windowsHide: true,
+                    timeout: 8000,
+                });
+                const line = String(stdout || '')
+                    .split(/\r?\n/)
+                    .find((l) => /VGA|3D|Display/i.test(l) && isIntelArcGpuName(l));
+                if (!line) return { vendor: 'intel', detected: false };
+                const name = cleanIntelGpuName(line.replace(/^[^:]+:\s*/, ''));
+                return withRecommendation({
+                    vendor: 'intel',
+                    detected: true,
+                    gpuName: name || 'Intel Arc',
+                });
+            } catch {
+                return { vendor: 'intel', detected: false };
+            }
+        }
+        return { vendor: 'intel', detected: false };
+    } catch {
+        return { vendor: 'intel', detected: false };
+    }
+}
+
 async function detectGpuEnvironment() {
-    const [nvidia, amd] = await Promise.all([detectNvidiaCuda(), detectAmdGpu()]);
+    // Sequential with early return: avoids waiting on WMI Intel/AMD probes when
+    // nvidia-smi already found a discrete NVIDIA GPU (common dual-GPU laptops).
+    const nvidia = await detectNvidiaCuda();
     if (nvidia.detected) return nvidia;
+    const amd = await detectAmdGpu();
     if (amd.detected) return amd;
+    const intel = await detectIntelGpu();
+    if (intel.detected) return intel;
     return withRecommendation({
         vendor: 'cpu',
         detected: false,
@@ -175,6 +254,8 @@ module.exports = {
     detectGpuEnvironment,
     detectNvidiaCuda,
     detectAmdGpu,
+    detectIntelGpu,
+    isIntelArcGpuName,
     buildFriendlyRecommendation,
     suggestedDeviceForInfo,
     parseNvidiaGpuNames,

@@ -269,6 +269,7 @@
             if (wantsFilm && !getAdvancedEntitled()) {
                 // Clear stuck checks so save can proceed for free users after license expiry.
                 if (els.filmAudioEnhanceCheck) els.filmAudioEnhanceCheck.checked = false;
+                if (els.enhanceForVadOnlyCheck) els.enhanceForVadOnlyCheck.checked = false;
                 if (els.filmVadPresetCheck) els.filmVadPresetCheck.checked = false;
             }
             if (wantsSmart && !canUseSmartTranslateUi()) {
@@ -315,14 +316,37 @@
             }
         }
 
+        function liveEnvEl(id, cacheKey) {
+            const found = (typeof document !== 'undefined' ? document.getElementById(id) : null)
+                || els[cacheKey]
+                || null;
+            if (found && cacheKey) els[cacheKey] = found;
+            return found;
+        }
+
+        function applyNetworkStatusClass(el, kind, extra = '') {
+            if (!el) return;
+            const suffix = extra ? ` ${extra}` : '';
+            el.className = kind === 'ok'
+                ? `text-xs text-emerald-600 min-h-[1rem]${suffix}`
+                : kind === 'err'
+                    ? `text-xs text-red-600 min-h-[1rem]${suffix}`
+                    : kind === 'busy'
+                        ? `text-xs text-sky-600 min-h-[1rem]${suffix}`
+                        : `text-xs text-gray-500 min-h-[1rem]${suffix}`;
+        }
+
         function syncProxySettingsUi() {
-            const on = !!els.proxyEnabledCheck?.checked;
-            if (els.proxySettingsFields) {
-                els.proxySettingsFields.classList.toggle('opacity-50', !on);
-            }
-            if (els.proxyUrlInput) els.proxyUrlInput.disabled = !on;
-            if (els.proxyBypassInput) els.proxyBypassInput.disabled = !on;
-            if (els.proxyTestBtn) els.proxyTestBtn.disabled = false;
+            const enabledCheck = liveEnvEl('proxyEnabledCheck', 'proxyEnabledCheck');
+            const fields = liveEnvEl('proxySettingsFields', 'proxySettingsFields');
+            const urlInput = liveEnvEl('proxyUrlInput', 'proxyUrlInput');
+            const bypassInput = liveEnvEl('proxyBypassInput', 'proxyBypassInput');
+            const testBtn = liveEnvEl('proxyTestBtn', 'proxyTestBtn');
+            const on = !!enabledCheck?.checked;
+            if (fields) fields.classList.toggle('opacity-50', !on);
+            if (urlInput) urlInput.disabled = !on;
+            if (bypassInput) bypassInput.disabled = !on;
+            if (testBtn) testBtn.disabled = false;
         }
 
         function syncTransubStationSettingsUi() {
@@ -364,27 +388,17 @@
         }
 
         function setProxyTestStatus(text, kind = '') {
-            if (!els.proxyTestStatus) return;
-            els.proxyTestStatus.textContent = text || '';
-            els.proxyTestStatus.className = kind === 'ok'
-                ? 'text-xs text-emerald-600 min-h-[1rem]'
-                : kind === 'err'
-                    ? 'text-xs text-red-600 min-h-[1rem]'
-                    : kind === 'busy'
-                        ? 'text-xs text-sky-600 min-h-[1rem]'
-                        : 'text-xs text-gray-500 min-h-[1rem]';
+            const statusEl = liveEnvEl('proxyTestStatus', 'proxyTestStatus');
+            if (!statusEl) return;
+            statusEl.textContent = text || '';
+            applyNetworkStatusClass(statusEl, kind);
         }
 
         function setNetworkHfStatus(text, kind = '') {
-            if (!els.networkHfStatus) return;
-            els.networkHfStatus.textContent = text || '';
-            els.networkHfStatus.className = kind === 'ok'
-                ? 'text-xs text-emerald-600 min-h-[1rem]'
-                : kind === 'err'
-                    ? 'text-xs text-red-600 min-h-[1rem]'
-                    : kind === 'busy'
-                        ? 'text-xs text-sky-600 min-h-[1rem]'
-                        : 'text-xs text-gray-500 min-h-[1rem]';
+            const statusEl = liveEnvEl('networkHfStatus', 'networkHfStatus');
+            if (!statusEl) return;
+            statusEl.textContent = text || '';
+            applyNetworkStatusClass(statusEl, kind);
         }
 
         function setNetworkGithubMirrorStatus(text, kind = '') {
@@ -406,11 +420,10 @@
         }
 
         function readProxyOptionsFromForm() {
-
             return {
-                proxyEnabled: !!els.proxyEnabledCheck?.checked,
-                proxyUrl: els.proxyUrlInput?.value?.trim() || '',
-                proxyBypass: els.proxyBypassInput?.value?.trim()
+                proxyEnabled: !!liveEnvEl('proxyEnabledCheck', 'proxyEnabledCheck')?.checked,
+                proxyUrl: String(liveEnvEl('proxyUrlInput', 'proxyUrlInput')?.value || '').trim(),
+                proxyBypass: String(liveEnvEl('proxyBypassInput', 'proxyBypassInput')?.value || '').trim()
                     || 'localhost,127.0.0.1,::1,<local>',
             };
         }

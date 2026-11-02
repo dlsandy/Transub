@@ -136,29 +136,82 @@ function createAdvancedSmartTranslateFile(host = {}) {
             return { ok: false, error: result?.error || '智能翻译失败', code: result?.code, path: sourcePath };
         }
 
-        const nextCues = plan?.mergeRetranslateCues
-            ? plan.mergeRetranslateCues(doc.cues, result.cues || [], {
-                translatedIndexes: mtCues.map((c) => Number(c.index)),
-                restoreByIndex,
-                destCues,
-                isPro: !!(opts.isPro ?? nested.isPro),
-                lang: creditLang,
-                dualLineOrder: opts.dualLineOrder ?? nested.dualLineOrder,
-            })
-            : (() => {
-                const map = new Map((result.cues || []).map((u) => [Number(u.index), String(u.text ?? '')]));
-                return (doc.cues || []).map((c, i) => {
-                    const idx = Number.isInteger(Number(c.index)) ? Number(c.index) : i;
-                    if (restoreByIndex?.has?.(idx)) {
-                        return { ...c, text: restoreByIndex.get(idx) };
-                    }
-                    if (!map.has(idx)) return { ...c };
-                    return { ...c, text: map.get(idx) };
+        const replaceTimeline = !!(
+            result.replaceTimeline
+            || ((result.splitCount || 0) > 0
+                && Array.isArray(result.sourceCues)
+                && Array.isArray(result.cues)
+                && result.sourceCues.length === result.cues.length
+                && result.cues.length !== (doc.cues || []).length)
+        );
+
+        let nextCues;
+        let sourceWritten = null;
+        if (replaceTimeline) {
+            // Multi-speaker polish expanded JA+ZH — do not merge onto old indexes.
+            nextCues = (result.cues || []).map((c, i) => ({
+                index: i,
+                startMs: c.startMs,
+                endMs: c.endMs,
+                text: String(c.text ?? ''),
+            }));
+            const jaWritePath = asString(
+                opts.sourceJaPath
+                || opts.companionSourcePath
+                || nested.sourceJaPath
+                || nested.companionSourcePath
+                || (path.resolve(destPath) !== path.resolve(sourcePath) ? sourcePath : ''),
+                4096,
+            ).trim();
+            if (jaWritePath && Array.isArray(result.sourceCues) && result.sourceCues.length === nextCues.length) {
+                const jaCues = result.sourceCues.map((c, i) => ({
+                    index: i,
+                    startMs: c.startMs ?? nextCues[i]?.startMs,
+                    endMs: c.endMs ?? nextCues[i]?.endMs,
+                    text: String(c.text ?? c.sourceText ?? ''),
+                }));
+                sourceWritten = writeSubtitleDocument(jaWritePath, {
+                    format: doc.format,
+                    cues: jaCues,
                 });
-            })();
+                if (!sourceWritten?.ok) {
+                    return {
+                        ok: false,
+                        error: sourceWritten?.error || '写回原文字幕失败',
+                        path: jaWritePath,
+                    };
+                }
+            }
+        } else {
+            nextCues = plan?.mergeRetranslateCues
+                ? plan.mergeRetranslateCues(doc.cues, result.cues || [], {
+                    translatedIndexes: mtCues.map((c) => Number(c.index)),
+                    restoreByIndex,
+                    destCues,
+                    isPro: !!(opts.isPro ?? nested.isPro),
+                    lang: creditLang,
+                    dualLineOrder: opts.dualLineOrder ?? nested.dualLineOrder,
+                })
+                : (() => {
+                    const map = new Map((result.cues || []).map((u) => [Number(u.index), String(u.text ?? '')]));
+                    return (doc.cues || []).map((c, i) => {
+                        const idx = Number.isInteger(Number(c.index)) ? Number(c.index) : i;
+                        if (restoreByIndex?.has?.(idx)) {
+                            return { ...c, text: restoreByIndex.get(idx) };
+                        }
+                        if (!map.has(idx)) return { ...c };
+                        return { ...c, text: map.get(idx) };
+                    });
+                })();
+        }
         let changed = 0;
-        for (let i = 0; i < (doc.cues || []).length; i += 1) {
-            if (String(doc.cues[i]?.text ?? '') !== String(nextCues[i]?.text ?? '')) changed += 1;
+        if (replaceTimeline) {
+            changed = Math.abs((nextCues || []).length - (doc.cues || []).length)
+                || (nextCues || []).length;
+        } else {
+            for (let i = 0; i < (doc.cues || []).length; i += 1) {
+                if (String(doc.cues[i]?.text ?? '') !== String(nextCues[i]?.text ?? '')) changed += 1;
+            }
         }
 
         const written = writeSubtitleDocument(destPath, {
@@ -178,6 +231,9 @@ function createAdvancedSmartTranslateFile(host = {}) {
             stats: result.stats,
             via: result.via,
             llmSource: result.llmSource,
+            replaceTimeline,
+            splitCount: result.splitCount || 0,
+            sourcePath: sourceWritten?.ok ? (opts.sourceJaPath || opts.companionSourcePath || sourcePath) : undefined,
         };
     }
 

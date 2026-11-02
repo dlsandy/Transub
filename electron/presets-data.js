@@ -21,6 +21,9 @@ const PRESET_SKIP_KEYS = Object.freeze([
     'engineLlmMtModel',
     'glossaryMtEnabled',
     'sakuraNsfwPrompt',
+    // Settings-only: never bake into / apply from scene presets.
+    'filmAudioEnhance',
+    'enhanceForVadOnly',
 ]);
 
 /** Display order for settings optgroups and main-window preset tabs. */
@@ -48,23 +51,25 @@ const FILM_VAD = Object.freeze({
     hallucinationSilenceThreshold: 2,
 });
 
-/** Soft / anime dialogue timeline: Silero catalog VAD + TEN short frames. */
+/**
+ * Soft / anime dialogue timeline (no-Demucs mix validated on DLDSS-559).
+ * FireRed islands: speech pad 120ms; threshold honored 1:1 in engine.
+ */
 const ANIME_VAD = Object.freeze({
-    engineVadModel: 'silero-vad',
+    engineVadModel: 'firered-vad',
     vadEnabled: true,
     vadSensitive: false,
     vadAggressive: false,
-    vadThreshold: 0.45,
-    vadMinSpeechDurationMs: 180,
-    vadMinSilenceDurationMs: 500,
-    vadSpeechPadMs: 80,
-    vadMaxSingleSegmentMs: 5000,
+    vadThreshold: 0.30,
+    vadMinSpeechDurationMs: 120,
+    vadMinSilenceDurationMs: 280,
+    vadSpeechPadMs: 120,
+    vadMaxSingleSegmentMs: 4000,
     hallucinationSilenceThreshold: 0,
     timingAlign: true,
-    timingAlignModel: 'ten',
+    timingAlignModel: 'firered',
     beamSize: 1,
     audioLightDenoise: false,
-    filmAudioEnhance: false,
     filmVadPreset: false,
     postBatchViewingPunctMode: 'clear',
     postBatchInterjectionMode: 'clear',
@@ -74,22 +79,29 @@ const ANIME_VAD = Object.freeze({
 });
 
 /**
- * Soft AV FireRed timing v3 (after MIKR-116 v1/v2):
- * v1 (0.38/7s) spoken~69%, ASR 2594 cues, heavy cleanup.
- * v2 (0.42/6s) spoken~67%, ASR still 2594 — threshold nudge barely moved ASR.
- * v3: keep FireRed detector, mirror TEN island geometry (proven ~728 ZH):
- * threshold 0.45, max 5s, pad 80, minSilence 500, minSpeech 220
- * (minSpeech slightly above TEN 180 to cut FireRed "short segment" junk).
+ * Soft AV FireRed timing v5 (shared with ANIME_VAD; kept for call-site clarity).
  */
 const ANIME_FIRERED_VAD = Object.freeze({
     ...ANIME_VAD,
     engineVadModel: 'firered-vad',
     timingAlignModel: 'firered',
-    vadThreshold: 0.45,
-    vadMinSpeechDurationMs: 220,
-    vadMinSilenceDurationMs: 500,
-    vadSpeechPadMs: 80,
-    vadMaxSingleSegmentMs: 5000,
+    vadThreshold: 0.30,
+    vadMinSpeechDurationMs: 120,
+    vadMinSilenceDurationMs: 280,
+    vadSpeechPadMs: 120,
+    vadMaxSingleSegmentMs: 4000,
+});
+
+const ANIME_TEN_VAD = Object.freeze({
+    ...ANIME_VAD,
+    engineVadModel: 'ten-vad',
+    timingAlignModel: 'ten',
+    // Soft-AV TEN: 0.35 balances quiet recall vs pad/noise; 0.30 still over-recalls into pad.
+    vadThreshold: 0.35,
+    vadMinSpeechDurationMs: 120,
+    vadMinSilenceDurationMs: 280,
+    vadSpeechPadMs: 120,
+    vadMaxSingleSegmentMs: 4000,
 });
 
 const ANIME_WHISPER_FIRERED_OPTIONS = Object.freeze({
@@ -100,13 +112,34 @@ const ANIME_WHISPER_FIRERED_OPTIONS = Object.freeze({
     ...ANIME_FIRERED_VAD,
 });
 
-/** Soft-AV Qwen3 Galgame + TEN island timing (recommended Qwen pairing). */
+/**
+ * Soft-AV Qwen3 Galgame + TEN island timing (recalls soft self-intro that FireRed drops).
+ */
 const QWEN_GALGAME_TEN_OPTIONS = Object.freeze({
     device: 'cuda',
     language: 'ja',
     engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame',
     contentProfile: 'av_soft',
-    ...ANIME_VAD,
+    ...ANIME_TEN_VAD,
+    asrSecondOpinion: 'auto',
+});
+
+/**
+ * Soft-AV Qwen3 Galgame + TEN islands + Qwen ForcedAligner word timestamps.
+ * Keeps TEN island geometry; ForcedAligner adds word/char timing (~+1GB VRAM).
+ * Requires downloaded `qwen3-forced-aligner-0.6b`.
+ * (Id keeps `firered-align` for stable preset selection.)
+ */
+const QWEN_GALGAME_FIRERED_ALIGN_OPTIONS = Object.freeze({
+    device: 'cuda',
+    language: 'ja',
+    engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame',
+    contentProfile: 'av_soft',
+    ...ANIME_FIRERED_VAD,
+    asrSecondOpinion: 'auto',
+    timingAlign: true,
+    // FireRed islands + ForcedAligner word/char stamps (TEN remains available as bundled runtime VAD).
+    timingAlignModel: 'qwen3-forced-aligner-0.6b',
 });
 
 function regionalFilmOptions(language, extra = {}) {
@@ -115,13 +148,42 @@ function regionalFilmOptions(language, extra = {}) {
         language,
         contentProfile: 'film',
         engineAsrModel: 'sensevoice-small',
-        filmAudioEnhance: false,
         filmVadPreset: false,
         audioLightDenoise: true,
         ...FILM_VAD,
         ...extra,
     };
 }
+
+/**
+ * Cantonese Qwen3 dialogue: FireRed islands + ForcedAligner word stamps.
+ * (Qwen ignores Silero for cue geometry.)
+ */
+const YUE_QWEN_ALIGN = Object.freeze({
+    engineAsrModel: 'qwen3-asr-1.7b',
+    engineVadModel: 'firered-vad',
+    timingAlign: true,
+    timingAlignModel: 'qwen3-forced-aligner-0.6b',
+    vadMaxSingleSegmentMs: 7500,
+});
+
+/**
+ * Cantonese Qwen3 song/MV: FireRed islands + ForcedAligner word stamps, then
+ */
+const YUE_QWEN_SONG = Object.freeze({
+    engineAsrModel: 'qwen3-asr-1.7b',
+    engineVadModel: 'firered-vad',
+    timingAlign: true,
+    timingAlignModel: 'qwen3-forced-aligner-0.6b',
+    vadMaxSingleSegmentMs: 7500,
+    audioLightDenoise: false,
+    vadThreshold: 0.45,
+    vadMinSpeechDurationMs: 250,
+    vadMinSilenceDurationMs: 350,
+    vadSpeechPadMs: 160,
+    // Engine job flag (also inferred from song VAD 0.45/250 when omitted).
+    singingKaraoke: true,
+});
 
 /**
  * Built-in presets: each content group lists flat presets (no primary/variant split).
@@ -133,7 +195,7 @@ const BUILTIN_PRESETS = [
         id: 'ja-av-anime-whisper-firered',
         group: 'ja',
         name: 'Anime Whisper（日剧/动漫/软对白）',
-        description: '日语微调，质量和速度均衡',
+        description: '日语微调，质量和速度均衡 · FireRed 对时',
         builtin: true,
         options: { ...ANIME_WHISPER_FIRERED_OPTIONS },
     },
@@ -142,22 +204,31 @@ const BUILTIN_PRESETS = [
         group: 'ja',
         name: 'Qwen3-ASR Galgame (软对白/动漫专调)',
         description:
-            '1.7B, 日语微调，较高质量，优于Anime Whisper',
+            '1.7B 日语微调 · TEN 人声岛对时（自我介绍等软对白；影视音频增强请在设置中开启）',
         builtin: true,
         options: { ...QWEN_GALGAME_TEN_OPTIONS },
+    },
+    {
+        id: 'ja-av-qwen3-galgame-firered-align',
+        group: 'ja',
+        name: 'Qwen3-ASR Galgame (日语词级对齐)',
+        description:
+            '1.7B Galgame + FireRed 岛 + ForcedAligner 词级起止（声学时间；影视音频增强请在设置中开启）',
+        builtin: true,
+        options: { ...QWEN_GALGAME_FIRERED_ALIGN_OPTIONS },
     },
     {
         id: 'ja-av-soft-translate',
         group: 'ja',
         name: 'Whisper JA (日语微调)',
-        description: '1.5B, 日语微调，速度较快',
+        description: '1.5B 日语微调 · FireRed 岛对时（不开 Silero，保留软对白）',
         builtin: true,
         options: {
             device: 'cuda',
             language: 'ja',
             engineAsrModel: 'whisper-ja-1.5b',
             contentProfile: 'av_soft',
-            ...ANIME_VAD,
+            ...ANIME_FIRERED_VAD,
             beamSize: 5,
         },
     },
@@ -174,11 +245,10 @@ const BUILTIN_PRESETS = [
     {
         id: 'ko-turbo-demucs',
         group: 'ko',
-        name: 'Whisper large-v3-turbo + Demucs（韩剧配乐）',
-        description: '先分离人声再听写，需 Pro',
+        name: 'Whisper large-v3-turbo（韩剧配乐）',
+        description: '影视 VAD 参数适合配乐；人声分离请在设置中开启「影视音频增强」',
         builtin: true,
         options: regionalFilmOptions('ko', {
-            filmAudioEnhance: true,
             audioLightDenoise: false,
             engineAsrModel: 'whisper-large-v3-turbo',
         }),
@@ -200,11 +270,10 @@ const BUILTIN_PRESETS = [
     {
         id: 'film-audio-enhance',
         group: 'western',
-        name: 'Whisper large-v3-turbo + Demucs（欧美剧配乐）',
-        description: '先分离人声再听写，需 Pro',
+        name: 'Whisper large-v3-turbo（欧美剧配乐）',
+        description: '影视 VAD 参数适合配乐；人声分离请在设置中开启「影视音频增强」',
         builtin: true,
         options: regionalFilmOptions('en', {
-            filmAudioEnhance: true,
             audioLightDenoise: false,
             engineAsrModel: 'whisper-large-v3-turbo',
         }),
@@ -251,13 +320,30 @@ const BUILTIN_PRESETS = [
         options: regionalFilmOptions('zh'),
     },
     {
+        id: 'zh-yue-qwen3',
+        group: 'zh',
+        name: 'Qwen3-ASR 1.7B（粤语）',
+        description:
+            '官方 1.7B 多语 · 强制粤语 (yue) · FireRed 岛 + ForcedAligner 词级对时',
+        builtin: true,
+        options: regionalFilmOptions('yue', { ...YUE_QWEN_ALIGN }),
+    },
+    {
+        id: 'zh-yue-qwen3-song',
+        group: 'zh',
+        name: 'Qwen3-ASR 1.7B（粤语歌曲）',
+        description:
+            'Qwen3-ASR1.7B 歌唱/带伴奏 · 强制粤语 · FireRedVad + ForcedAligner 词级戳',
+        builtin: true,
+        options: regionalFilmOptions('yue', { ...YUE_QWEN_SONG }),
+    },
+    {
         id: 'zh-turbo-demucs',
         group: 'zh',
-        name: 'Whisper large-v3-turbo + Demucs（华语片配乐）',
-        description: '先分离人声再听写，需 Pro',
+        name: 'Whisper large-v3-turbo（华语片配乐）',
+        description: '影视 VAD 参数适合配乐；人声分离请在设置中开启「影视音频增强」',
         builtin: true,
         options: regionalFilmOptions('zh', {
-            filmAudioEnhance: true,
             audioLightDenoise: false,
             engineAsrModel: 'whisper-large-v3-turbo',
         }),
@@ -306,7 +392,6 @@ const BUILTIN_PRESETS = [
             vadSensitive: false,
             vadAggressive: false,
             audioLightDenoise: true,
-            filmAudioEnhance: false,
             filmVadPreset: false,
         },
     },
@@ -425,7 +510,10 @@ function normalizeStoredPreset(preset) {
 }
 
 function loadPresets() {
-    const builtins = BUILTIN_PRESETS.map((p) => ({ ...p, options: { ...p.options } }));
+    const builtins = BUILTIN_PRESETS.map((p) => ({
+        ...p,
+        options: sanitizePresetOptions(p.options),
+    }));
     const filePath = getPresetsFilePath();
     if (!fs.existsSync(filePath)) {
         return { presets: builtins };
@@ -438,7 +526,13 @@ function loadPresets() {
                 ...builtins,
                 ...custom
                     .filter((p) => !p.builtin)
-                    .map((p) => normalizeStoredPreset(p)),
+                    .map((p) => {
+                        const normalized = normalizeStoredPreset(p);
+                        return {
+                            ...normalized,
+                            options: sanitizePresetOptions(normalized.options),
+                        };
+                    }),
             ],
         };
     } catch {
@@ -487,8 +581,12 @@ module.exports = {
     PRESET_SKIP_KEYS,
     ANIME_VAD,
     ANIME_FIRERED_VAD,
+    ANIME_TEN_VAD,
     ANIME_WHISPER_FIRERED_OPTIONS,
     QWEN_GALGAME_TEN_OPTIONS,
+    QWEN_GALGAME_FIRERED_ALIGN_OPTIONS,
+    YUE_QWEN_ALIGN,
+    YUE_QWEN_SONG,
     normalizePresetGroup,
     sanitizePresetOptions,
     loadPresets,

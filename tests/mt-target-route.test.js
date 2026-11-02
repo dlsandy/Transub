@@ -376,7 +376,7 @@ describe('resolveMtCapability + lastMt + validate', () => {
         }), true);
     });
 
-    it('allows TranslateGemma / Chimera for ko target but blocks Sakura', () => {
+    it('allows TranslateGemma / Chimera for ko target but blocks Sakura / Hy-MT2', () => {
         const opts = { subtitleTargetLang: 'ko', language: 'ja' };
         assert.strictEqual(route.isMtModelAllowedForTarget('sakura-galtransl-7b', opts), false);
         assert.strictEqual(route.isMtModelAllowedForTarget('hy-mt2-7b', opts), false);
@@ -384,6 +384,22 @@ describe('resolveMtCapability + lastMt + validate', () => {
         assert.strictEqual(route.isMtModelAllowedForTarget('translategemma-4-sub-e4b', opts), true);
         assert.strictEqual(route.isMtModelAllowedForTarget('hunyuan-mt-chimera-7b-abliterated', opts), true);
         assert.ok(route.mtModelBlockReasonForTarget('sakura-1.5b', opts));
+    });
+
+    it('allows Hy-MT2 for yue→zh-Hans (粤语书面→普通话)', () => {
+        const opts = { subtitleTargetLang: 'zh-Hans', language: 'yue' };
+        assert.strictEqual(route.isMtModelAllowedForTarget('hy-mt2-7b', opts), true);
+        assert.strictEqual(route.isMtModelAllowedForTarget('hy-mt2-1.8b', opts), true);
+        assert.strictEqual(route.isMtModelAllowedForTarget('sakura-1.5b', opts), false);
+        assert.strictEqual(route.mtModelBlockReasonForTarget('hy-mt2-7b', opts), '');
+        const applied = route.applyMtTargetRouteToOptions({
+            ...opts,
+            task: 'translate',
+            translateMode: 'llm',
+            engineMtModel: 'hy-mt2-7b',
+            engineLlmMtModel: 'hy-mt2-7b',
+        }, { isLlmMtId: (id) => /hy-?mt|qwen|sakura/i.test(String(id || '')) });
+        assert.strictEqual(applied.options.engineMtModel, 'hy-mt2-7b');
     });
 
     it('remembers and recalls lastMtByTarget buckets', () => {

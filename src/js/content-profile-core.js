@@ -94,6 +94,7 @@
      */
     const PROFILE_OWNED_KEYS = Object.freeze([
         'filmAudioEnhance',
+        'enhanceForVadOnly',
         'filmVadPreset',
         'engineVadModel',
         'vadEnabled',
@@ -125,7 +126,6 @@
     const JA_SOFT_ASR_WANTED = Object.freeze([
         'anime-whisper',
         'qwen3-asr-1.7b-ja-anime-galgame',
-        'qwen3-asr-1.7b-ja-anime-lora-v3',
         'qwen3-asr-1.7b',
         'qwen3-asr-0.6b',
         'whisper-ja-1.5b',
@@ -155,6 +155,10 @@
         'sakura-8b-qwen3',
         'sakura-7b',
         'sakura-galtransl-v4-4b',
+        // Murasaki v0.3: Q8 first when high tier; mid/low → Q6/Q4 (F16 retired).
+        'murasaki-4b-v03-q8',
+        'murasaki-4b-v03-q6k',
+        'murasaki-4b-v03',
         'sakura-1.5b',
     ]);
 
@@ -171,6 +175,9 @@
         'sakura-8b-qwen3': 8,
         'sakura-7b': 7,
         'sakura-galtransl-v4-4b': 4,
+        'murasaki-4b-v03-q8': 4,
+        'murasaki-4b-v03-q6k': 4,
+        'murasaki-4b-v03': 4,
         'sakura-1.5b': 1.5,
     });
 
@@ -850,7 +857,15 @@
             if (profile === PROFILES.av_soft || profile === PROFILES.unknown || profile === PROFILES.talk) {
                 out.audioLightDenoise = false;
                 out.filmAudioEnhance = false;
-                if (!out.vadSensitive) {
+                const vadId = String(out.engineVadModel || '').trim().toLowerCase();
+                // Island VADs already tuned for soft AV — nudge threshold, do not swap to WhisperSeg.
+                if (vadId.includes('ten')) {
+                    out.vadThreshold = 0.35;
+                    notes.push('声学偏软声稀疏 → TEN 阈值 0.35');
+                } else if (vadId.includes('firered')) {
+                    out.vadThreshold = 0.30;
+                    notes.push('声学偏软声稀疏 → FireRed 阈值 0.30');
+                } else if (!out.vadSensitive) {
                     out.vadSensitive = true;
                     out.engineVadModel = 'whisperseg-asmr';
                     notes.push('声学偏软声稀疏 → 灵敏检出');
@@ -1516,8 +1531,9 @@
     }
 
     function normalizeSenseLang(language) {
-        const lang = String(language || '').trim().toLowerCase();
+        const lang = String(language || '').trim().toLowerCase().replace(/_/g, '-');
         if (!lang || lang === 'auto') return '';
+        if (lang === 'yue' || lang === 'zh-yue' || lang === 'cantonese') return 'yue';
         if (lang === 'japanese' || lang === 'jp') return 'ja';
         if (lang === 'korean') return 'ko';
         if (lang === 'english') return 'en';
@@ -1587,11 +1603,15 @@
     function listJaSoftMtWanted(ctx = {}) {
         const tier = hardwareMtTier(ctx.device, ctx.vramGb, ctx.hwProfile);
         const maxB = maxParamBillionForTier(tier);
+        const vram = Number(ctx.vramGb);
         return JA_SOFT_MT_ORDER.filter((id) => {
             const b = Number(JA_SOFT_MT_PARAM_B[id]);
             if (Number.isFinite(b) && b > maxB) return false;
-            // Mid: skip heavy Q6_K quants (VRAM) even when param ≤ mid cap.
-            if (tier === 'mid' && /q6k$/i.test(id)) return false;
+            // Mid/low or low VRAM: skip heavy Murasaki quants (Q4 preferred under 6GB).
+            if ((tier === 'mid' || tier === 'low') && /(q6k|q8|f16)$/i.test(id)) return false;
+            if (Number.isFinite(vram) && vram > 0 && vram < 6 && /(q6k|q8|f16)$/i.test(id)) return false;
+            if (Number.isFinite(vram) && vram > 0 && vram < 8 && /q8$/i.test(id)) return false;
+            if (Number.isFinite(vram) && vram > 0 && vram < 12 && /f16$/i.test(id)) return false;
             return true;
         });
     }
@@ -1716,6 +1736,9 @@
                         subtitleTargetLang: route.targetLang || ctx.subtitleTargetLang,
                         targetLang: route.targetLang || ctx.subtitleTargetLang || ctx.targetLang,
                         language: lang || ctx.language,
+                        contentProfile: ctx.profile || ctx.contentProfile,
+                        senseProfile: ctx.senseProfile || ctx.profile,
+                        vramGb: ctx.vramGb,
                     }) || '';
                 }
             } catch { /* ignore */ }
@@ -1846,7 +1869,6 @@
                 'kotoba-whisper-v2.0-faster',
                 'anime-whisper',
                 'qwen3-asr-1.7b-ja-anime-galgame',
-                'qwen3-asr-1.7b-ja-anime-lora-v3',
                 'qwen3-asr-1.7b',
                 'qwen3-asr-0.6b',
                 'whisper-large-v3-turbo',
@@ -1896,8 +1918,13 @@
             if (vadLower === 'silero' || vadLower === 'silero_vad') {
                 out.engineVadModel = 'silero-vad';
             }
+            if (vadLower === 'ten' || vadLower === 'ten_vad') {
+                out.engineVadModel = 'ten-vad';
+            }
         }
-        if (out.engineVadModel && installed.size && !installed.has(out.engineVadModel)) {
+        const vadIdNow = String(out.engineVadModel || '').trim().toLowerCase();
+        const vadAlwaysReady = vadIdNow === 'silero-vad' || vadIdNow === 'ten-vad';
+        if (out.engineVadModel && installed.size && !installed.has(out.engineVadModel) && !vadAlwaysReady) {
             const vadAlt = out.engineVadModel.includes('whisperseg')
                 ? firstInstalled(['silero-vad', 'fsmn-vad'], installed)
                 : firstInstalled(['fsmn-vad', 'silero-vad'], installed);
@@ -2430,7 +2457,10 @@
             'sakura-ln-korean-14b',
             'sakura-ln-korean-7b',
             'sakura-ln-ko2ja-14b',
+            'hy-mt2-7b',
+            'hy-mt2-1.8b',
             'translategemma-4-sub-e4b',
+            'translategemma-4-sub-e2b',
             'translategemma-4b',
             'translategemma-12b',
             'translategemma-27b',
@@ -2692,6 +2722,13 @@
      */
     function describeAudioMethod(options = {}) {
         if (options.filmAudioEnhance) {
+            if (options.enhanceForVadOnly) {
+                return {
+                    id: 'film_enhance_vad_only',
+                    label: '人声仅 VAD（Demucs）',
+                    short: 'Demucs→VAD',
+                };
+            }
             return { id: 'film_enhance', label: '影视音频增强（Demucs）', short: 'Demucs' };
         }
         if (options.filmVadPreset) {

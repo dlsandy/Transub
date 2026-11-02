@@ -25,6 +25,10 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.ok(catalog.findCatalogEntry('qwen35-9b-abliterated-q5'));
         assert.ok(catalog.findCatalogEntry('qwen3-30b-a3b-abliterated'));
         assert.ok(catalog.findCatalogEntry('qwen35-35b-a3b-abliterated'));
+        assert.ok(catalog.findCatalogEntry('qwen38-27b'));
+        assert.ok(catalog.findCatalogEntry('qwen38-27b-iq4xs'));
+        assert.strictEqual(catalog.findCatalogEntry('qwen38-27b').llamaServer?.nCpuFfn, 12);
+        assert.strictEqual(catalog.findCatalogEntry('qwen38-27b').moe, undefined);
         assert.ok(catalog.findCatalogEntry('qwen35-4b'));
         assert.ok(catalog.findCatalogEntry('qwen35-4b-uncensored-aggressive'));
         assert.ok(catalog.findCatalogEntry('qwen35-9b-uncensored-aggressive'));
@@ -94,7 +98,16 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.ok(catalog.findCatalogEntry('llama33-70b'));
         assert.ok(catalog.findCatalogEntry('sakura-1.5b'));
         assert.ok(catalog.findCatalogEntry('sakura-7b'));
+        assert.ok(catalog.findCatalogEntry('murasaki-4b-v03'));
+        assert.ok(catalog.findCatalogEntry('murasaki-4b-v03-q6k'));
+        assert.ok(catalog.findCatalogEntry('murasaki-4b-v03-q8'));
+        assert.strictEqual(catalog.findCatalogEntry('murasaki-4b-v03-f16'), null);
+        assert.ok(catalog.findCatalogEntry('murasaki-4b-v03-q8'));
+        assert.strictEqual(catalog.findCatalogEntry('murasaki-8b-v02'), null);
+        assert.strictEqual(catalog.findCatalogEntry('murasaki-14b-v02'), null);
+        assert.ok(catalog.findCatalogEntry('orion-4b-v2608'));
         assert.ok(catalog.findCatalogEntry('translategemma-4b'));
+        assert.ok(catalog.findCatalogEntry('translategemma-4-sub-e2b'));
         assert.ok(catalog.findCatalogEntry('translategemma-4-sub-e4b'));
         assert.ok(catalog.findCatalogEntry('translategemma-12b'));
         assert.ok(catalog.findCatalogEntry('translategemma-27b'));
@@ -107,6 +120,12 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.strictEqual(tg4.translateOnly, true);
         assert.strictEqual(tg4.llamaJinja, true);
         assert.strictEqual(tg4.freePipelineTranslate, true);
+        const tgSubE2 = catalog.findCatalogEntry('translategemma-4-sub-e2b');
+        assert.strictEqual(tgSubE2.family, 'translategemma');
+        assert.strictEqual(tgSubE2.translateOnly, true);
+        assert.strictEqual(tgSubE2.freePipelineTranslate, true);
+        assert.strictEqual(tgSubE2.paramBillion, 2);
+        assert.strictEqual(tgSubE2.fileName, 'translate_gemma4_sub-E2B-Q4_K_XL.gguf');
         const tgSub = catalog.findCatalogEntry('translategemma-4-sub-e4b');
         assert.strictEqual(tgSub.family, 'translategemma');
         assert.strictEqual(tgSub.translateOnly, true);
@@ -125,6 +144,7 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.strictEqual(hyMt15.translateOnly, true);
         assert.strictEqual(catalog.findCatalogEntry('translategemma-12b').freePipelineTranslate, false);
         assert.ok(catalog.isTranslateOnlyModel('translategemma-4b'));
+        assert.ok(catalog.isTranslateOnlyModel('translategemma-4-sub-e2b'));
         assert.ok(catalog.isTranslateOnlyModel('translategemma-4-sub-e4b'));
         assert.ok(catalog.isTranslateOnlyModel('hunyuan-mt-chimera-7b-abliterated'));
         assert.ok(catalog.isTranslateOnlyModel('hunyuan-mt-7b-abliterated'));
@@ -210,6 +230,7 @@ describe('advanced-managed-llm-catalog-core', () => {
     });
 
     it('exposes pinned llama.cpp runtime package for win32-x64', () => {
+        assert.strictEqual(catalog.LLAMA_CPP_TAG, 'b12032');
         const pkg = catalog.getRuntimePackage('win32', 'x64');
         assert.ok(pkg);
         assert.strictEqual(pkg.id, 'win-vulkan-x64');
@@ -248,6 +269,7 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.ok(choices.some((p) => p.id === 'win-cuda12-x64'));
         assert.ok(choices.some((p) => p.id === 'win-cuda13-x64'));
         assert.ok(choices.some((p) => p.id === 'win-rocm-x64'));
+        assert.ok(choices.some((p) => p.id === 'win-sycl-x64'));
         const cuda12 = catalog.getRuntimePackage('win32', 'x64', 'win-cuda12-x64');
         assert.ok(cuda12);
         assert.strictEqual(cuda12.backend, 'cuda');
@@ -262,9 +284,14 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.ok(rocm);
         assert.strictEqual(rocm.backend, 'rocm');
         assert.ok(rocm.url.includes('rocm-10.0'));
+        const sycl = catalog.getRuntimePackage('win32', 'x64', 'win-sycl-x64');
+        assert.ok(sycl);
+        assert.strictEqual(sycl.backend, 'sycl');
+        assert.ok(sycl.url.includes('sycl'));
         assert.strictEqual(catalog.normalizeRuntimeId('win-cuda12-x64', 'win32', 'x64'), 'win-cuda12-x64');
         assert.strictEqual(catalog.normalizeRuntimeId('win-cuda13-x64', 'win32', 'x64'), 'win-cuda13-x64');
         assert.strictEqual(catalog.normalizeRuntimeId('win-rocm-x64', 'win32', 'x64'), 'win-rocm-x64');
+        assert.strictEqual(catalog.normalizeRuntimeId('win-sycl-x64', 'win32', 'x64'), 'win-sycl-x64');
         assert.strictEqual(catalog.normalizeRuntimeId('', 'win32', 'x64'), 'win-vulkan-x64');
         assert.strictEqual(catalog.normalizeRuntimeId('nope', 'win32', 'x64'), 'win-vulkan-x64');
         // NVIDIA 机器：空偏好默认 CUDA 12；驱动 CUDA 13+ 时默认 CUDA 13
@@ -307,10 +334,73 @@ describe('advanced-managed-llm-catalog-core', () => {
         );
         const rocmFirst = catalog.listRuntimePackages('win32', 'x64', { preferRocm: true });
         assert.strictEqual(rocmFirst[0]?.id, 'win-rocm-x64');
+        // Intel Arc：默认 SYCL
+        assert.strictEqual(
+            catalog.normalizeRuntimeId('', 'win32', 'x64', { preferSycl: true }),
+            'win-sycl-x64',
+        );
+        assert.strictEqual(
+            catalog.getDefaultRuntimeId('win32', 'x64', { preferSycl: true }),
+            'win-sycl-x64',
+        );
+        assert.strictEqual(
+            catalog.normalizeManagedLlm({}, { preferSycl: true }).runtimeId,
+            'win-sycl-x64',
+        );
+        const syclFirst = catalog.listRuntimePackages('win32', 'x64', { preferSycl: true });
+        assert.strictEqual(syclFirst[0]?.id, 'win-sycl-x64');
         // 已显式选 Vulkan 时不因 preferCuda 覆盖
         assert.strictEqual(
             catalog.normalizeManagedLlm({ runtimeId: 'win-vulkan-x64' }, { preferCuda: true, cudaVersion: '13.3' }).runtimeId,
             'win-vulkan-x64',
+        );
+        assert.strictEqual(
+            catalog.pickInstallRuntimeId('win-vulkan-x64', 'win32', 'x64', { preferCuda: true, cudaVersion: '13.3' }),
+            'win-cuda13-x64',
+        );
+        assert.strictEqual(
+            catalog.pickInstallRuntimeId('win-vulkan-x64', 'win32', 'x64', { preferCuda: true, cudaVersion: '12.4' }),
+            'win-cuda12-x64',
+        );
+        assert.strictEqual(
+            catalog.pickInstallRuntimeId('win-vulkan-x64', 'win32', 'x64', { preferRocm: true }),
+            'win-rocm-x64',
+        );
+        assert.strictEqual(
+            catalog.pickInstallRuntimeId('win-vulkan-x64', 'win32', 'x64', { preferSycl: true }),
+            'win-sycl-x64',
+        );
+        assert.strictEqual(
+            catalog.pickInstallRuntimeId('win-cuda13-x64', 'win32', 'x64', {}),
+            'win-cuda13-x64',
+        );
+        assert.strictEqual(
+            catalog.pickInstallRuntimeId('', 'win32', 'x64', {}),
+            'win-vulkan-x64',
+        );
+        assert.strictEqual(
+            catalog.isInstalledRuntimeAcceptable('win-cuda13-x64', 'win-cuda12-x64'),
+            true,
+        );
+        assert.strictEqual(
+            catalog.isInstalledRuntimeAcceptable('win-cuda13-x64', 'win-vulkan-x64'),
+            true,
+        );
+        assert.strictEqual(
+            catalog.isInstalledRuntimeAcceptable('win-cuda12-x64', 'win-cuda13-x64'),
+            false,
+        );
+        assert.strictEqual(
+            catalog.isInstalledRuntimeAcceptable('win-vulkan-x64', 'win-cuda13-x64'),
+            false,
+        );
+        assert.strictEqual(
+            catalog.isInstalledRuntimeAcceptable('win-rocm-x64', 'win-vulkan-x64'),
+            true,
+        );
+        assert.strictEqual(
+            catalog.isInstalledRuntimeAcceptable('win-sycl-x64', 'win-vulkan-x64'),
+            true,
         );
         const cuda12First = catalog.listRuntimePackages('win32', 'x64', { preferCuda: true });
         assert.strictEqual(cuda12First[0]?.id, 'win-cuda12-x64');
@@ -323,13 +413,19 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.strictEqual(catalog.normalizeRuntimeId('win-cuda12-x64', 'darwin', 'arm64'), 'macos-arm64');
         assert.strictEqual(catalog.normalizeRuntimeId('win-cuda13-x64', 'darwin', 'arm64'), 'macos-arm64');
         assert.strictEqual(catalog.normalizeRuntimeId('win-rocm-x64', 'darwin', 'arm64'), 'macos-arm64');
-        // Linux：Vulkan / ROCm 可选
+        assert.strictEqual(catalog.normalizeRuntimeId('win-sycl-x64', 'darwin', 'arm64'), 'macos-arm64');
+        // Linux：Vulkan / ROCm / SYCL 可选
         const linuxChoices = catalog.listRuntimePackages('linux', 'x64');
         assert.ok(linuxChoices.some((p) => p.id === 'ubuntu-vulkan-x64'));
         assert.ok(linuxChoices.some((p) => p.id === 'ubuntu-rocm-x64'));
+        assert.ok(linuxChoices.some((p) => p.id === 'ubuntu-sycl-x64'));
         assert.strictEqual(
             catalog.normalizeRuntimeId('', 'linux', 'x64', { preferRocm: true }),
             'ubuntu-rocm-x64',
+        );
+        assert.strictEqual(
+            catalog.normalizeRuntimeId('', 'linux', 'x64', { preferSycl: true }),
+            'ubuntu-sycl-x64',
         );
     });
 
@@ -413,6 +509,26 @@ describe('advanced-managed-llm-catalog-core', () => {
             requestedId: 'qwen25-14b',
             installedIds: ['qwen25-1.5b', 'qwen25-7b', 'sakura-7b'],
         }), 'qwen25-7b');
+        // Same Instruct line, different quant: prefer sibling over unrelated ~7B.
+        assert.strictEqual(catalog.pickInstalledSmartTranslateModelId({
+            requestedId: 'qwen35-9b-abliterated',
+            installedIds: ['qwen35-9b-abliterated-q5', 'qwen25-7b'],
+            forChat: true,
+        }), 'qwen35-9b-abliterated-q5');
+        assert.strictEqual(catalog.pickInstalledSmartTranslateModelId({
+            requestedId: 'qwen35-9b-abliterated-q5',
+            installedIds: ['qwen35-9b-abliterated', 'qwen25-7b'],
+            forChat: true,
+        }), 'qwen35-9b-abliterated');
+        assert.ok(catalog.isSmartTranslateQuantSibling(
+            'qwen35-9b-abliterated',
+            'qwen35-9b-abliterated-q5',
+        ));
+        assert.ok(!catalog.isSmartTranslateQuantSibling('qwen35-9b-abliterated-q5', 'qwen25-7b'));
+        assert.strictEqual(
+            catalog.modelQuantFamilyKey('qwen35-9b-abliterated-q5'),
+            catalog.modelQuantFamilyKey('qwen35-9b-abliterated'),
+        );
         assert.strictEqual(catalog.pickInstalledSmartTranslateModelId({
             requestedId: 'qwen25-7b',
             installedIds: ['sakura-7b'],
@@ -508,6 +624,10 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.ok(catalog.isFreePipelineTranslateModel('sakura-galtransl-14b'));
         assert.ok(catalog.isFreePipelineTranslateModel('sakura-galtransl-14b-q4km'));
         assert.ok(catalog.isFreePipelineTranslateModel('sakura-galtransl-14b-q6k'));
+        assert.ok(catalog.isFreePipelineTranslateModel('murasaki-4b-v03'));
+        assert.ok(catalog.isFreePipelineTranslateModel('murasaki-4b-v03-q6k'));
+        assert.ok(catalog.isFreePipelineTranslateModel('murasaki-4b-v03-q8'));
+        assert.ok(catalog.isFreePipelineTranslateModel('orion-4b-v2608'));
         assert.strictEqual(catalog.findCatalogEntry('sakura-galtransl-v4-4b').paramBillion, 4);
         assert.strictEqual(catalog.findCatalogEntry('sakura-galtransl-14b').paramBillion, 14);
         assert.ok(catalog.isFreePipelineTranslateModel('phi35-mini'));
@@ -524,12 +644,19 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.ok(free.every((m) => m.freePipelineTranslate === true));
         assert.ok(free.every((m) => (
             m.paramBillion <= 7
-            || /galtransl/i.test(m.id)
+            || /galtransl|murasaki/i.test(m.id)
             || /^sakura-/i.test(m.id)
         )));
         assert.ok(!free.some((m) => /^transub-ja/i.test(m.id)));
         assert.ok(!catalog.isProScaleModel('sakura-14b'));
         assert.ok(!catalog.isProScaleModel('sakura-galtransl-14b-q6k'));
+        assert.ok(!catalog.isProScaleModel('murasaki-4b-v03'));
+        assert.ok(!catalog.isProScaleModel('murasaki-4b-v03-q6k'));
+        assert.ok(!catalog.isProScaleModel('murasaki-4b-v03-q8'));
+        assert.ok(catalog.isTranslateOnlyModel('murasaki-4b-v03'));
+        assert.ok(catalog.isTranslateOnlyModel('murasaki-4b-v03-q8'));
+        assert.ok(!catalog.isTranslateOnlyModel('murasaki-4b-v03-f16'));
+        assert.ok(catalog.isTranslateOnlyModel('orion-4b-v2608'));
     });
 
     it('remaps retired transub-ja ids in normalizeManagedLlm', () => {
@@ -548,7 +675,26 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.ok(catalog.isTranslateOnlyModel('sakura-7b'));
         assert.ok(catalog.isTranslateOnlyModel('Sakura-7B-Qwen2.5'));
         assert.ok(catalog.isTranslateOnlyModel('sakura-galtransl-7b-q6k'));
+        assert.ok(catalog.isTranslateOnlyModel('murasaki-4b-v03'));
         assert.ok(catalog.isTranslateOnlyModel('hy-mt2-7b'));
+        // Id-pattern fallback: translate-only even without proprietary catalog row.
+        assert.ok(catalog.isTranslateOnlyModel('hy-mt2-30b-a3b-heretic'));
+        assert.ok(catalog.isTranslateOnlyModel('hy-mt2-30b-a3b-heretic-mini'));
+        assert.ok(catalog.isTranslateOnlyModel('hy-mt2-30b-a3b-heretic-quality'));
+        const hy30 = catalog.findCatalogEntry('hy-mt2-30b-a3b-heretic');
+        if (hy30) {
+            assert.strictEqual(hy30.moe, true);
+            assert.strictEqual(hy30.activeParamBillion, 3);
+            assert.strictEqual(hy30.llamaServer?.nCpuMoe, 18);
+            assert.strictEqual(hy30.llamaServer?.nGpuLayers, 40);
+            assert.strictEqual(hy30.contextSize, 4096);
+            assert.strictEqual(hy30.freePipelineTranslate, true);
+            assert.ok(catalog.getSmartTranslateModelBlock('hy-mt2-30b-a3b-heretic')?.ok === false);
+            const hyMini = catalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-mini');
+            assert.strictEqual(hyMini?.llamaServer?.nCpuMoe, 12);
+            assert.strictEqual(hyMini?.llamaServer?.nGpuLayers, 60);
+            assert.strictEqual(hyMini?.weightGiB, 10.5);
+        }
         assert.ok(!catalog.isTranslateOnlyModel('qwen25-7b'));
         assert.ok(!catalog.supportsAdvancedReconstruct('sakura-1.5b'));
         assert.ok(catalog.supportsAdvancedReconstruct('qwen25-7b'));

@@ -123,7 +123,6 @@ function buildBatchAsrCandidates(primaryAsr, options = {}) {
         'kotoba-whisper-v2.0-faster',
         'reazonspeech-k2',
         'qwen3-asr-1.7b-ja-anime-galgame',
-        'qwen3-asr-1.7b-ja-anime-lora-v3',
         'qwen3-asr-1.7b',
         'qwen3-asr-0.6b',
     ];
@@ -134,9 +133,17 @@ function buildBatchAsrCandidates(primaryAsr, options = {}) {
     const isReazon = low.includes('reazon');
     const isQwenAsr = low.includes('qwen3-asr');
     const isCohereAsr = low.includes('cohere-transcribe') || low.includes('cohere-asr');
+    const isFireredAsr2 = low.includes('firered-asr2') || low.includes('fireredasr2');
 
     if (/sensevoice/i.test(primary)) {
         chain.push('whisper-tiny', 'whisper-large-v3-turbo');
+    } else if (isFireredAsr2) {
+        chain.push(
+            'sensevoice-small',
+            'cohere-transcribe-03-2026',
+            'whisper-tiny',
+            'whisper-large-v3-turbo',
+        );
     } else if (isCohereAsr) {
         chain.push(
             'parakeet-tdt-0.6b-v2',
@@ -170,7 +177,7 @@ function buildBatchAsrCandidates(primaryAsr, options = {}) {
             if (!low.includes('0.6b')) {
                 chain.push('qwen3-asr-0.6b');
             }
-            chain.push('whisper-ja-1.5b', 'reazonspeech-k2', 'kotoba-whisper-v2.0-faster');
+            chain.push('whisper-ja-1.5b', 'whisper-large-v2', 'reazonspeech-k2', 'kotoba-whisper-v2.0-faster');
         } else {
             for (const id of jaSpecialists) chain.push(id);
         }
@@ -219,6 +226,25 @@ function _isQwenAsrId(asrId) {
     return /qwen3-asr/i.test(String(asrId || ''));
 }
 
+function _isHeavyWhisperLargeId(asrId) {
+    return /whisper-large/i.test(String(asrId || ''));
+}
+
+/**
+ * Runtime family for short-clip failover VRAM policy.
+ * Cross-family switches should release GPU before loading the next model.
+ * @returns {'ct2_whisper'|'sensevoice'|'torch_qwen'|'other'}
+ */
+function classifyRangeAsrFamily(asrId) {
+    const id = String(asrId || '').trim().toLowerCase();
+    if (!id) return 'other';
+    if (/sensevoice/.test(id)) return 'sensevoice';
+    if (/qwen3-asr/.test(id)) return 'torch_qwen';
+    // faster-whisper / CT2 ids (tiny, large-v3-turbo, whisper-ja, anime, kotoba, …)
+    if (/whisper|kotoba|anime-whisper/.test(id)) return 'ct2_whisper';
+    return 'other';
+}
+
 /**
  * Short failover for range retranscribe / QC windows.
  * Avoids sibling-Qwen churn (same TEN path → same empty clip) and heavy turbo loads.
@@ -226,6 +252,17 @@ function _isQwenAsrId(asrId) {
 function buildRangeRetranscribeAsrCandidates(primaryAsr) {
     const primary = String(primaryAsr || 'sensevoice-small').trim() || 'sensevoice-small';
     const low = primary.toLowerCase();
+
+    // Short QC/editor clips: never lead with whisper-large* (VRAM + empty-clip churn).
+    // Prefer SenseVoice → tiny, keep primary as last resort within the failover cap.
+    if (_isHeavyWhisperLargeId(primary)) {
+        return _dedupeAsrIds([
+            'sensevoice-small',
+            'whisper-tiny',
+            primary,
+        ]).slice(0, RANGE_RETRANSCRIBE_FAILOVER_MAX);
+    }
+
     const chain = [primary];
 
     if (_isQwenAsrId(primary)) {
@@ -233,7 +270,7 @@ function buildRangeRetranscribeAsrCandidates(primaryAsr) {
         chain.push('sensevoice-small', 'whisper-tiny');
     } else if (/sensevoice/i.test(primary)) {
         chain.push('whisper-tiny');
-    } else if (/anime-whisper|kotoba|whisper-ja|reazon|cohere|parakeet/i.test(primary)) {
+    } else if (/anime-whisper|kotoba|whisper-ja|reazon|cohere|parakeet|firered-asr2/i.test(primary)) {
         if (!/sensevoice/i.test(primary)) chain.push('sensevoice-small');
         if (!/whisper-tiny/i.test(low)) chain.push('whisper-tiny');
     } else {
@@ -285,6 +322,7 @@ module.exports = {
     buildBatchAsrCandidates,
     limitBatchAsrFailoverChain,
     buildRangeRetranscribeAsrCandidates,
+    classifyRangeAsrFamily,
     RANGE_RETRANSCRIBE_FAILOVER_MAX,
     BATCH_ASR_FAILOVER_SPEED_MAX,
     BATCH_ASR_FAILOVER_QUALITY_MAX,

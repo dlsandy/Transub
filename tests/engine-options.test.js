@@ -15,10 +15,11 @@ describe('engine-options', () => {
         assert.strictEqual(opts.engineAsrModel, 'qwen3-asr-1.7b-ja-anime-galgame');
         assert.strictEqual(opts.engineInstallPath, '');
         assert.ok(String(opts.engineUrl).includes('127.0.0.1'));
-        assert.strictEqual(opts.engineHfEndpoint, '');
+        assert.strictEqual(opts.engineHfEndpoint, 'https://hf-mirror.com');
         assert.strictEqual(opts.engineHfToken, '');
-        assert.strictEqual(opts.engineLlmMtModel, '');
-        assert.strictEqual(opts.engineVadModel, 'silero-vad');
+        assert.strictEqual(opts.engineLlmMtModel, 'sakura-galtransl-7b-q6k');
+        assert.strictEqual(opts.engineVadModel, 'firered-vad');
+        assert.strictEqual(opts.engineProfile, 'quality');
     });
 
     it('aliases retired non-hf Qwen3 JA to official 1.7B-hf', () => {
@@ -75,7 +76,7 @@ describe('engine-options', () => {
     });
 
     it('preserves empty engineLlmMtModel (智能选择) and defaults when omitted', () => {
-        assert.strictEqual(mergeEngineOptions({}).engineLlmMtModel, '');
+        assert.strictEqual(mergeEngineOptions({}).engineLlmMtModel, 'sakura-galtransl-7b-q6k');
         assert.strictEqual(mergeEngineOptions({ engineLlmMtModel: '' }).engineLlmMtModel, '');
         assert.strictEqual(
             mergeEngineOptions({ engineLlmMtModel: 'sakura-7b' }).engineLlmMtModel,

@@ -68,6 +68,9 @@ function ensureRuntimeExtrasOffline(opts = {}) {
                 PYTHONIOENCODING: 'utf-8',
             };
             try {
+                extrasEnv = require('./engine-runtime-env').injectOpenMpCompatEnv(extrasEnv);
+            } catch { /* optional */ }
+            try {
                 const { applyPreferredPipMirrorEnv } = require('./pip-mirrors');
                 extrasEnv = applyPreferredPipMirrorEnv(extrasEnv, preferredPipMirror);
             } catch { /* optional */ }
@@ -98,7 +101,16 @@ function ensureRuntimeExtrasOffline(opts = {}) {
             resolve(payload);
         };
         const onAbort = () => {
-            try { child.kill(); } catch { /* ignore */ }
+            try {
+                if (process.platform === 'win32' && child.pid) {
+                    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+                        windowsHide: true,
+                        stdio: 'ignore',
+                    });
+                } else {
+                    child.kill('SIGTERM');
+                }
+            } catch { /* ignore */ }
             finish({ ok: false, cancelled: true, error: 'cancelled' });
         };
         if (signal) {
@@ -109,7 +121,16 @@ function ensureRuntimeExtrasOffline(opts = {}) {
             signal.addEventListener('abort', onAbort, { once: true });
         }
         const timer = setTimeout(() => {
-            try { child.kill(); } catch { /* ignore */ }
+            try {
+                if (process.platform === 'win32' && child.pid) {
+                    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+                        windowsHide: true,
+                        stdio: 'ignore',
+                    });
+                } else {
+                    child.kill('SIGTERM');
+                }
+            } catch { /* ignore */ }
             finish({ ok: false, error: `${label}安装超时（${Math.round(timeoutMs / 1000)} 秒）` });
         }, timeoutMs);
 
@@ -121,10 +142,13 @@ function ensureRuntimeExtrasOffline(opts = {}) {
             let ev;
             try { ev = JSON.parse(text); } catch { return; }
             if (!ev || typeof ev !== 'object') return;
-            if (ev.type === 'progress' || ev.stage || ev.detail) {
+            const isTerminal = ev.type === 'result' || ev.type === 'error'
+                || (ev.ok != null && ev.ready != null && ev.type !== 'progress');
+            if (!isTerminal && (ev.type === 'progress' || ev.stage || ev.detail)) {
                 onProgress?.(ev);
             }
-            if (ev.type === 'result' || (ev.ok != null && (ev.ready != null || ev.code || ev.installed))) {
+            if (isTerminal || ev.type === 'result'
+                || (ev.ok != null && (ev.ready != null || ev.code || ev.installed))) {
                 resultPayload = ev;
             }
         };
@@ -153,14 +177,16 @@ function ensureRuntimeExtrasOffline(opts = {}) {
                 return;
             }
             const err = resultPayload?.message
+                || resultPayload?.hint
                 || resultPayload?.error
                 || (logTail ? logTail.slice(-400) : `${label}安装失败（exit ${code}）`);
             finish({
+                ...(resultPayload || {}),
                 ok: false,
                 error: err,
+                message: err,
                 code: resultPayload?.code || '',
                 logTail,
-                ...(resultPayload || {}),
             });
         });
     });
@@ -200,6 +226,15 @@ function ensureTorchRocmOffline(opts = {}) {
     });
 }
 
+function ensureTorchXpuOffline(opts = {}) {
+    return ensureRuntimeExtrasOffline({
+        ...opts,
+        command: 'ensure-torch-xpu',
+        label: 'XPU PyTorch',
+        timeoutMs: Math.max(Number(opts.timeoutMs) || 0, 3_600_000),
+    });
+}
+
 module.exports = {
     modelIdsNeedWhisperExtras,
     modelIdsNeedSensevoiceExtras,
@@ -209,4 +244,5 @@ module.exports = {
     ensureAsrSensevoiceOffline,
     ensureAsrQwen3Offline,
     ensureTorchRocmOffline,
+    ensureTorchXpuOffline,
 };

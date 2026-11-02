@@ -8,7 +8,9 @@ const {
 const {
     resolveEngineEntrypoints,
     findEngineBundledFfmpeg,
+    injectOpenMpCompatEnv,
     injectNvidiaCudaPathEnv,
+    injectFfmpegPathEnv,
 } = require('../electron/engine-runtime-env');
 const fs = require('fs');
 const os = require('os');
@@ -59,5 +61,19 @@ describe('engine-runtime-env entrypoints', () => {
     it('injectNvidiaCudaPathEnv is idempotent on empty install', () => {
         const env = injectNvidiaCudaPathEnv({ PATH: 'C:\\x' }, path.join(os.tmpdir(), 'no-engine'));
         assert.ok(env.PATH.includes('C:\\x') || env.PATH.includes('C:/x') || env.PATH);
+        assert.strictEqual(env.KMP_DUPLICATE_LIB_OK, 'TRUE');
+    });
+
+    it('injectOpenMpCompatEnv sets KMP_DUPLICATE_LIB_OK without clobbering', () => {
+        assert.strictEqual(injectOpenMpCompatEnv({}).KMP_DUPLICATE_LIB_OK, 'TRUE');
+        assert.strictEqual(
+            injectOpenMpCompatEnv({ KMP_DUPLICATE_LIB_OK: 'FALSE' }).KMP_DUPLICATE_LIB_OK,
+            'FALSE',
+        );
+        assert.strictEqual(
+            injectFfmpegPathEnv({ PATH: 'C:\\x' }, '', path.join(os.tmpdir(), 'no-engine'))
+                .KMP_DUPLICATE_LIB_OK,
+            'TRUE',
+        );
     });
 });

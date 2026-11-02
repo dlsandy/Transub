@@ -65,11 +65,46 @@ describe('advanced-managed-llm-jobs factory', () => {
         assert.strictEqual(res.error, '未知模型');
     });
 
-    it('buildDownloadInfo returns early on unknown model', () => {
+    it('buildDownloadInfo returns early on unknown model', async () => {
         const api = createAdvancedManagedLlmJobs(mockHost());
-        const res = api.buildDownloadInfo({ kind: 'model', modelId: '__no_such_model__' });
+        const res = await api.buildDownloadInfo({ kind: 'model', modelId: '__no_such_model__' });
         assert.strictEqual(res.ok, false);
         assert.strictEqual(res.error, '未知模型');
+    });
+
+    it('buildDownloadInfo runtime follows GPU hints, not saved Vulkan', async () => {
+        const prefer = require('../electron/advanced-runtime-prefer');
+        const api = createAdvancedManagedLlmJobs(mockHost({
+            readAdvancedDoc: () => ({
+                doc: {
+                    managedLlm: { runtimeId: 'win-vulkan-x64' },
+                },
+            }),
+        }));
+        const orig = prefer.resolveInstallRuntimeSelection;
+        prefer.resolveInstallRuntimeSelection = async () => ({
+            hints: {
+                preferCuda: true,
+                preferRocm: false,
+                ready: true,
+                cudaVersion: '13.3',
+                gpuName: 'RTX 5090',
+            },
+            runtimeId: 'win-cuda13-x64',
+            pkg: require('../src/js/advanced-managed-llm-catalog-core')
+                .getRuntimePackage('win32', 'x64', 'win-cuda13-x64', { preferCuda: true, cudaVersion: '13.3' }),
+            gpuInfo: { vendor: 'nvidia', detected: true, cudaVersion: '13.3' },
+        });
+        try {
+            const res = await api.buildDownloadInfo({ kind: 'runtime' });
+            assert.strictEqual(res.ok, true);
+            assert.strictEqual(res.info.runtimeId, 'win-cuda13-x64');
+            assert.ok(!/Vulkan/i.test(String(res.info.runtimeLabel || '')));
+            assert.ok(/CUDA 13/i.test(String(res.info.runtimeLabel || '')));
+        } finally {
+            prefer.resolveInstallRuntimeSelection = orig;
+            prefer._resetForTests();
+        }
     });
 
     it('verifyManualPlacement returns early on unknown model', () => {

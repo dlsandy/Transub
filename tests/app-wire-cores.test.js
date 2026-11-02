@@ -179,4 +179,28 @@ describe('app-wire cores', () => {
         assert.strictEqual(host.buildRuntimeOptions().postTaskAction, 'none');
         assert.doesNotThrow(() => host.warnMissingRendererCores({ includeDeferred: false }));
     });
+
+    it('applies a Pro entitlement broadcast onto the host', () => {
+        let handler = null;
+        const host = minimalHost();
+        host.electron = {
+            onAdvancedEntitlementChanged: (fn) => {
+                handler = fn;
+                return () => {};
+            },
+        };
+        installChromeEntitlement(host);
+        assert.strictEqual(typeof handler, 'function');
+        const applied = [];
+        host.setAdvancedEntitled = (entitled, freeInfo) => {
+            applied.push({ entitled, freeInfo });
+        };
+        handler({
+            entitled: true,
+            freePipelineTranslate: { ok: true, modelId: 'lite', message: '', reason: '' },
+        });
+        assert.strictEqual(applied.length, 1);
+        assert.strictEqual(applied[0].entitled, true);
+        assert.strictEqual(applied[0].freeInfo.modelId, 'lite');
+    });
 });

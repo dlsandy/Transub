@@ -11,9 +11,13 @@
     const SECONDARY_KEY = 'transub.shelf.secondaryFilter';
     const DETAIL_WIDTH_KEY = 'transub.shelf.detailWidth';
 
+    const PAGE_SIZE = core.SHELF_PAGE_SIZE || 50;
+
     const state = {
         items: [],
         selectedId: '',
+        checkedIds: new Set(),
+        page: 1,
         query: '',
         detail: null,
         status: null,
@@ -69,6 +73,115 @@
             return core.filterShelfItems(state.items, state.filter, state.secondary);
         }
         return state.items.slice();
+    }
+
+    function pageSlice(items) {
+        if (typeof core.paginateShelfItems === 'function') {
+            return core.paginateShelfItems(items, state.page, PAGE_SIZE);
+        }
+        const list = Array.isArray(items) ? items : [];
+        const pageCount = Math.max(1, Math.ceil(list.length / PAGE_SIZE) || 1);
+        let page = Math.max(1, Math.min(pageCount, state.page || 1));
+        const start = (page - 1) * PAGE_SIZE;
+        return {
+            page,
+            pageSize: PAGE_SIZE,
+            pageCount,
+            total: list.length,
+            start,
+            end: Math.min(list.length, start + PAGE_SIZE),
+            items: list.slice(start, start + PAGE_SIZE),
+        };
+    }
+
+    function pruneCheckedIds() {
+        if (!state.checkedIds.size) return;
+        const alive = new Set(state.items.map((it) => it.id));
+        for (const id of [...state.checkedIds]) {
+            if (!alive.has(id)) state.checkedIds.delete(id);
+        }
+    }
+
+    function setItemChecked(id, checked) {
+        const key = String(id || '');
+        if (!key) return;
+        if (checked) state.checkedIds.add(key);
+        else state.checkedIds.delete(key);
+    }
+
+    function pageSelectionState(pageItems) {
+        const ids = (pageItems || []).map((it) => it.id).filter(Boolean);
+        if (!ids.length) return { all: false, some: false, none: true };
+        let n = 0;
+        for (const id of ids) {
+            if (state.checkedIds.has(id)) n += 1;
+        }
+        return {
+            all: n === ids.length,
+            some: n > 0 && n < ids.length,
+            none: n === 0,
+        };
+    }
+
+    function syncBatchBar(pageItems) {
+        const count = state.checkedIds.size;
+        const delBtn = $('shelfDeleteSelectedBtn');
+        if (delBtn) {
+            delBtn.disabled = count === 0;
+            delBtn.textContent = count > 0 ? `删除所选 (${count})` : '删除所选';
+        }
+        const hint = $('shelfSelectionCount');
+        if (hint) {
+            if (count > 0) {
+                hint.hidden = false;
+                hint.textContent = `已选 ${count}`;
+            } else {
+                hint.hidden = true;
+                hint.textContent = '';
+            }
+        }
+        const selBtn = $('shelfSelectPageBtn');
+        if (selBtn) {
+            const st = pageSelectionState(pageItems);
+            selBtn.textContent = st.all ? '取消本页' : '全选本页';
+            selBtn.disabled = !(pageItems && pageItems.length);
+            selBtn.setAttribute('aria-pressed', st.all ? 'true' : 'false');
+        }
+    }
+
+    function syncPager(slice) {
+        const pager = $('shelfPager');
+        const info = $('shelfPageInfo');
+        const prev = $('shelfPagePrev');
+        const next = $('shelfPageNext');
+        const total = slice?.total || 0;
+        const pageCount = slice?.pageCount || 1;
+        const page = slice?.page || 1;
+        state.page = page;
+        const show = total > 0;
+        if (pager) pager.hidden = !show;
+        if (info) {
+            info.textContent = total > 0
+                ? `第 ${page} / ${pageCount} 页 · ${total} 条`
+                : '第 1 / 1 页 · 0 条';
+        }
+        if (prev) prev.disabled = !show || page <= 1;
+        if (next) next.disabled = !show || page >= pageCount;
+    }
+
+    function resetPage() {
+        state.page = 1;
+    }
+
+    function jumpToMediaPage(mediaId) {
+        const id = String(mediaId || '');
+        if (!id) return;
+        const items = filteredItems();
+        const idx = items.findIndex((it) => it.id === id);
+        if (idx < 0) return;
+        state.page = typeof core.shelfPageForIndex === 'function'
+            ? core.shelfPageForIndex(idx, PAGE_SIZE)
+            : Math.floor(idx / PAGE_SIZE) + 1;
     }
 
     function syncFilterCounts() {
@@ -274,13 +387,16 @@
         }
     }
 
-    async function refreshList({ keepSelection = true } = {}) {
+    async function refreshList({ keepSelection = true, resetPage: doResetPage = false } = {}) {
         try {
             const res = await electron?.transubShelfList?.({ query: state.query });
             state.items = Array.isArray(res?.items) ? res.items : [];
+            pruneCheckedIds();
             if (!keepSelection || !state.items.some((it) => it.id === state.selectedId)) {
                 state.selectedId = state.items[0]?.id || '';
             }
+            if (doResetPage) resetPage();
+            else if (state.selectedId) jumpToMediaPage(state.selectedId);
             syncFilterCounts();
             renderList();
             if (state.selectedId) await loadDetail(state.selectedId);
@@ -292,6 +408,7 @@
             state.loadedOnce = true;
         } catch (err) {
             state.items = [];
+            state.checkedIds.clear();
             syncFilterCounts();
             renderList();
             setStatusLine(err?.message || '加载失败');
@@ -335,6 +452,18 @@
         return chips || '<span class="shelf-meta">无译文</span>';
     }
 
+    function bindCheckInputs(host) {
+        host.querySelectorAll('[data-shelf-check]').forEach((input) => {
+            input.addEventListener('click', (e) => e.stopPropagation());
+            input.addEventListener('change', (e) => {
+                e.stopPropagation();
+                const id = input.getAttribute('data-shelf-check') || '';
+                setItemChecked(id, !!input.checked);
+                syncBatchBar(pageSlice(filteredItems()).items);
+            });
+        });
+    }
+
     function renderCards(items) {
         const host = $('shelfCardList');
         if (!host) return;
@@ -347,15 +476,20 @@
         host.innerHTML = items.map((it) => {
             const missing = it.mediaExists === false;
             const active = it.id === state.selectedId;
+            const checked = state.checkedIds.has(it.id);
             const hasTr = Number(it.translationCount) > 0 || (it.translationLabels || []).length > 0;
             const cls = [
                 'shelf-card',
                 active ? 'is-active' : '',
+                checked ? 'is-checked' : '',
                 missing ? 'is-missing' : '',
                 hasTr ? 'has-translation' : '',
             ].filter(Boolean).join(' ');
             return `
-                <button type="button" class="${cls}" data-id="${escapeHtml(it.id)}" aria-selected="${active ? 'true' : 'false'}">
+                <div class="${cls}" data-id="${escapeHtml(it.id)}" role="button" tabindex="0" aria-selected="${active ? 'true' : 'false'}">
+                    <label class="shelf-check" title="选择">
+                        <input type="checkbox" data-shelf-check="${escapeHtml(it.id)}" ${checked ? 'checked' : ''} aria-label="选择 ${escapeHtml(it.title || it.id)}">
+                    </label>
                     <span class="shelf-card-stripe" aria-hidden="true"></span>
                     <span class="shelf-card-main">
                         <div class="shelf-card-title">${escapeHtml(it.title || it.id)}</div>
@@ -365,11 +499,22 @@
                         </div>
                     </span>
                     <span class="shelf-card-side">${escapeHtml(formatTime(it.updatedAt))}</span>
-                </button>`;
+                </div>`;
         }).join('');
-        host.querySelectorAll('.shelf-card').forEach((btn) => {
-            btn.addEventListener('click', () => selectMedia(btn.getAttribute('data-id') || ''));
+        host.querySelectorAll('.shelf-card').forEach((card) => {
+            const activate = () => selectMedia(card.getAttribute('data-id') || '');
+            card.addEventListener('click', (e) => {
+                if (e.target?.closest?.('.shelf-check')) return;
+                activate();
+            });
+            card.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    activate();
+                }
+            });
         });
+        bindCheckInputs(host);
     }
 
     function renderTable(items) {
@@ -386,8 +531,14 @@
                 ? '<span class="shelf-flag is-warn">视频缺失</span>'
                 : '';
             const active = it.id === state.selectedId ? ' is-active' : '';
+            const checked = state.checkedIds.has(it.id);
             return `
-                <tr class="shelf-row${active}" data-id="${escapeHtml(it.id)}" tabindex="0" role="row" aria-selected="${it.id === state.selectedId ? 'true' : 'false'}">
+                <tr class="shelf-row${active}${checked ? ' is-checked' : ''}" data-id="${escapeHtml(it.id)}" tabindex="0" role="row" aria-selected="${it.id === state.selectedId ? 'true' : 'false'}">
+                    <td class="shelf-col-check">
+                        <label class="shelf-check" title="选择">
+                            <input type="checkbox" data-shelf-check="${escapeHtml(it.id)}" ${checked ? 'checked' : ''} aria-label="选择 ${escapeHtml(it.title || it.id)}">
+                        </label>
+                    </td>
                     <td class="shelf-col-title">
                         <div class="shelf-row-title">${escapeHtml(it.title || it.id)}</div>
                         ${missing}
@@ -403,6 +554,7 @@
             <table class="shelf-table factory-task-table" role="grid" aria-label="字幕库列表">
                 <thead>
                     <tr>
+                        <th class="shelf-col-check" aria-label="选择"></th>
                         <th class="shelf-col-title">媒体</th>
                         <th class="shelf-col-langs">译文</th>
                         <th class="shelf-col-time">更新</th>
@@ -414,7 +566,7 @@
         host.querySelectorAll('.shelf-row').forEach((row) => {
             const activate = () => selectMedia(row.getAttribute('data-id') || '');
             row.addEventListener('click', (e) => {
-                if (e.target?.closest?.('[data-row-act]')) return;
+                if (e.target?.closest?.('[data-row-act], .shelf-check')) return;
                 activate();
             });
             row.addEventListener('keydown', (e) => {
@@ -430,16 +582,66 @@
                 selectMedia(btn.getAttribute('data-id') || '');
             });
         });
+        bindCheckInputs(host);
     }
 
     function renderList() {
         syncFilterTabsUi();
         syncViewToggleUi();
         syncEmptyState();
-        const items = filteredItems();
-        if (state.view === 'cards') renderCards(items);
-        else renderTable(items);
+        const all = filteredItems();
+        const slice = pageSlice(all);
+        state.page = slice.page;
+        if (state.view === 'cards') renderCards(slice.items);
+        else renderTable(slice.items);
+        syncPager(slice);
+        syncBatchBar(slice.items);
         syncDetailOpen();
+    }
+
+    function toggleSelectPage() {
+        const slice = pageSlice(filteredItems());
+        const st = pageSelectionState(slice.items);
+        const next = !st.all;
+        for (const it of slice.items) {
+            setItemChecked(it.id, next);
+        }
+        renderList();
+    }
+
+    function setPage(next) {
+        const slice = pageSlice(filteredItems());
+        const page = Math.max(1, Math.min(slice.pageCount, Math.floor(Number(next)) || 1));
+        if (page === state.page) return;
+        state.page = page;
+        renderList();
+    }
+
+    async function deleteSelected() {
+        const ids = [...state.checkedIds];
+        if (!ids.length) return;
+        const msg = ids.length === 1
+            ? '删除所选 1 个媒体条目？仅移除库内记录，不删旁路字幕文件。'
+            : `删除所选 ${ids.length} 个媒体条目？仅移除库内记录，不删旁路字幕文件。`;
+        if (!window.confirm(msg)) return;
+        try {
+            const res = await electron?.transubShelfDeleteMedia?.({ mediaIds: ids });
+            if (!res?.ok) {
+                setStatusLine(res?.error || '批量删除失败');
+                return;
+            }
+            const deleted = Number(res.deleted) || 0;
+            state.checkedIds.clear();
+            if (ids.includes(state.selectedId)) {
+                state.selectedId = '';
+                state.detail = null;
+                state.previewByKey = Object.create(null);
+            }
+            setStatusLine(deleted > 0 ? `已删除 ${deleted} 个条目` : '无条目被删除');
+            await refreshList({ keepSelection: !!state.selectedId });
+        } catch (err) {
+            setStatusLine(err?.message || '批量删除失败');
+        }
     }
 
     function activeTabMeta() {
@@ -791,6 +993,7 @@
                 const res = await electron?.transubShelfDeleteMedia?.({ mediaId });
                 if (!res?.ok) setStatusLine(res?.error || '删除失败');
                 else {
+                    state.checkedIds.delete(mediaId);
                     state.selectedId = '';
                     state.previewByKey = Object.create(null);
                     await refreshList({ keepSelection: false });
@@ -845,6 +1048,8 @@
         if (mediaId) {
             state.selectedId = mediaId;
             await refreshList();
+            jumpToMediaPage(mediaId);
+            renderList();
             return;
         }
         const want = String(mediaPath || '').trim().toLowerCase().replace(/\\/g, '/');
@@ -856,6 +1061,7 @@
         });
         if (hit) {
             state.selectedId = hit.id;
+            jumpToMediaPage(hit.id);
             renderList();
             await loadDetail(hit.id);
         }
@@ -900,6 +1106,7 @@
 
     function setFilter(next) {
         state.filter = String(next || 'all');
+        resetPage();
         savePrefs();
         syncFilterCounts();
         renderList();
@@ -909,6 +1116,7 @@
         state.secondary = typeof core.normalizeShelfSecondary === 'function'
             ? core.normalizeShelfSecondary(next)
             : String(next || 'all');
+        resetPage();
         savePrefs();
         renderList();
     }
@@ -930,12 +1138,16 @@
         $('shelfRefreshBtn')?.addEventListener('click', () => { void refreshList(); });
         $('shelfEmptyAssociateBtn')?.addEventListener('click', () => { void handleAction('associate'); });
         $('shelfEmptyRevealBtn')?.addEventListener('click', () => { void revealShelfRoot(); });
+        $('shelfSelectPageBtn')?.addEventListener('click', () => toggleSelectPage());
+        $('shelfDeleteSelectedBtn')?.addEventListener('click', () => { void deleteSelected(); });
+        $('shelfPagePrev')?.addEventListener('click', () => setPage(state.page - 1));
+        $('shelfPageNext')?.addEventListener('click', () => setPage(state.page + 1));
 
         let searchTimer = null;
         $('shelfSearch')?.addEventListener('input', (e) => {
             state.query = String(e.target?.value || '');
             clearTimeout(searchTimer);
-            searchTimer = setTimeout(() => { void refreshList(); }, 200);
+            searchTimer = setTimeout(() => { void refreshList({ resetPage: true }); }, 200);
         });
 
         document.querySelectorAll('[data-shelf-filter]').forEach((btn) => {

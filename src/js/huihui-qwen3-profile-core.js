@@ -21,8 +21,9 @@
 
     /** Short system-prompt addon for plot polish. */
     const POLISH_PROMPT_ADDON = [
-        'Huihui/消融模型润色：只修欠译/错译/病句与称呼；禁止为顺口整句换写或改意图；',
-        '无成人锚点时禁止性化。',
+        'Huihui/消融模型润色：只修欠译/错译/病句/称呼、邻条回声窜句与多人混句拆分；禁止为顺口整句换写或改意图；',
+        '邻条 flags 含 ja_echo/zh_echo/zh_prefix_bleed 时按本条原文改准并去掉窜入邻句；',
+        'flags 含 multi_speaker / ja_mid_sentence_break 时必须用 split 拆成两条话轮；无成人锚点时禁止性化。',
     ].join('');
 
     function probeString(modelIdOrEntry) {

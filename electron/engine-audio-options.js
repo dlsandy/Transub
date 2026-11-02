@@ -36,13 +36,15 @@ function resolveMaxSingleSegmentMs(merged = {}) {
     if (merged.vadMaxSingleSegmentMs != null && merged.vadMaxSingleSegmentMs !== '') {
         const n = Number(merged.vadMaxSingleSegmentMs);
         if (Number.isFinite(n)) {
-            return Math.max(5000, Math.min(60000, Math.round(n)));
+            // Soft-AV FireRed wants ~3.5–5s; keep a 3s floor so UI typos cannot
+            // request micro-islands that thrash ASR.
+            return Math.max(3000, Math.min(60000, Math.round(n)));
         }
     }
     if (merged.targetChunkDurationS != null && merged.targetChunkDurationS !== '') {
         const sec = Number(merged.targetChunkDurationS);
         if (Number.isFinite(sec) && sec > 0) {
-            return Math.max(5000, Math.min(60000, Math.round(sec * 1000)));
+            return Math.max(3000, Math.min(60000, Math.round(sec * 1000)));
         }
     }
     return null;
@@ -68,10 +70,13 @@ function buildVadJobOptions(merged = {}) {
         || vadModelRaw.includes('firered')
     ) && !merged.vadSensitive;
 
-    // filmAudioEnhance (Demucs) or filmVadPreset (VAD numbers only) both apply film defaults.
-    // Demucs must not stack with WhisperSeg (sensitive).
+    // filmAudioEnhance (Demucs) or filmVadPreset (VAD numbers only) both apply film defaults
+    // — except enhanceForVadOnly: Demucs feeds VAD only; keep soft-AV VAD / ASR blanking
+    // (WhisperJAV-style). Demucs must not stack with WhisperSeg (sensitive).
     const filmEnhance = !!merged.filmAudioEnhance;
-    const film = filmEnhance || !!merged.filmVadPreset;
+    const enhanceForVadOnly = filmEnhance && !!merged.enhanceForVadOnly;
+    // Full Demucs→ASR film path, or explicit film-VAD-without-Demucs.
+    const film = (filmEnhance && !enhanceForVadOnly) || (!!merged.filmVadPreset && !filmEnhance);
 
     // JA Whisper translate/dual: default WhisperSeg (sensitive) unless user picked Silero/FSMN.
     let sensitive = !!merged.vadSensitive;
@@ -151,13 +156,26 @@ function buildVadJobOptions(merged = {}) {
     if (sensitive) {
         vadModel = 'whisperseg-asmr';
     } else if (!isWhisper) {
-        // FunASR only loads fsmn-vad. Silero is faster-whisper built-in; WhisperSeg is ONNX.
+        // FunASR/SenseVoice only loads fsmn-vad. Silero/WhisperSeg are Whisper-side.
+        // Qwen (+ Parakeet/Cohere/…) use FireRed/TEN as the island timing VAD — keep it.
         const vadL = vadModel.toLowerCase();
+        const asrKeepsIslandVad = (
+            asr.includes('qwen')
+            || asr.includes('parakeet')
+            || asr.includes('cohere')
+            || asr.includes('firered-asr')
+            || asr.includes('reazon')
+        );
+        const islandVad = vadL.includes('firered')
+            || vadL === 'ten'
+            || vadL === 'ten-vad'
+            || vadL.startsWith('ten-');
+        const remapIslandVad = islandVad && !asrKeepsIslandVad;
         if (
             vadL === 'whisperseg-asmr'
             || vadL.includes('whisperseg')
             || vadL === 'silero-vad'
-            || vadL.includes('firered')
+            || remapIslandVad
         ) {
             vadModel = 'fsmn-vad';
         }
@@ -185,13 +203,18 @@ function buildVadJobOptions(merged = {}) {
     const halluRaw = merged.hallucinationSilenceThreshold;
     if (halluRaw != null && halluRaw !== '') {
         const hallu = Number(halluRaw);
-        if (Number.isFinite(hallu) && hallu > 0) {
-            out.hallucinationSilenceThreshold = Math.max(0.1, Math.min(30, hallu));
+        if (Number.isFinite(hallu)) {
+            if (hallu > 0) {
+                out.hallucinationSilenceThreshold = Math.max(0.1, Math.min(30, hallu));
+            } else {
+                // Explicit off (0) — Engine must not re-apply film/JA defaults.
+                out.hallucinationSilenceThreshold = 0;
+            }
         }
     } else if (film) {
         const filmHallu = merged.filmHallucinationSilenceThreshold;
         if (filmHallu === 0 || filmHallu === '0') {
-            // explicit off
+            out.hallucinationSilenceThreshold = 0;
         } else if (filmHallu != null && filmHallu !== '') {
             const n = Number(filmHallu);
             if (Number.isFinite(n) && n > 0) {
@@ -211,7 +234,15 @@ function buildVadJobOptions(merged = {}) {
 /**
  * @param {object} merged
  * @param {{ entitled?: boolean }} [gate]
- * @returns {{ denoise: string, separate: boolean, filmAudioEnhance: boolean, filmPreset: boolean }}
+ * @returns {{
+ *   denoise: string,
+ *   separate: boolean,
+ *   filmAudioEnhance: boolean,
+ *   filmPreset: boolean,
+ *   enhanceForVadOnly: boolean,
+ *   filmDemucsAutoSplitMinutes: number,
+ *   filmDemucsChunkMinutes: number,
+ * }}
  */
 function buildAudioJobOptions(merged = {}, gate = {}) {
     const entitled = gate.entitled !== false;
@@ -220,11 +251,31 @@ function buildAudioJobOptions(merged = {}, gate = {}) {
     const denoise = filmEnhance ? 'off' : (merged.audioLightDenoise ? 'light' : 'off');
     // Advanced: film VAD numbers without Demucs (honored when enhance is off)
     const filmVadOnly = !!merged.filmVadPreset && entitled && !filmEnhance;
+    // Vocal stem for VAD only; ASR keeps pre-Demucs audio (Qwen/TEN / WhisperSeg).
+    const enhanceForVadOnly = filmEnhance && !!merged.enhanceForVadOnly;
+    let autoSplitMin = 150;
+    let chunkMin = 60;
+    try {
+        const {
+            clampFilmDemucsAutoSplitMinutes,
+            clampFilmDemucsChunkMinutes,
+        } = require('../src/js/settings-options-normalize-core');
+        autoSplitMin = clampFilmDemucsAutoSplitMinutes(merged.filmDemucsAutoSplitMinutes);
+        chunkMin = clampFilmDemucsChunkMinutes(merged.filmDemucsChunkMinutes);
+    } catch {
+        const a = Number(merged.filmDemucsAutoSplitMinutes);
+        const c = Number(merged.filmDemucsChunkMinutes);
+        autoSplitMin = Number.isFinite(a) ? Math.max(0, Math.min(720, Math.round(a))) : 150;
+        chunkMin = Number.isFinite(c) ? Math.max(10, Math.min(240, Math.round(c))) : 60;
+    }
     return {
         denoise,
         separate: filmEnhance,
         filmAudioEnhance: filmEnhance,
         filmPreset: filmEnhance || filmVadOnly,
+        enhanceForVadOnly,
+        filmDemucsAutoSplitMinutes: autoSplitMin,
+        filmDemucsChunkMinutes: chunkMin,
     };
 }
 

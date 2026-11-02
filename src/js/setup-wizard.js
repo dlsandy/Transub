@@ -41,6 +41,7 @@
     const pageQuery = new URLSearchParams(global.location?.search || '');
     const isStandaloneSettings = pageQuery.get('standaloneSettings') === '1';
     const isStandaloneWizard = pageQuery.get('standaloneWizard') === '1';
+    const isStandaloneEnvDoctor = pageQuery.get('envDoctor') === '1';
 
     const state = {
         stepIndex: 0,
@@ -196,6 +197,7 @@
             const key = global.TransubEnvCheck?.DONE_KEY || 'transub.envCheck.done';
             localStorage.setItem(key, '1');
         } catch (_) { /* ignore */ }
+        try { void electron?.transubEnvDoctorStamp?.(); } catch (_) { /* ignore */ }
     }
 
     function sharedGoalsFns() {
@@ -697,7 +699,7 @@
     }
 
     async function maybeAutoOpen() {
-        if (isStandaloneSettings || isStandaloneWizard) return false;
+        if (isStandaloneSettings || isStandaloneWizard || isStandaloneEnvDoctor) return false;
         const completed = typeof Onboarding.isWizardCompleted === 'function'
             ? Onboarding.isWizardCompleted()
             : (() => {

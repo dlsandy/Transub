@@ -17,6 +17,8 @@ function parseHostPort(url) {
 function mapDeviceForEngine(device) {
     const d = String(device || '').trim().toLowerCase();
     if (d === 'cpu') return 'cpu';
+    // Intel Arc uses torch.xpu (not torch.cuda).
+    if (d === 'intel' || d === 'xpu' || d === 'arc') return 'xpu';
     // Pass cuda explicitly so Demucs / ASR do not silently treat preference as vague "auto".
     // AMD / ROCm PyTorch still uses the torch.cuda device API — map amd → cuda.
     if (

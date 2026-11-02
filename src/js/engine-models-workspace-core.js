@@ -377,10 +377,15 @@ function applyGpuRuntimeProbe(probe = {}) {
         syncEnvGpuChip('busy', '待检测');
         return;
     }
+    const intelXpu = !!(probe.hasXpu || String(probe.vendor || '').toLowerCase() === 'intel')
+        && !probe.hasCuda
+        && !probe.hasRocm;
     const needTorch = probe.hasRocm && !probe.hasCuda
         ? !probe.torchRocm
-        : (!!probe.torchCudaMismatch
-            || (!!probe.needsTorchCuda128 && probe.torchCudaSuitable === false));
+        : (intelXpu
+            ? !probe.torchXpu
+            : (!!probe.torchCudaMismatch
+                || (!!probe.needsTorchCuda128 && probe.torchCudaSuitable === false)));
     const kind = status === 'ready' && !needTorch
         ? 'ok'
         : (status === 'need_install' || status === 'partial' || status === 'driver_too_old' || needTorch
@@ -388,17 +393,26 @@ function applyGpuRuntimeProbe(probe = {}) {
             : 'busy');
     const gpu = probe.gpuName ? `${probe.gpuName}` : '';
     const cuda = probe.driverCudaVersion ? uiTf('驱动 CUDA {ver}', { ver: probe.driverCudaVersion }) : '';
-    const rocm = probe.hasRocm && !probe.hasCuda
+    const vendorTorch = probe.hasRocm && !probe.hasCuda
         ? (probe.torchRocm ? 'ROCm PyTorch 就绪' : '需 ROCm PyTorch')
-        : '';
-    const bits = [hint || status, gpu, cuda || rocm].filter(Boolean);
+        : (intelXpu
+            ? (probe.torchXpu ? 'XPU PyTorch 就绪' : '需 XPU PyTorch')
+            : '');
+    const bits = [hint || status, gpu, cuda || vendorTorch].filter(Boolean);
     setEngineGpuStatusText(bits.join(' · '), kind);
     const isReadyChip = !needTorch
-        && (status === 'ready' || /^GPU\s*运行库已就绪/.test(hint) || (probe.hasRocm && probe.torchRocm));
+        && (status === 'ready'
+            || /^GPU\s*运行库已就绪/.test(hint)
+            || (probe.hasRocm && probe.torchRocm)
+            || (intelXpu && probe.torchXpu));
     const chipLabel = needTorch
-        ? (probe.hasRocm && !probe.hasCuda ? '需补齐 ROCm' : '需补齐 PyTorch')
+        ? (probe.hasRocm && !probe.hasCuda
+            ? '需补齐 ROCm'
+            : (intelXpu ? '需补齐 XPU' : '需补齐 PyTorch'))
         : (isReadyChip
-            ? (probe.hasRocm && !probe.hasCuda ? 'ROCm已就绪' : 'GPU运行库已就绪')
+            ? (probe.hasRocm && !probe.hasCuda
+                ? 'ROCm已就绪'
+                : (intelXpu ? 'XPU已就绪' : 'GPU运行库已就绪'))
             : (status === 'need_install' || status === 'partial'
                 ? '需安装 GPU 支持'
                 : (hint || status || '检测中')));
@@ -415,10 +429,14 @@ function applyGpuRuntimeProbe(probe = {}) {
         // Keep the action visible (like「下载 GPU 支持」) so users can reinstall;
         // only emphasize when probe says Blackwell torch is missing/wrong.
         const amdRocm = !!(probe.hasRocm && !probe.hasCuda);
-        els.engineEnsureTorchCudaBtn.textContent = amdRocm ? '补齐 ROCm PyTorch' : '补齐 CUDA PyTorch';
+        els.engineEnsureTorchCudaBtn.textContent = amdRocm
+            ? '补齐 ROCm PyTorch'
+            : (intelXpu ? '补齐 XPU PyTorch' : '补齐 CUDA PyTorch');
         els.engineEnsureTorchCudaBtn.title = amdRocm
             ? 'Qwen3-ASR / SenseVoice / Demucs 用的 ROCm PyTorch；必须装进引擎 runtime（系统 pip 无效）'
-            : 'Qwen3-ASR / Demucs 用的 PyTorch；RTX 50 系需 cu128 或 cu130';
+            : (intelXpu
+                ? 'Qwen3-ASR / SenseVoice / Demucs 用的 XPU PyTorch；必须装进引擎 runtime（系统 pip 无效）'
+                : 'Qwen3-ASR / Demucs 用的 PyTorch；RTX 50 系需 cu128 或 cu130');
         els.engineEnsureTorchCudaBtn.classList.toggle('ring-1', needTorch);
         els.engineEnsureTorchCudaBtn.classList.toggle('ring-amber-300', needTorch);
         els.engineEnsureTorchCudaBtn.classList.remove('hidden');
@@ -439,7 +457,13 @@ function paintSoftGpuStatusPlaceholder() {
 
 async function ensureEngineTorchCuda({ force = true, silent = false, assumeBusy = false } = {}) {
     const amdRocm = !!(cachedGpuRuntimeProbe?.hasRocm && !cachedGpuRuntimeProbe?.hasCuda);
-    const actionLabel = amdRocm ? '补齐 ROCm PyTorch' : '补齐 CUDA PyTorch';
+    const intelXpu = !!(cachedGpuRuntimeProbe?.hasXpu
+        || String(cachedGpuRuntimeProbe?.vendor || '').toLowerCase() === 'intel')
+        && !cachedGpuRuntimeProbe?.hasCuda
+        && !cachedGpuRuntimeProbe?.hasRocm;
+    const actionLabel = amdRocm
+        ? '补齐 ROCm PyTorch'
+        : (intelXpu ? '补齐 XPU PyTorch' : '补齐 CUDA PyTorch');
     if (!assumeBusy) {
         const ready = await ensureEngineReadyForGpuAction(actionLabel);
         if (!ready) return { ok: false, error: 'engine_not_ready', cancelled: true };
@@ -452,24 +476,26 @@ async function ensureEngineTorchCuda({ force = true, silent = false, assumeBusy 
         return { ok: false, error: 'unsupported' };
     }
     if (!assumeBusy && getEngineModelsBusy()) return { ok: false, error: 'busy' };
-    if (amdRocm) {
-        appendLog('开始补齐 ROCm PyTorch（装进引擎运行时）…', 'info');
-        setEngineGpuStatusText('正在补齐 ROCm PyTorch…', 'busy');
-        setEngineStatusText('正在补齐 ROCm PyTorch…', 'busy');
+    if (amdRocm || intelXpu) {
+        const kind = amdRocm ? 'torch-rocm' : 'torch-xpu';
+        const short = amdRocm ? 'ROCm PyTorch' : 'XPU PyTorch';
+        appendLog(`开始补齐 ${short}（装进引擎运行时）…`, 'info');
+        setEngineGpuStatusText(`正在补齐 ${short}…`, 'busy');
+        setEngineStatusText(`正在补齐 ${short}…`, 'busy');
         if (!assumeBusy) {
             setEngineDownloadBusy(true);
             setEngineDownloadProgressPct(0);
-            setEngineDownloadProgressVisible(true, '正在把 ROCm PyTorch 装进引擎运行时…');
-            appendEngineDownloadLog('开始补齐 ROCm PyTorch');
+            setEngineDownloadProgressVisible(true, `正在把 ${short} 装进引擎运行时…`);
+            appendEngineDownloadLog(`开始补齐 ${short}`);
         }
         try {
             const res = await electron.transubEngineRunDownload({
                 ...engineFormPayload(),
-                kind: 'torch-rocm',
+                kind,
                 force: !!force,
             });
             if (res?.ok) {
-                const okMsg = res.message || 'ROCm PyTorch 已装进引擎运行时';
+                const okMsg = res.message || `${short} 已装进引擎运行时`;
                 if (!silent) {
                     appendLog(okMsg, 'ok');
                     setEngineStatusText(okMsg, 'ok');
@@ -477,7 +503,7 @@ async function ensureEngineTorchCuda({ force = true, silent = false, assumeBusy 
                 await refreshEngineGpuStatus({ silent: true });
                 return { ok: true, message: okMsg, ...(res || {}) };
             }
-            const err = formatEngineDownloadError(res?.error || res?.message || 'ROCm PyTorch 安装失败');
+            const err = formatEngineDownloadError(res?.error || res?.message || `${short} 安装失败`);
             if (!silent) {
                 appendLog(err, 'err');
                 setEngineStatusText(err, 'err');
@@ -587,13 +613,18 @@ async function promptTorchCudaMismatchBeforeBatch(asrModelId) {
         return true;
     }
     const amdRocm = !!gpuTorchApi.needsTorchRocmForAsr?.(cachedGpuRuntimeProbe, asrModelId);
+    const intelXpu = !!gpuTorchApi.needsTorchXpuForAsr?.(cachedGpuRuntimeProbe, asrModelId);
+    const short = amdRocm ? 'ROCm PyTorch' : (intelXpu ? 'XPU PyTorch' : 'CUDA PyTorch');
     const message = amdRocm
         ? (gpuTorchApi.buildTorchRocmMessage?.(cachedGpuRuntimeProbe, asrModelId)
             || '本机 AMD GPU 需要引擎内 ROCm PyTorch 才能 GPU 转写。')
-        : (gpuTorchApi.buildTorchMismatchMessage?.(cachedGpuRuntimeProbe, asrModelId)
-            || '本机 GPU 需要升级 CUDA PyTorch 才能 GPU 转写。');
+        : (intelXpu
+            ? (gpuTorchApi.buildTorchXpuMessage?.(cachedGpuRuntimeProbe, asrModelId)
+                || '本机 Intel Arc 需要引擎内 XPU PyTorch 才能 GPU 转写。')
+            : (gpuTorchApi.buildTorchMismatchMessage?.(cachedGpuRuntimeProbe, asrModelId)
+                || '本机 GPU 需要升级 CUDA PyTorch 才能 GPU 转写。'));
     const choice = await appConfirmChoice({
-        title: amdRocm ? '需要补齐 ROCm PyTorch' : '需要补齐 CUDA PyTorch',
+        title: `需要补齐 ${short}`,
         message,
         primaryLabel: '一键补齐',
         secondaryLabel: '仍用 CPU 继续',
@@ -601,24 +632,33 @@ async function promptTorchCudaMismatchBeforeBatch(asrModelId) {
     });
     if (choice === 'primary') {
         setBadge('待安装', 'warn');
-        appendLog(amdRocm ? '正在补齐 ROCm PyTorch…' : '正在补齐 CUDA PyTorch…', 'info');
+        appendLog(`正在补齐 ${short}…`, 'info');
         const res = await ensureEngineTorchCuda({ force: true, silent: false });
         const ok = amdRocm
             ? !!(res?.ok && cachedGpuRuntimeProbe?.torchRocm)
-            : !!(res?.ok && !cachedGpuRuntimeProbe?.torchCudaMismatch);
+            : (intelXpu
+                ? !!(res?.ok && cachedGpuRuntimeProbe?.torchXpu)
+                : !!(res?.ok && !cachedGpuRuntimeProbe?.torchCudaMismatch));
         if (ok) {
-            appendLog(amdRocm ? 'ROCm PyTorch 已就绪，请再次开始生成' : 'CUDA PyTorch 已就绪，请再次开始生成', 'ok');
+            appendLog(`${short} 已就绪，请再次开始生成`, 'ok');
         } else {
-            appendLog(amdRocm ? 'ROCm PyTorch 未就绪；完成后请再次开始生成' : 'CUDA PyTorch 未就绪；完成后请再次开始生成', 'warn');
+            appendLog(`${short} 未就绪；完成后请再次开始生成`, 'warn');
             openAppSettings('install');
         }
         return false;
     }
     if (choice === 'secondary') {
-        appendLog(amdRocm ? '已选择 CPU 转写（未装引擎 ROCm PyTorch，将极慢）' : '已选择 CPU 转写（Blackwell GPU 无匹配 PyTorch，将极慢）', 'warn');
+        appendLog(
+            amdRocm
+                ? '已选择 CPU 转写（未装引擎 ROCm PyTorch，将极慢）'
+                : (intelXpu
+                    ? '已选择 CPU 转写（未装引擎 XPU PyTorch，将极慢）'
+                    : '已选择 CPU 转写（Blackwell GPU 无匹配 PyTorch，将极慢）'),
+            'warn',
+        );
         return true;
     }
-    appendLog(amdRocm ? '已取消开始生成（需补齐 ROCm PyTorch 才能 GPU 转写）' : '已取消开始生成（需补齐 CUDA PyTorch 才能 GPU 转写）', 'warn');
+    appendLog(`已取消开始生成（需补齐 ${short} 才能 GPU 转写）`, 'warn');
     return false;
 }
 
@@ -631,13 +671,18 @@ async function maybePromptTorchCudaOnAsrSelect(asrModelId) {
         if (sessionStorage.getItem(key) === '1') return;
     } catch (_) { /* ignore */ }
     const amdRocm = !!gpuTorchApi.needsTorchRocmForAsr?.(cachedGpuRuntimeProbe, asrModelId);
+    const intelXpu = !!gpuTorchApi.needsTorchXpuForAsr?.(cachedGpuRuntimeProbe, asrModelId);
+    const short = amdRocm ? 'ROCm PyTorch' : (intelXpu ? 'XPU PyTorch' : 'CUDA PyTorch');
     const message = amdRocm
         ? (gpuTorchApi.buildTorchRocmMessage?.(cachedGpuRuntimeProbe, asrModelId)
             || '本机 AMD GPU 需要引擎内 ROCm PyTorch 才能 GPU 转写。')
-        : (gpuTorchApi.buildTorchMismatchMessage?.(cachedGpuRuntimeProbe, asrModelId)
-            || '本机 RTX 50 系需要 cu128/cu130 版 PyTorch 才能 GPU 转写。');
+        : (intelXpu
+            ? (gpuTorchApi.buildTorchXpuMessage?.(cachedGpuRuntimeProbe, asrModelId)
+                || '本机 Intel Arc 需要引擎内 XPU PyTorch 才能 GPU 转写。')
+            : (gpuTorchApi.buildTorchMismatchMessage?.(cachedGpuRuntimeProbe, asrModelId)
+                || '本机 RTX 50 系需要 cu128/cu130 版 PyTorch 才能 GPU 转写。'));
     const choice = await appConfirmChoice({
-        title: amdRocm ? 'Qwen3-ASR 需要 ROCm PyTorch' : 'Qwen3-ASR 需要 CUDA PyTorch',
+        title: `Qwen3-ASR 需要 ${short}`,
         message,
         primaryLabel: '去补齐',
         secondaryLabel: '稍后',
@@ -949,7 +994,50 @@ async function ensureEngineGpuSupport({ force = false, silent = false } = {}) {
                 setEngineStatusText(msg, 'ok');
             }
             await refreshEngineGpuStatus({ silent: true });
-            if (cachedGpuRuntimeProbe?.torchCudaMismatch) {
+            if (cachedGpuRuntimeProbe?.hasRocm && !cachedGpuRuntimeProbe?.hasCuda
+                && !cachedGpuRuntimeProbe?.torchRocm) {
+                appendLog('GPU 组件已就绪；继续补齐 ROCm PyTorch…', 'info');
+                const torchRes = await ensureEngineTorchCuda({
+                    force: true,
+                    silent: true,
+                    assumeBusy: true,
+                });
+                if (torchRes?.ok) {
+                    const torchMsg = torchRes.message || 'ROCm PyTorch 安装完成';
+                    setEngineDownloadProgressPct(100);
+                    setEngineDownloadProgressVisible(true, torchMsg);
+                    appendEngineDownloadLog(torchMsg);
+                    if (!silent) {
+                        appendLog(torchMsg, 'ok');
+                        setEngineStatusText(torchMsg, 'ok');
+                    }
+                    return torchRes;
+                }
+            } else if (
+                (cachedGpuRuntimeProbe?.hasXpu
+                    || String(cachedGpuRuntimeProbe?.vendor || '').toLowerCase() === 'intel')
+                && !cachedGpuRuntimeProbe?.hasCuda
+                && !cachedGpuRuntimeProbe?.hasRocm
+                && !cachedGpuRuntimeProbe?.torchXpu
+            ) {
+                appendLog('GPU 组件已就绪；继续补齐 XPU PyTorch…', 'info');
+                const torchRes = await ensureEngineTorchCuda({
+                    force: true,
+                    silent: true,
+                    assumeBusy: true,
+                });
+                if (torchRes?.ok) {
+                    const torchMsg = torchRes.message || 'XPU PyTorch 安装完成';
+                    setEngineDownloadProgressPct(100);
+                    setEngineDownloadProgressVisible(true, torchMsg);
+                    appendEngineDownloadLog(torchMsg);
+                    if (!silent) {
+                        appendLog(torchMsg, 'ok');
+                        setEngineStatusText(torchMsg, 'ok');
+                    }
+                    return torchRes;
+                }
+            } else if (cachedGpuRuntimeProbe?.torchCudaMismatch) {
                 appendLog('GPU 组件已就绪；检测到 PyTorch 与本机 GPU 不兼容，继续补齐 CUDA PyTorch…', 'info');
                 const torchRes = await ensureEngineTorchCuda({
                     force: true,
@@ -1162,7 +1250,7 @@ function isManagedLlmDownloadId(modelId, source = '') {
     return false;
 }
 
-/** Hub ASR/MT/VAD models that can be placed manually under engine models/. */
+/** Hub ASR/MT/VAD/decision models that can be placed manually under engine models/. */
 function canManualEngineHubDownload(item) {
     if (manualDownloadApi.canManualEngineHubDownload) {
         return manualDownloadApi.canManualEngineHubDownload(item, manualDownloadDeps());
@@ -1995,7 +2083,9 @@ async function downloadEngineModels(options = {}) {
             return;
         }
     } catch (err) {
-        const msg = formatEngineDownloadError(err?.message || String(err));
+        const msg = formatEngineDownloadError(
+            err?.message || (err != null ? String(err) : '') || '模型下载失败',
+        );
         setEngineDownloadProgressVisible(true, msg);
         appendEngineDownloadLog(msg);
         appendLog(msg, 'err');

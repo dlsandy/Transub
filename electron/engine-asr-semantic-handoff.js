@@ -19,6 +19,18 @@ const {
 } = require('./engine-pre-mt-qc-handoff');
 const { extractOutputPaths } = require('./engine-job-progress');
 
+function gateTranslateJobMtFields(body, ctx = {}) {
+    try {
+        const { assertTranslateJobMtFields } = require('./engine-batch-item');
+        return assertTranslateJobMtFields(
+            body,
+            ctx.engineTask || body?.task || ctx.jobBody?.task,
+        );
+    } catch (_) {
+        return { ok: true };
+    }
+}
+
 function saveShelfSourceBeforeTranslate(ctx, sourceCues, resolvedOutPaths = {}) {
     try {
         const { saveShelfSourceSlotsBeforeMt } = require('./subtitle-shelf-pipeline-ingest');
@@ -209,6 +221,84 @@ function healSourceCuesBeforeTranslate(sourceCues, ctx = {}) {
     return enriched;
 }
 
+/**
+ * Heal timelines, then drop/soften pure onomatopoeia on the source track
+ * (postBatchOnomatopoeiaMode) before pre-MT QC / checkpoint so MT skips those cues.
+ */
+function prepareSourceCuesBeforePreMt(sourceCues, ctx = {}, resolvedOutPaths = {}) {
+    const outPaths = {
+        ...(ctx.repairMeta?.outPaths || {}),
+        ...(resolvedOutPaths || {}),
+        ...(ctx.outPaths || {}),
+    };
+    let source = healSourceCuesBeforeTranslate(sourceCues, {
+        mediaPath: ctx.mediaPath
+            || ctx.repairMeta?.mediaPath
+            || ctx.options?.mediaPath
+            || ctx.fileMerged?.mediaPath,
+        repairMeta: ctx.repairMeta,
+        options: { ...(ctx.fileMerged || {}), ...(ctx.options || {}) },
+        fileMerged: ctx.fileMerged,
+        outPaths,
+        outputDir: ctx.outputDir || ctx.options?.outputDir || ctx.fileMerged?.outputDir,
+        onLog: ctx.onLog,
+    });
+    // Deterministic structure cleanup (bleed strip / fragment merge) before QC / MT.
+    try {
+        const opts = { ...(ctx.fileMerged || {}), ...(ctx.options || {}) };
+        if (opts.asrStructureCleanup !== false) {
+            const { cleanupAsrCues } = require('./asr-cue-cleanup');
+            const cleaned = cleanupAsrCues(source, {
+                nameLoop: opts.asrCleanupNameLoop !== false,
+                jaAsrDomainFix: opts.asrCleanupDomainFix !== false,
+                dedupeAsrEchoes: opts.dedupeAsrEchoes !== false,
+                stitchJaFragments: opts.stitchJaFragments !== false,
+                stripPrevPrefixBleed: opts.stripPrevPrefixBleed !== false,
+                mergeIncompleteJa: opts.mergeIncompleteJa !== false,
+                stripAsrTrailingEllipsis: opts.stripAsrTrailingEllipsis !== false,
+            });
+            if (Array.isArray(cleaned?.cues) && cleaned.cues.length) {
+                source = cleaned.cues.map((c) => {
+                    const startMs = Number(c.startMs) || 0;
+                    const endMs = Number(c.endMs) || startMs + 1000;
+                    const row = {
+                        start: startMs / 1000,
+                        end: endMs / 1000,
+                        startMs,
+                        endMs,
+                        text: String(c.text || ''),
+                    };
+                    for (const key of [
+                        'avgLogprob', 'avg_logprob', 'noSpeechProb', 'no_speech_prob',
+                        'confidence', 'score', 'probability', 'prob', 'meta', 'index',
+                    ]) {
+                        if (c[key] != null) row[key] = c[key];
+                    }
+                    return row;
+                }).filter((c) => String(c.text || '').trim());
+                if (cleaned.changed > 0) {
+                    ctx.onLog?.(cleaned.summary || `ASR 结构清理：${cleaned.changed}`);
+                }
+            }
+        }
+    } catch (err) {
+        ctx.onLog?.(`ASR 结构清理跳过：${err?.message || err}`);
+    }
+    try {
+        const { applyPreMtOnomatopoeiaClean } = require('./pre-mt-onomatopoeia-clean');
+        const cleaned = applyPreMtOnomatopoeiaClean({
+            sourceCues: source,
+            options: { ...(ctx.fileMerged || {}), ...(ctx.options || {}) },
+            outPaths,
+            onLog: ctx.onLog,
+        });
+        if (Array.isArray(cleaned?.cues)) source = cleaned.cues;
+    } catch (err) {
+        ctx.onLog?.(`译前源轨清理跳过：${err?.message || err}`);
+    }
+    return source;
+}
+
 function buildTranslateJobWithCheckpoint(jobBody, repairedEngineCues, extra = {}) {
     const body = { ...jobBody };
     body._checkpoint = {
@@ -359,14 +449,11 @@ async function runEngineJobFromExistingSource(ctx = {}, entry = {}) {
         ctx.onLog?.('语义校正未开启：转录将直接送译');
     }
 
-    source = healSourceCuesBeforeTranslate(source, {
+    source = prepareSourceCuesBeforePreMt(source, {
+        ...ctx,
         mediaPath: handoffCtx.mediaPath,
-        repairMeta: ctx.repairMeta,
-        options: { ...ctx.fileMerged, ...ctx.options },
-        fileMerged: ctx.fileMerged,
-        outPaths: resolvedOutPaths,
         onLog: ctx.onLog,
-    });
+    }, resolvedOutPaths);
 
     const preMt = runPreMtQcHandoff({
         sourceCues: source,
@@ -397,6 +484,19 @@ async function runEngineJobFromExistingSource(ctx = {}, entry = {}) {
         holdIndexes: preMt.holdIndexes,
         bandSummary: preMt.bandResult?.summary,
     });
+    const mtGate = gateTranslateJobMtFields(phase2Body, ctx);
+    if (!mtGate.ok) {
+        return {
+            ok: false,
+            error: mtGate.error,
+            code: mtGate.code || 'MT_BACKEND_MISSING',
+            preMtSecondOpinionDone: false,
+            preMtShelfSourceSaved: !!shelfEarly?.ok,
+            mtHoldIndexes: preMt.holdIndexes,
+            skippedAsr: true,
+            shelfEntryStage: entry.entryStage,
+        };
+    }
     ctx.onProgress?.({
         stage: 'translate',
         detail: wantRepair ? '（已校正转录）开始翻译…' : '开始翻译…',
@@ -626,17 +726,11 @@ async function runEngineJobWithPreMtHandoffs(ctx = {}) {
             const snippet = String(repair.snippet || '').trim();
             ctx.onLog?.(`转录语义校正失败，继续翻译: ${formatRepairFailure(repair)}`
                 + (snippet ? ` · 模型输出: ${snippet}` : ''));
-            source = healSourceCuesBeforeTranslate(source, {
+            source = prepareSourceCuesBeforePreMt(source, {
+                ...ctx,
                 mediaPath: handoffCtx.mediaPath,
-                repairMeta: ctx.repairMeta,
-                options: { ...ctx.fileMerged, ...ctx.options },
-                fileMerged: ctx.fileMerged,
-                outPaths: {
-                    ...(ctx.repairMeta?.outPaths || {}),
-                    ...resolvedOutPaths,
-                },
                 onLog: ctx.onLog,
-            });
+            }, resolvedOutPaths);
             const preMt = runPreMtQcHandoff({
                 sourceCues: source,
                 outPaths: {
@@ -663,6 +757,17 @@ async function runEngineJobWithPreMtHandoffs(ctx = {}) {
                 holdIndexes: preMt.holdIndexes,
                 bandSummary: preMt.bandResult?.summary,
             });
+            const fallbackGate = gateTranslateJobMtFields(fallbackBody, ctx);
+            if (!fallbackGate.ok) {
+                return {
+                    ok: false,
+                    error: fallbackGate.error,
+                    code: fallbackGate.code || 'MT_BACKEND_MISSING',
+                    preMtSecondOpinionDone: soPlan.enabled,
+                    preMtShelfSourceSaved: !!shelfEarly?.ok,
+                    mtHoldIndexes: preMt.holdIndexes,
+                };
+            }
             const fallback = await ctx.runSingleJob(fallbackBody, { itemDualPhase: 'translate' });
             return {
                 ...finalizePreMtTranslateOutcome(fallback, {
@@ -680,17 +785,11 @@ async function runEngineJobWithPreMtHandoffs(ctx = {}) {
         source = repair.engineCues || source;
     }
 
-    source = healSourceCuesBeforeTranslate(source, {
+    source = prepareSourceCuesBeforePreMt(source, {
+        ...ctx,
         mediaPath: handoffCtx.mediaPath,
-        repairMeta: ctx.repairMeta,
-        options: { ...ctx.fileMerged, ...ctx.options },
-        fileMerged: ctx.fileMerged,
-        outPaths: {
-            ...(ctx.repairMeta?.outPaths || {}),
-            ...resolvedOutPaths,
-        },
         onLog: ctx.onLog,
-    });
+    }, resolvedOutPaths);
 
     const preMt = runPreMtQcHandoff({
         sourceCues: source,
@@ -720,6 +819,17 @@ async function runEngineJobWithPreMtHandoffs(ctx = {}) {
         holdIndexes: preMt.holdIndexes,
         bandSummary: preMt.bandResult?.summary,
     });
+    const mtGate = gateTranslateJobMtFields(phase2Body, ctx);
+    if (!mtGate.ok) {
+        return {
+            ok: false,
+            error: mtGate.error,
+            code: mtGate.code || 'MT_BACKEND_MISSING',
+            preMtSecondOpinionDone: soPlan.enabled,
+            preMtShelfSourceSaved: !!shelfEarly?.ok,
+            mtHoldIndexes: preMt.holdIndexes,
+        };
+    }
     ctx.onProgress?.({
         stage: 'asr_semantic_repair',
         detail: semPlan.enabled ? '（已校正转录）…' : '（原文已定稿）…',
@@ -751,6 +861,7 @@ module.exports = {
     extractEngineSourceCues,
     buildTranslateJobWithCheckpoint,
     healSourceCuesBeforeTranslate,
+    prepareSourceCuesBeforePreMt,
     repairJobResultSourceCues,
     runEngineJobWithPreMtHandoffs,
     runEngineJobWithSemanticRepair,

@@ -202,6 +202,10 @@ function createEngineRangeTranscribe(host) {
                             return v === 'speed' ? 'speed' : 'quality';
                         })(),
                         qwenAsrBatchMode: resolveQwenAsrBatchModeForJob(options),
+                        ...(options.asrTiming != null
+                            && String(options.asrTiming).trim() !== ''
+                            ? { asrTiming: String(options.asrTiming).trim() }
+                            : {}),
                         ...(vramHint.gpuTotalMiB ? vramHint : {}),
                         castNames: options.castNames || options.cast_names || undefined,
                         // Keep weights loaded across failover attempts on the same clip.
@@ -249,35 +253,40 @@ function createEngineRangeTranscribe(host) {
                         return { ok: false, error: '重转写结果为空', code: 'ASR_EMPTY' };
                     }
                     // Same source-prep as batch sanitizeMtSubtitlePair: name-loop + JA domain.
+                    // Timing-boundary passes keep engine segment edges; cleanup would merge them.
                     let cleanupMeta = null;
-                    try {
-                        const { cleanupAsrCues } = require('./asr-cue-cleanup');
-                        const cleaned = cleanupAsrCues(cues, {
-                            nameLoop: options.asrNameLoopClean !== false,
-                            jaAsrDomainFix: options.jaAsrDomainFix !== false,
-                        });
-                        cues = cleaned.cues;
-                        cleanupMeta = cleaned;
-                        if (cleaned.changed) {
-                            try {
-                                const { formatDomainFixLogLine, summarizeDomainFixChanges } = require('./asr-domain-fix-trace');
-                                if (cleaned.domainChanged) {
-                                    const trace = summarizeDomainFixChanges([{
-                                        from: 'ja-asr-domain',
-                                        to: 'applied',
-                                        count: cleaned.domainChanged,
-                                    }], 'range_asr');
-                                    const line = formatDomainFixLogLine(trace);
-                                    if (line) appendEngineLogLine(line, deps.invokeSender || null);
-                                }
-                                appendEngineLogLine(`[engine] 局部重转写 ${cleaned.summary}`, deps.invokeSender || null);
-                            } catch { /* log optional */ }
+                    const timingBoundariesOnly = payload.timingBoundariesOnly === true
+                        || options.timingBoundariesOnly === true;
+                    if (!timingBoundariesOnly) {
+                        try {
+                            const { cleanupAsrCues } = require('./asr-cue-cleanup');
+                            const cleaned = cleanupAsrCues(cues, {
+                                nameLoop: options.asrNameLoopClean !== false,
+                                jaAsrDomainFix: options.jaAsrDomainFix !== false,
+                            });
+                            cues = cleaned.cues;
+                            cleanupMeta = cleaned;
+                            if (cleaned.changed) {
+                                try {
+                                    const { formatDomainFixLogLine, summarizeDomainFixChanges } = require('./asr-domain-fix-trace');
+                                    if (cleaned.domainChanged) {
+                                        const trace = summarizeDomainFixChanges([{
+                                            from: 'ja-asr-domain',
+                                            to: 'applied',
+                                            count: cleaned.domainChanged,
+                                        }], 'range_asr');
+                                        const line = formatDomainFixLogLine(trace);
+                                        if (line) appendEngineLogLine(line, deps.invokeSender || null);
+                                    }
+                                    appendEngineLogLine(`[engine] 局部重转写 ${cleaned.summary}`, deps.invokeSender || null);
+                                } catch { /* log optional */ }
+                            }
+                        } catch (err) {
+                            appendEngineLogLine(
+                                `[engine] 局部重转写 ASR 清理跳过：${err.message || err}`,
+                                deps.invokeSender || null,
+                            );
                         }
-                    } catch (err) {
-                        appendEngineLogLine(
-                            `[engine] 局部重转写 ASR 清理跳过：${err.message || err}`,
-                            deps.invokeSender || null,
-                        );
                     }
                     if (!cues.length) {
                         return { ok: false, error: '重转写结果为空', code: 'ASR_EMPTY' };
@@ -314,7 +323,7 @@ function createEngineRangeTranscribe(host) {
                         payload.subtitlePath || payload.sourceSubtitlePath || options.subtitlePath || '',
                     ).trim();
                     let confidenceSeed = null;
-                    if (subtitlePath) {
+                    if (subtitlePath && !timingBoundariesOnly) {
                         try {
                             const { mergeRangeAsrConfidenceMeta } = require('./asr-confidence-seed');
                             confidenceSeed = mergeRangeAsrConfidenceMeta(subtitlePath, cues, {
@@ -369,6 +378,22 @@ function createEngineRangeTranscribe(host) {
                     const asrModel = asrCandidates[i];
                     if (rangeStopRequested()) {
                         return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
+                    }
+                    // Cross-runtime failover (e.g. CT2 Whisper → SenseVoice/torch): free VRAM first.
+                    // Same-family retries keep weights loaded (releaseGpuAfter: false on the job).
+                    if (i > 0) {
+                        const prev = asrCandidates[i - 1];
+                        const prevFamily = rangeAsrPolicy.classifyRangeAsrFamily(prev);
+                        const nextFamily = rangeAsrPolicy.classifyRangeAsrFamily(asrModel);
+                        if (prevFamily !== nextFamily) {
+                            try {
+                                await releaseGpuMemory(ensure.baseUrl, { timeoutMs: 12000 });
+                                appendEngineLogLine(
+                                    `[engine] 局部重转写切换运行时，已释放显存 · ${prev} → ${asrModel}`,
+                                    deps.invokeSender || null,
+                                );
+                            } catch { /* best-effort */ }
+                        }
                     }
                     // Avoid reusing stale SRT from a previous empty attempt
                     try {

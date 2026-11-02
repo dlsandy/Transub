@@ -107,7 +107,8 @@
             [/呼び出し|呼び出/, ['叫', '传唤', '叫来']],
             [/スカート/, ['裙', '裙子']],
             [/パンツ/, ['内裤', '短裤', '裤']],
-            [/気持ち/, ['舒服', '舒适', '快感', '开心']],
+            // Pleasure + emotional senses (気持ちは嬉しい → 心情/开心, not only 舒服)
+            [/気持ち|きもち/, ['舒服', '舒适', '快感', '开心', '心情', '感觉', '心意']],
         ];
         for (const [re, expect] of lemmas) {
             if (re.test(t)) out.push({ expect, kind: 'lemma' });
@@ -163,6 +164,44 @@
             reasons.push('under_long');
         }
 
+        // Short orphan JA (自炊) inflated with neighbor-context essay — retry.
+        if (
+            !reasons.includes('blank')
+            && !isNonLexicalJa(ja)
+            && !isMoanHeavyJa(ja)
+            && jl > 0
+            && jl <= 4
+            && zl >= Math.max(12, jl * 4)
+            && !isThinSpokenZh(zh)
+        ) {
+            reasons.push('over_inflate');
+        }
+
+        // Mid lexical JA (kanji / content) → stub ZH (incl. bare 嗯/啊 on real dialogue).
+        if (
+            !reasons.includes('blank')
+            && !reasons.includes('under')
+            && !reasons.includes('under_long')
+            && !reasons.includes('blankish')
+            && jl >= 8
+            && zl > 0
+            && zl <= 2
+            && /[一-龥々]/.test(ja)
+            && !isNonLexicalJa(ja)
+        ) {
+            reasons.push('under_lexical');
+        }
+        // blankish on lexical JA with kanji is also under_lexical for retry routing.
+        if (
+            reasons.includes('blankish')
+            && !reasons.includes('under_lexical')
+            && jl >= 8
+            && /[一-龥々]/.test(ja)
+            && !isNonLexicalJa(ja)
+        ) {
+            reasons.push('under_lexical');
+        }
+
         // --- 错翻 ---
         if (zh && sanitize?.looksLikeAdultRegisterInvented?.(zh, ja)) {
             reasons.push('adult_invent');
@@ -170,6 +209,23 @@
         if (zh && polish?.looksLikePlotTopicInvent?.(ja, zh)) {
             reasons.push('plot_invent');
         }
+        // Active JA with を but ZH opens with 被 (common voice flip) — skip true passives.
+        if (
+            zh
+            && jl >= 6
+            && /を/.test(ja)
+            && !/(?:られ|れて|され|させ)/.test(ja)
+            && /^被/.test(zh)
+            && !isMoanHeavyJa(ja)
+        ) {
+            reasons.push('voice_flip');
+        }
+        try {
+            const hyCtx = require('./hymt-context-core');
+            if (zh && hyCtx.looksLikeAddressDrift?.(ja, zh, options.hyMtRollingState)) {
+                reasons.push('address_drift');
+            }
+        } catch (_) { /* optional */ }
         // Short spoken JA ballooned into long unrelated ZH
         if (
             zh
@@ -211,8 +267,8 @@
         }
 
         const uniq = [...new Set(reasons)];
-        const miss = uniq.some((r) => /^(?:blank|blankish|under|under_long|echo)$/.test(r));
-        const wrong = uniq.some((r) => /^(?:adult_invent|plot_invent|balloon|topic_miss|anchor_miss)$/.test(r));
+        const miss = uniq.some((r) => /^(?:blank|blankish|under|under_long|under_lexical|echo)$/.test(r));
+        const wrong = uniq.some((r) => /^(?:adult_invent|plot_invent|balloon|over_inflate|topic_miss|anchor_miss|voice_flip|address_drift)$/.test(r));
         let severity = 'none';
         if (miss && wrong) severity = 'both';
         else if (miss) severity = 'miss';
@@ -278,10 +334,12 @@
      */
     function qualityRetryHint(options = {}) {
         const reasons = Array.isArray(options.qualityReasons) ? options.qualityReasons : [];
-        if (reasons.some((r) => /invent|balloon|topic|anchor/.test(r))) {
-            return '上一版疑似错译或臆造；请严格按本行日语字面重译，禁止添加原文没有的情节或成人内容。';
+        // Keep short + imperative so models are less likely to echo as dialogue.
+        // mt-sanitize stripPromptLeak also catches paraphrases of these lines.
+        if (reasons.some((r) => /invent|balloon|topic|anchor|voice_flip|address/.test(r))) {
+            return '【重译】按本行日语字面完整译出；禁止臆造原文没有的情节；人称/称呼与上文一致。';
         }
-        return '上一版疑似漏译或过短；请完整译出本行语义，禁止只用省略号或语气词敷衍。';
+        return '【重译】完整译出本行语义；禁止省略号或语气词敷衍。';
     }
 
     return {

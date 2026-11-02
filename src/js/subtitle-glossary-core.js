@@ -55,7 +55,19 @@
         const canonical = String(raw.canonical || '').trim();
         const aliases = coerceAliases(raw.aliases)
             .filter((a) => a.toLowerCase() !== canonical.toLowerCase());
-        return {
+        const roleRaw = String(raw.role || '').trim().toLowerCase();
+        let role = 'term';
+        if (roleRaw === 'character' || roleRaw === 'char' || roleRaw === 'name') role = 'character';
+        else if (roleRaw === 'prereplace' || roleRaw === 'pre') role = 'preReplace';
+        else if (roleRaw === 'postreplace' || roleRaw === 'post') role = 'postReplace';
+        else if (raw.asrReplace === true || raw.asrMisheard === true) role = 'preReplace';
+
+        let promptInject = String(raw.promptInject || '').trim().toLowerCase();
+        if (promptInject !== 'hit' && promptInject !== 'always' && promptInject !== 'never') {
+            promptInject = role === 'character' ? 'always' : 'hit';
+        }
+
+        const entry = {
             id: String(raw.id || makeEntryId()),
             canonical,
             aliases,
@@ -63,7 +75,216 @@
             enabled: raw.enabled !== false,
             note: String(raw.note || '').trim(),
             asrReplace: raw.asrReplace === true || raw.asrMisheard === true,
+            role,
+            promptInject,
         };
+        const normalizedPost = normalizePostReplace(raw.postReplace);
+        if (normalizedPost) entry.postReplace = normalizedPost;
+        return entry;
+    }
+
+    function normalizeStringList(raw) {
+        if (Array.isArray(raw)) {
+            return raw.map((s) => String(s || '').trim()).filter(Boolean);
+        }
+        if (typeof raw === 'string') {
+            return String(raw)
+                .split(/[,，、;；|／/\n\r\t]+/)
+                .map((s) => s.trim())
+                .filter(Boolean);
+        }
+        return [];
+    }
+
+    /**
+     * Normalize nested postReplace; empty/invalid → null.
+     */
+    function normalizePostReplace(raw) {
+        if (raw == null || raw === false) return null;
+        if (typeof raw !== 'object') return null;
+        const whenRaw = raw.when && typeof raw.when === 'object' ? raw.when : {};
+        const when = {};
+        for (const key of ['srcIncludes', 'srcExcludes', 'dstIncludes', 'dstExcludes', 'audioEventIn']) {
+            const list = normalizeStringList(whenRaw[key]);
+            if (list.length) when[key] = list;
+        }
+        const replace = [];
+        for (const rule of Array.isArray(raw.replace) ? raw.replace : []) {
+            const from = String(rule?.from || '').trim();
+            const to = String(rule?.to ?? '').trim();
+            if (!from) continue;
+            replace.push({ from, to });
+        }
+        if (!replace.length && raw.enabled === false && !Object.keys(when).length) {
+            return null;
+        }
+        return {
+            enabled: raw.enabled !== false,
+            when,
+            replace,
+        };
+    }
+
+    /**
+     * Parse editor form fields into a postReplace object (or null if empty).
+     */
+    function parsePostReplaceFormFields(fields = {}) {
+        const enabled = fields.enabled !== false && fields.enabled !== 'false' && fields.enabled !== 0;
+        const when = {};
+        const srcIncludes = normalizeStringList(fields.srcIncludes);
+        const srcExcludes = normalizeStringList(fields.srcExcludes);
+        const dstIncludes = normalizeStringList(fields.dstIncludes);
+        const dstExcludes = normalizeStringList(fields.dstExcludes);
+        const audioEventIn = normalizeStringList(fields.audioEventIn).map((x) => x.toUpperCase());
+        if (srcIncludes.length) when.srcIncludes = srcIncludes;
+        if (srcExcludes.length) when.srcExcludes = srcExcludes;
+        if (dstIncludes.length) when.dstIncludes = dstIncludes;
+        if (dstExcludes.length) when.dstExcludes = dstExcludes;
+        if (audioEventIn.length) when.audioEventIn = audioEventIn;
+
+        const replace = [];
+        const pairText = String(fields.replaceText || fields.replacePairs || '');
+        for (const line of pairText.split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            const m = trimmed.match(/^(.+?)\s*(?:→|->|=>|=|｜|\|)\s*(.*)$/);
+            if (!m) continue;
+            const from = m[1].trim();
+            const to = m[2].trim();
+            if (!from) continue;
+            replace.push({ from, to });
+        }
+        if (Array.isArray(fields.replace)) {
+            for (const rule of fields.replace) {
+                const from = String(rule?.from || '').trim();
+                const to = String(rule?.to ?? '').trim();
+                if (!from) continue;
+                replace.push({ from, to });
+            }
+        }
+        if (!replace.length && !Object.keys(when).length && enabled !== false) {
+            return null;
+        }
+        return normalizePostReplace({ enabled, when, replace });
+    }
+
+    /**
+     * Flatten postReplace for editor form fields.
+     */
+    function formatPostReplaceFormFields(postReplace) {
+        const pr = normalizePostReplace(postReplace) || {
+            enabled: true,
+            when: {},
+            replace: [],
+        };
+        const join = (list) => (Array.isArray(list) ? list.join('，') : '');
+        return {
+            enabled: pr.enabled !== false,
+            srcIncludes: join(pr.when?.srcIncludes),
+            srcExcludes: join(pr.when?.srcExcludes),
+            dstIncludes: join(pr.when?.dstIncludes),
+            dstExcludes: join(pr.when?.dstExcludes),
+            audioEventIn: join(pr.when?.audioEventIn),
+            replaceText: (pr.replace || []).map((r) => `${r.from}→${r.to}`).join('\n'),
+        };
+    }
+
+    /**
+     * Built-in address cleanup rules (GalTransl-style postReplace table).
+     * Applied by applyConditionalPostReplace + address heuristics fallback.
+     */
+    const BUILTIN_ADDRESS_POST_REPLACE_ENTRIES = [
+        {
+            id: 'builtin_dup_honorific',
+            canonical: '_builtin_dup_honorific',
+            enabled: true,
+            role: 'postReplace',
+            promptInject: 'never',
+            postReplace: {
+                enabled: true,
+                when: {},
+                replace: [
+                    { from: '小姐小姐', to: '小姐' },
+                    { from: '先生先生', to: '先生' },
+                ],
+            },
+        },
+        {
+            id: 'builtin_oka_sama',
+            canonical: '_builtin_oka_sama',
+            enabled: true,
+            role: 'postReplace',
+            promptInject: 'never',
+            postReplace: {
+                enabled: true,
+                when: { dstIncludes: ['奥小姐'], srcExcludes: ['奥小姐'] },
+                replace: [{ from: '奥小姐', to: '太太' }],
+            },
+        },
+        {
+            id: 'builtin_danna',
+            canonical: '_builtin_danna',
+            enabled: true,
+            role: 'postReplace',
+            promptInject: 'never',
+            postReplace: {
+                enabled: true,
+                when: { dstIncludes: ['旦那小姐'] },
+                replace: [{ from: '旦那小姐', to: '老公' }],
+            },
+        },
+    ];
+
+    function matchPostReplaceWhen(when, src, zh, audioEvent) {
+        const w = when && typeof when === 'object' ? when : {};
+        const srcInc = Array.isArray(w.srcIncludes) ? w.srcIncludes : [];
+        const srcExc = Array.isArray(w.srcExcludes) ? w.srcExcludes : [];
+        const dstInc = Array.isArray(w.dstIncludes) ? w.dstIncludes : [];
+        const dstExc = Array.isArray(w.dstExcludes) ? w.dstExcludes : [];
+        if (srcInc.length && !srcInc.some((p) => src.includes(String(p)))) return false;
+        if (srcExc.some((p) => src.includes(String(p)))) return false;
+        if (dstInc.length && !dstInc.some((p) => zh.includes(String(p)))) return false;
+        if (dstExc.some((p) => zh.includes(String(p)))) return false;
+        const evtNeed = Array.isArray(w.audioEventIn)
+            ? w.audioEventIn.map((x) => String(x).toUpperCase())
+            : [];
+        if (evtNeed.length) {
+            const evt = String(audioEvent || '').toUpperCase();
+            if (!evtNeed.includes(evt)) return false;
+        }
+        return true;
+    }
+
+    function applyPostReplaceEntriesToText(zhText, srcText, entries, options = {}) {
+        let zh = String(zhText || '');
+        const src = String(srcText || '');
+        const audioEvent = options.audioEvent || '';
+        let touched = false;
+        const reasons = [];
+        for (const entry of entries || []) {
+            if (!entry || entry.enabled === false || !entry.postReplace || entry.postReplace.enabled === false) {
+                continue;
+            }
+            if (!matchPostReplaceWhen(entry.postReplace.when, src, zh, audioEvent)) continue;
+            for (const rule of entry.postReplace.replace || []) {
+                const from = String(rule?.from || '').trim();
+                const to = String(rule?.to ?? '').trim();
+                if (!from || !zh.includes(from)) continue;
+                zh = zh.split(from).join(to);
+                touched = true;
+                if (entry.id) reasons.push(entry.id);
+            }
+        }
+        return { text: zh, changed: touched, reasons: [...new Set(reasons)] };
+    }
+
+    function applyBuiltinAddressPostReplaceToText(zhText, srcText, options = {}) {
+        return applyPostReplaceEntriesToText(
+            zhText,
+            srcText,
+            BUILTIN_ADDRESS_POST_REPLACE_ENTRIES,
+            options,
+        );
     }
 
     function normalizeGlossary(doc = {}) {
@@ -278,11 +499,24 @@
 
     function upsertEntry(glossary, patch) {
         const doc = normalizeGlossary(glossary);
-        const entry = normalizeEntry(patch);
+        const idx = doc.entries.findIndex((e) => e.id === String(patch?.id || ''));
+        const prev = idx >= 0 ? doc.entries[idx] : null;
+        const entry = normalizeEntry({
+            ...(prev || {}),
+            ...patch,
+            // Form edits pass postReplace explicitly; omit key to keep prior rules; null clears.
+            postReplace: patch?.postReplace !== undefined
+                ? patch.postReplace
+                : (prev?.postReplace),
+            id: patch?.id || prev?.id,
+        });
+        // normalizeEntry drops null postReplace; ensure clear sticks when patching.
+        if (patch && Object.prototype.hasOwnProperty.call(patch, 'postReplace') && !patch.postReplace) {
+            delete entry.postReplace;
+        }
         if (!entry.canonical) {
             return { ok: false, error: '标准写法不能为空', glossary: doc };
         }
-        const idx = doc.entries.findIndex((e) => e.id === entry.id);
         if (idx >= 0) doc.entries[idx] = entry;
         else doc.entries.push(entry);
         doc.updatedAt = new Date().toISOString();
@@ -414,7 +648,7 @@
 
     /**
      * Build engine asrGlossary rows: alias/misheard → canonical.
-     * Only entries marked for replace (hotword / bad-pool); AniList names stay prompt-only.
+     * Only entries marked for replace (hotword / misheard); AniList names stay prompt-only.
      */
     function buildAsrGlossaryEntries(glossary, options = {}) {
         const doc = normalizeGlossary(glossary);
@@ -440,11 +674,137 @@
         return out;
     }
 
+    function normalizeGlossaryPromptInjectMode(value) {
+        const v = String(value == null ? 'hitOnly' : value).trim().toLowerCase();
+        if (v === 'legacy' || v === 'all' || v === 'off' || v === 'full') return 'legacy';
+        return 'hitOnly';
+    }
+
+    function clampGlossaryAlwaysCharacterMax(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return 8;
+        return Math.max(0, Math.min(16, Math.round(n)));
+    }
+
+    function entryAppearsInText(entry, sourceText) {
+        const text = String(sourceText || '');
+        if (!text || !entry) return false;
+        const forms = [entry.canonical, ...(entry.aliases || [])]
+            .map((t) => String(t || '').trim())
+            .filter(Boolean)
+            .sort((a, b) => b.length - a.length);
+        for (const form of forms) {
+            if (countMatches(text, form, entry.caseSensitive) > 0) return true;
+        }
+        return false;
+    }
+
+    /**
+     * GalTransl-style GPT dict: hit-only inject + character always-cap.
+     * @returns {Array<{term:string,translation:string,info:string,role?:string}>}
+     */
+    function selectGlossaryTermsForBatch(glossary, sourceText, options = {}) {
+        const doc = normalizeGlossary(glossary);
+        const mode = normalizeGlossaryPromptInjectMode(options.glossaryPromptInjectMode);
+        const alwaysMax = clampGlossaryAlwaysCharacterMax(options.glossaryAlwaysCharacterMax);
+        const maxTerms = Math.max(8, Math.min(80, Number(options.maxTerms) || 48));
+        const text = String(sourceText || '');
+
+        const toMtTerm = (entry) => {
+            const alias = (entry.aliases || [])[0] || entry.canonical;
+            return {
+                term: alias,
+                translation: entry.canonical,
+                info: entry.note || '',
+                role: entry.role,
+                src: alias,
+                dst: entry.canonical,
+                note: entry.note || '',
+            };
+        };
+
+        if (mode === 'legacy') {
+            const out = [];
+            for (const entry of doc.entries) {
+                if (entry.enabled === false || entry.promptInject === 'never') continue;
+                out.push(toMtTerm(entry));
+                if (out.length >= maxTerms) break;
+            }
+            return out;
+        }
+
+        const always = [];
+        const hits = [];
+        for (const entry of doc.entries) {
+            if (entry.enabled === false || entry.promptInject === 'never') continue;
+            if (entry.promptInject === 'always' || (entry.role === 'character' && entry.promptInject !== 'hit')) {
+                always.push(entry);
+                continue;
+            }
+            if (entryAppearsInText(entry, text)) hits.push(entry);
+        }
+
+        const picked = [];
+        const seen = new Set();
+        const push = (entry) => {
+            const key = String(entry.canonical || '').toLowerCase();
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            picked.push(toMtTerm(entry));
+        };
+        for (const entry of always.slice(0, alwaysMax)) push(entry);
+        for (const entry of hits) {
+            if (picked.length >= maxTerms) break;
+            push(entry);
+        }
+        return picked;
+    }
+
+    /**
+     * Conditional post-replace (GalTransl-style when predicates).
+     * Includes built-in address cleanup unless options.includeBuiltinAddressRules === false.
+     */
+    function applyConditionalPostReplace(cues, glossary, options = {}) {
+        if (options.glossaryConditionalPostReplace === false) {
+            return { cues: Array.isArray(cues) ? cues.slice() : [], changed: 0 };
+        }
+        const doc = normalizeGlossary(glossary);
+        const includeBuiltin = options.includeBuiltinAddressRules !== false;
+        const entries = [
+            ...(includeBuiltin ? BUILTIN_ADDRESS_POST_REPLACE_ENTRIES : []),
+            ...doc.entries,
+        ];
+        const list = Array.isArray(cues) ? cues : [];
+        let changed = 0;
+        const next = list.map((c) => {
+            let zh = String(c?.text ?? c?.targetText ?? '');
+            const src = String(c?.sourceText ?? c?.ja ?? '');
+            const applied = applyPostReplaceEntriesToText(zh, src, entries, {
+                audioEvent: c?.audioEvent,
+            });
+            if (!applied.changed) return c;
+            changed += 1;
+            if (c?.targetText != null) return { ...c, targetText: applied.text };
+            return { ...c, text: applied.text };
+        });
+        return { cues: next, changed };
+    }
+
+    function glossaryRoleLabelZh(role) {
+        const r = String(role || '').trim();
+        if (r === 'character') return '角色';
+        if (r === 'preReplace') return 'ASR';
+        if (r === 'postReplace') return '译后';
+        return '';
+    }
+
     return {
         GLOSSARY_VERSION,
         escapeRegExp,
         isAsciiWord,
         normalizeAliasList,
+        makeEntryId,
+        coerceAliases,
         normalizeEntry,
         normalizeGlossary,
         buildTermRegExp,
@@ -463,6 +823,18 @@
         parseAsrBlacklistNote,
         entryAsrReplaceEnabled,
         buildAsrGlossaryEntries,
-        makeEntryId,
+        normalizeGlossaryPromptInjectMode,
+        clampGlossaryAlwaysCharacterMax,
+        entryAppearsInText,
+        selectGlossaryTermsForBatch,
+        normalizePostReplace,
+        parsePostReplaceFormFields,
+        formatPostReplaceFormFields,
+        BUILTIN_ADDRESS_POST_REPLACE_ENTRIES,
+        matchPostReplaceWhen,
+        applyPostReplaceEntriesToText,
+        applyBuiltinAddressPostReplaceToText,
+        applyConditionalPostReplace,
+        glossaryRoleLabelZh,
     };
 }));

@@ -1373,6 +1373,22 @@ describe('content-profile-core', () => {
         );
         assert.strictEqual(soft.overrides.vadSensitive, true);
         assert.strictEqual(soft.overrides.audioLightDenoise, false);
+
+        const softTen = applyAcousticHints(
+            { engineVadModel: 'ten-vad', vadThreshold: 0.4, audioLightDenoise: true },
+            { softSparse: true, hint: 'soft' },
+            { profile: 'av_soft' },
+        );
+        assert.strictEqual(softTen.overrides.engineVadModel, 'ten-vad');
+        assert.strictEqual(softTen.overrides.vadThreshold, 0.35);
+        assert.strictEqual(softTen.overrides.audioLightDenoise, false);
+
+        const softFire = applyAcousticHints(
+            { engineVadModel: 'firered-vad', vadThreshold: 0.4 },
+            { softSparse: true, hint: 'soft' },
+            { profile: 'av_soft' },
+        );
+        assert.strictEqual(softFire.overrides.vadThreshold, 0.30);
     });
 
     it('FILM_PATCH keeps film VAD without Demucs', () => {

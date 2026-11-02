@@ -102,6 +102,31 @@ function isGitcodeDownloadUrl(url) {
     return /(?:^https?:\/\/)?(?:[\w.-]+\.)?gitcode\.com\b/i.test(String(url || ''));
 }
 
+/** Direct GitHub / GitHubusercontent hosts (not gh-proxy style wrappers). */
+function isDirectGithubDownloadUrl(url) {
+    try {
+        const host = new URL(String(url || '').trim()).hostname.toLowerCase();
+        return host === 'github.com'
+            || host === 'objects.githubusercontent.com'
+            || host === 'release-assets.githubusercontent.com'
+            || host.endsWith('.githubusercontent.com');
+    } catch (_) {
+        return false;
+    }
+}
+
+/**
+ * Domestic-first candidates for probe-before-download (GitCode, CN gh-proxy, HF mirror…).
+ * Direct GitHub is excluded so we do not wait on overseas timeouts when a CN mirror is fine.
+ */
+function isDomesticPreferredDownloadUrl(url) {
+    const u = String(url || '').trim();
+    if (!u) return false;
+    if (isGitcodeDownloadUrl(u)) return true;
+    if (isDirectGithubDownloadUrl(u)) return false;
+    return isMirrorCandidateUrl(u) || /hf-mirror\.com|transub\.cc/i.test(u);
+}
+
 /**
  * Heuristic: Chinese mainland / nearby locales usually benefit from GitCode first.
  * Override with TRANSUB_PREFER_DOMESTIC_MIRRORS=0|1 when needed.
@@ -413,13 +438,15 @@ async function orderDownloadUrls(urls, options = {}) {
     const originalUrl = options.originalUrl || list[list.length - 1];
 
     if (preferDomestic) {
-        const preferred = list.filter((u) => isGitcodeDownloadUrl(u));
+        const preferred = list.filter((u) => isDomesticPreferredDownloadUrl(u));
         if (preferred.length) {
             if (typeof options.onProgress === 'function') {
                 try {
                     options.onProgress({
                         phase: 'probe',
-                        message: '国内网络优先测速 GitCode…',
+                        message: preferred.some((u) => isGitcodeDownloadUrl(u))
+                            ? '国内网络优先测速 GitCode / 镜像…'
+                            : `国内网络优先测速 ${preferred.length} 个镜像…`,
                         pct: 0,
                         probeTotal: preferred.length,
                     });
@@ -437,12 +464,12 @@ async function orderDownloadUrls(urls, options = {}) {
                 { preferDomestic: true },
             );
             const best = preferredResults.find((r) => r.url === orderedPreferred[0]);
+            // Large GitHub assets (llama runtime): require real throughput.
+            // Latency-only "goodEnough" used to lock onto dribbly mirrors and skip GitHub.
+            const originalIsGithub = isDirectGithubDownloadUrl(originalUrl);
+            const minBps = originalIsGithub ? 200_000 : 40_000;
             const goodEnough = Boolean(
-                best?.ok
-                && (
-                    (Number(best.bytesPerSec) || 0) >= 40_000
-                    || (Number(best.latencyMs) || 1e9) <= 3000
-                ),
+                best?.ok && (Number(best.bytesPerSec) || 0) >= minBps,
             );
             if (goodEnough) {
                 const rest = list.filter((u) => !preferred.includes(u));
@@ -584,6 +611,18 @@ async function downloadFile(url, destPath, options = {}) {
         timeoutMs: options.probeTimeoutMs,
     });
 
+    if (typeof options.onProgress === 'function' && candidates[0]) {
+        try {
+            const label = downloadSourceLabel(candidates[0], url);
+            options.onProgress({
+                phase: 'start',
+                message: `开始从 ${label} 下载…`,
+                pct: 0,
+                preferredUrl: candidates[0],
+            });
+        } catch (_) { /* ignore */ }
+    }
+
     fs.mkdirSync(path.dirname(destPath), { recursive: true });
     const partial = `${destPath}.partial`;
     const perCandidateAttempts = Math.max(1, Number(options.retriesPerUrl) || 2);
@@ -623,6 +662,18 @@ async function downloadFile(url, destPath, options = {}) {
                 if (err?.name === 'AbortError' || err?.code === 'cancelled') throw err;
                 const label = downloadSourceLabel(candidate, url);
                 errors.push(`${label}: ${formatError(err)}`);
+                if (err?.code === 'too_slow') {
+                    if (typeof options.onProgress === 'function') {
+                        try {
+                            options.onProgress({
+                                phase: 'retry',
+                                message: `${label} 过慢，切换下载线路…`,
+                                pct: 0,
+                            });
+                        } catch (_) { /* ignore */ }
+                    }
+                    break;
+                }
                 const transient = /ECONNRESET|ETIMEDOUT|ESOCKETTIMEDOUT|连接被重置|连接超时/i.test(
                     String(err?.code || '') + String(err?.message || ''),
                 );
@@ -694,6 +745,9 @@ async function downloadFileOnce(targetUrl, destPath, partial, options = {}) {
         let lastSpeedAt = Date.now();
         let lastSpeedBytes = 0;
         let bytesPerSecond = 0;
+        const downloadStartedAt = Date.now();
+        const minSustain = Math.max(0, Number(options.minSustainBytesPerSec) || 0);
+        const stallAfterMs = Math.max(5000, Number(options.stallFailAfterMs) || 20000);
         const file = fs.createWriteStream(partial);
 
         await new Promise((resolve, reject) => {
@@ -714,6 +768,7 @@ async function downloadFileOnce(targetUrl, destPath, partial, options = {}) {
             }
 
             res.on('data', (chunk) => {
+                if (settled) return;
                 received += chunk.length;
                 const now = Date.now();
                 const dt = (now - lastSpeedAt) / 1000;
@@ -721,6 +776,21 @@ async function downloadFileOnce(targetUrl, destPath, partial, options = {}) {
                     bytesPerSecond = (received - lastSpeedBytes) / dt;
                     lastSpeedBytes = received;
                     lastSpeedAt = now;
+                }
+                if (minSustain > 0) {
+                    const elapsed = now - downloadStartedAt;
+                    if (elapsed >= stallAfterMs) {
+                        const avg = received / Math.max(0.001, elapsed / 1000);
+                        if (avg < minSustain && (total <= 0 || received < total * 0.95)) {
+                            try { res.destroy(); } catch (_) { /* ignore */ }
+                            try { file.destroy(); } catch (_) { /* ignore */ }
+                            finish(reject, Object.assign(
+                                new Error('当前线路过慢，正在切换…'),
+                                { code: 'too_slow', bytesPerSecond: avg },
+                            ));
+                            return;
+                        }
+                    }
                 }
                 if (typeof options.onProgress === 'function') {
                     const pct = total > 0
@@ -1016,6 +1086,8 @@ module.exports = {
     orderDownloadUrlsByProbe,
     downloadSourceLabel,
     isGitcodeDownloadUrl,
+    isDirectGithubDownloadUrl,
+    isDomesticPreferredDownloadUrl,
     likelyDomesticNetwork,
     prioritizeDomesticDownloadUrls,
     rimrafSafe,

@@ -104,6 +104,79 @@ describe('local-llm-reclaim', () => {
         assert.ok(logs.some((l) => /腾出显存/.test(l)));
     });
 
+    it('reclaimComputeBeforeBatchItem stops desktop llama and optionally engine GPU', async () => {
+        let stopLlmCalls = 0;
+        let releaseGpuCalls = 0;
+        const logs = [];
+        const prevLoad = Module._load;
+        Module._load = function patched(request, parent, isMain) {
+            if (request === './engine-llm-client' || request.endsWith('/engine-llm-client')) {
+                return {
+                    stopLlm: async () => {
+                        stopLlmCalls += 1;
+                        return { ok: true, data: { ok: true, stopped: true } };
+                    },
+                };
+            }
+            if (request === './engine-client' || request.endsWith('/engine-client')) {
+                return {
+                    releaseGpuMemory: async () => {
+                        releaseGpuCalls += 1;
+                        return { ok: true };
+                    },
+                };
+            }
+            return prevLoad(request, parent, isMain);
+        };
+        try {
+            const { reclaimComputeBeforeBatchItem } = require('../electron/local-llm-reclaim');
+            const res = await reclaimComputeBeforeBatchItem((line) => logs.push(line), {
+                baseUrl: 'http://127.0.0.1:8765',
+                releaseEngineGpu: true,
+                reason: 'pre_demucs_batch_item',
+            });
+            assert.strictEqual(res.ok, true);
+            assert.ok(llamaStops >= 1);
+            assert.strictEqual(stopLlmCalls, 1);
+            assert.strictEqual(releaseGpuCalls, 1);
+            assert.strictEqual(res.engineLlmStopped, true);
+            assert.strictEqual(res.gpuReleased, true);
+        } finally {
+            Module._load = prevLoad;
+        }
+    });
+
+    it('reclaimComputeBeforeBatchItem can skip engine GPU release', async () => {
+        let releaseGpuCalls = 0;
+        const prevLoad = Module._load;
+        Module._load = function patched(request, parent, isMain) {
+            if (request === './engine-llm-client' || request.endsWith('/engine-llm-client')) {
+                return {
+                    stopLlm: async () => ({ ok: true, data: { ok: true, stopped: false } }),
+                };
+            }
+            if (request === './engine-client' || request.endsWith('/engine-client')) {
+                return {
+                    releaseGpuMemory: async () => {
+                        releaseGpuCalls += 1;
+                        return { ok: true };
+                    },
+                };
+            }
+            return prevLoad(request, parent, isMain);
+        };
+        try {
+            const { reclaimComputeBeforeBatchItem } = require('../electron/local-llm-reclaim');
+            await reclaimComputeBeforeBatchItem(null, {
+                baseUrl: 'http://127.0.0.1:8765',
+                releaseEngineGpu: false,
+            });
+            assert.strictEqual(releaseGpuCalls, 0);
+        } finally {
+            Module._load = prevLoad;
+        }
+    });
+
     it('reclaimLocalLlmWhenEditorsGoneAsync stops idle llama without sync path', async () => {
         const { reclaimLocalLlmWhenEditorsGoneAsync } = require('../electron/local-llm-reclaim');
         const res = await reclaimLocalLlmWhenEditorsGoneAsync();

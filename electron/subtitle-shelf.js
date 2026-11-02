@@ -236,10 +236,11 @@ function resolveTranslationPath(out, transcriptPath) {
     return '';
 }
 
-function ensureOriginal(media, transcriptPath, sourceLang, options = {}, { root } = {}) {
+function ensureOriginal(media, transcriptPath, sourceLang, options = {}, { root, refreshContent = false } = {}) {
     const m = media && typeof media === 'object' ? media : {};
     const existingPath = String(m.original?.path || '').trim();
     const transcript = String(transcriptPath || m.transcript?.path || '').trim();
+    const doRefresh = !!refreshContent;
 
     const tryHealBrokenOriginal = (origPath) => {
         const dest = String(origPath || '').trim();
@@ -257,8 +258,22 @@ function ensureOriginal(media, transcriptPath, sourceLang, options = {}, { root 
         return false;
     };
 
+    const copyTranscriptToOriginal = (dest) => {
+        const target = String(dest || '').trim();
+        if (!target || !transcript || !fileExists(transcript)) return false;
+        fs.copyFileSync(transcript, target);
+        invalidateExistsCache(target);
+        return true;
+    };
+
     if (existingPath && fileExists(existingPath)) {
-        tryHealBrokenOriginal(existingPath);
+        if (doRefresh) {
+            try {
+                copyTranscriptToOriginal(existingPath);
+            } catch { /* keep existing */ }
+        } else {
+            tryHealBrokenOriginal(existingPath);
+        }
         m.original = {
             path: existingPath,
             lang: m.original.lang || sourceLang || 'source',
@@ -282,13 +297,17 @@ function ensureOriginal(media, transcriptPath, sourceLang, options = {}, { root 
 
     try {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
-        // 原文槽位只在首次创建；已存在则保留内容（再跑 ASR 只更新转录）。
-        // 例外：已有原文时间轴全丢/被 QC 挤成 0.5s 链，且转录轨完好 → 用转录覆盖救回。
+        // Default: first-write-only (MT / translation ingest must not overwrite edits).
+        // ASR source-ready path passes refreshContent so re-ASR syncs 原文 ← 转录.
+        // Also heal: broken timeline on original + healthy transcript → overwrite.
         if (fileExists(dest)) {
-            tryHealBrokenOriginal(dest);
+            if (doRefresh) {
+                copyTranscriptToOriginal(dest);
+            } else {
+                tryHealBrokenOriginal(dest);
+            }
         } else {
-            fs.copyFileSync(transcript, dest);
-            invalidateExistsCache(dest);
+            copyTranscriptToOriginal(dest);
         }
         m.original = {
             path: dest,
@@ -588,6 +607,32 @@ function deleteMedia(mediaId, { root } = {}) {
         return { ok: true };
     } catch (err) {
         return softFail(err);
+    }
+}
+
+/** Delete many media index entries in one load/save (records only; no sidecar files). */
+function deleteMediaMany(mediaIds, { root } = {}) {
+    try {
+        const ids = [...new Set(
+            (Array.isArray(mediaIds) ? mediaIds : [])
+                .map((id) => String(id || '').trim())
+                .filter(Boolean),
+        )];
+        if (!ids.length) return { ok: false, error: '缺少 mediaIds', deleted: 0 };
+        const index = loadIndex(root);
+        let deleted = 0;
+        for (const id of ids) {
+            if (!index.media[id]) continue;
+            delete index.media[id];
+            deleted += 1;
+        }
+        if (deleted > 0) {
+            saveIndex(index, root);
+            notifyShelfChanged();
+        }
+        return { ok: true, deleted };
+    } catch (err) {
+        return softFail(err, { deleted: 0 });
     }
 }
 
@@ -905,8 +950,9 @@ function ingestPipelineTranscript(input = {}, { root } = {}) {
 
 /**
  * Resolve the shelf「原文字幕」sidecar path for a media file (index first, then keep-dir).
- * Used after software-credit insert: mid-pipeline ensureOriginal is first-write-only, so the
- * watermark must be applied to `.original` explicitly at posttask.
+ * Used after software-credit insert: ASR source-ready refreshContent syncs `.original`
+ * from transcript, but mid-pipeline translation ingest stays first-write/heal-only — so the
+ * watermark must still be applied to `.original` explicitly at posttask.
  * @param {string} mediaPath
  * @param {object} [options]
  * @param {{ root?: string }} [ctx]
@@ -932,9 +978,11 @@ function resolveOriginalSubtitlePath(mediaPath, options = {}, { root } = {}) {
 }
 
 /**
- * Mid-pipeline: 原文定稿 → ensure `.original` sidecar + index（首次创建后内容不变）.
+ * Mid-pipeline: 原文定稿 → ensure `.original` sidecar + index.
+ * Pass refreshContent=true after ASR source-ready so re-ASR syncs 原文 ← 转录.
+ * MT / translation ingest should omit refresh (first-write / heal-only).
  * Also refreshes transcript slot when transcriptPath is provided.
- * @param {{ mediaPath?: string, transcriptPath?: string, options?: object }} input
+ * @param {{ mediaPath?: string, transcriptPath?: string, options?: object, refreshContent?: boolean }} input
  */
 function ingestPipelineOriginal(input = {}, { root } = {}) {
     try {
@@ -960,7 +1008,7 @@ function ingestPipelineOriginal(input = {}, { root } = {}) {
             boot.media.transcript?.path || transcriptPath,
             sourceLang,
             options,
-            { root },
+            { root, refreshContent: !!input.refreshContent },
         );
         if (!boot.media.original?.path || !fileExists(boot.media.original.path)) {
             return {
@@ -1047,6 +1095,7 @@ module.exports = {
     ingestPipelineTranslation,
     resolveOriginalSubtitlePath,
     deleteMedia,
+    deleteMediaMany,
     deleteTranslation,
     upsertTranslation,
     registerTranslation,

@@ -65,6 +65,11 @@
         semenZh: d('57K+5ray'),
         semenJa: d('44K244O844Oh44Oz'),
         spermJa: d('57K+5a2Q'),
+        // Spoken trunc / slang for semen (ASR せーし…); never plaintext in spoken-fill.
+        seishiSlangJa: d('44Gb44O844GX'),
+        seishiSlangKataJa: d('44K744O844K3'),
+        onanieJa: d('44Kq44OK44OL44O8'),
+        onanieZh: d('6Ieq5oWw'),
         ejaculateZh: d('5bCE57K+'),
         dashiteJa: d('5Ye644GX44Gm'),
         dashichauJa: d('5Ye644Gh44KD44GG'),
@@ -253,6 +258,10 @@
         angryZh: d('5Y+R5oCS'),
         furiousZh: d('5YuD54S25aSn5oCS'),
         hardOkZh: d('56Gs5LqG'),
+        elephantZh: d('5aSn6LGh'),
+        zouSanJa: d('44K+44Km44GV44KT'),
+        zouSanHiraJa: d('44Ge44GG44GV44KT'),
+        nippleTianZh: d('5Lmz5aS05aSp'),
         erectJa: d('5YuD6LW3'),
         nakaDashiteJa: d('5Lit44Gr5Ye644GX44Gm'),
         nakaDashiteZh: d('5bCE5Zyo6YeM6Z2i'),
@@ -628,11 +637,25 @@
             pairs.push({ from: d('44GP44KT44Gr44Gj44Gm'), to: d('44Kv44Oz44OL44Gj44Gm') });
             pairs.push({ from: d('44Gr44GP44KT44Gr'), to: d('44Gr44Kv44Oz44OL') });
             pairs.push({ from: d('44CB44GP44KT44Gr'), to: d('44CB44Kv44Oz44OL') });
+            // Soft-AV ASR near-homophone: 発症→発情 (お客様に発症しては)
+            pairs.push({ from: d('55m655eH'), to: d('55m65oOF') });
             // 違います、自分の位置 → 自分の意思 (coercion denial)
             pairs.push({
                 from: d('6YGV44GE44G+44GZ44CB6Ieq5YiG44Gu5L2N572u'),
                 to: d('6YGV44GE44G+44GZ44CB6Ieq5YiG44Gu5oSP5oCd'),
             });
+            // Soft-AV ASR: ハンドガマン → ハンド我慢 (hand endurance, not cane)
+            pairs.push({ from: d('44OP44Oz44OJ44Ks44Oe44Oz'), to: d('44OP44Oz44OJ5oiR5oWi') });
+            // Soft-AV ASR: ぼーしたんだから → 寝坊したんだから
+            pairs.push({ from: d('44G844O844GX44Gf44KT44Gg44GL44KJ'), to: d('5a+d5Z2K44GX44Gf44KT44Gg44GL44KJ') });
+            // Soft-AV ASR: 散布して公演し → さっぱりして興奮し
+            pairs.push({ from: d('5pWj5biD44GX44Gm5YWs5ryU44GX'), to: d('44GV44Gj44Gx44KK44GX44Gm6IiI5aWu44GX') });
+            // Soft-AV euphemism: ゾウさん / ぞうさん → おちんちん (helps MT; ZH also remaps 大象)
+            pairs.push({ from: d('44K+44Km44GV44KT'), to: d('44GK44Gh44KT44Gh44KT') });
+            pairs.push({ from: d('44Ge44GG44GV44KT'), to: d('44GK44Gh44KT44Gh44KT') });
+            // Soft-AV ASR: やらかくて → 柔らかくて (breast/body texture; reusable JA cue)
+            pairs.push({ from: d('44KE44KJ44GL44GP44Gm'), to: d('5p+U44KJ44GL44GP44Gm') });
+            pairs.push({ from: d('44KE44KJ44GL44GP'), to: d('5p+U44KJ44GL44GP') });
             return pairs;
         } catch (_) {
             return [{ from: T.chinkuMo, to: T.chinkoMo }];
@@ -677,6 +700,16 @@
             && !src.includes(T.spermJa)
         ) {
             cur = cur.split(T.semenZh).join(T.peeZh);
+            note('domain_term');
+        }
+
+        // Soft-AV: JA 発情/発症 → ZH must not stay as medical「发病」
+        const hasshoujou = d('55m655eH'); // 発症
+        const hatsujo = d('55m65oOF'); // 発情
+        const fabing = d('5Y+R55eF'); // 发病
+        const faqing = d('5Y+R5oOF'); // 发情
+        if ((src.includes(hasshoujou) || src.includes(hatsujo)) && cur.includes(fabing)) {
+            cur = cur.split(fabing).join(faqing);
             note('domain_term');
         }
 
@@ -5275,12 +5308,18 @@
             },
             {
                 id: 'dashite.lots',
-                test: (ctx) => /いっぱい.{0,8}出して|出してきて|感じて.{0,8}出して|ちょ.+出して|下出して/.test(ctx.s)
-                    || /全都流|拿出来|弄出来|感觉到了/.test(ctx.next),
+                // Bare 出してきて can be ejac (出してきて…んー) OR discourse bring-out
+                // (どうしたの、そんなの出してきて) — gate the latter via isDiscourseBringOutDashiteJa.
+                test: (ctx) => {
+                    if (isDiscourseBringOutDashiteJa(ctx.s)) return false;
+                    return /いっぱい.{0,8}出して|出してきて|感じて.{0,8}出して|ちょ.+出して|下出して/.test(ctx.s)
+                        || /全都流|拿出来|弄出来|感觉到了/.test(ctx.next);
+                },
                 apply: (ctx) => {
                     const next = ctx.next;
                     const s = ctx.s;
                     if (/鼻血/.test(s)) return next;
+                    if (isDiscourseBringOutDashiteJa(s)) return next;
                     if (/出してきて/.test(s) || (/拿出来/.test(next) && /出して/.test(s) && ctx.len() <= 10)) {
                         return S.shootNn;
                     }
@@ -7579,6 +7618,31 @@
         return m ? String(m[1]).replace(/\s+/g, ' ').trim() : t;
     }
 
+    /**
+     * 出してきて / 出して as discourse "bring that out" — not ejaculation.
+     * Reusable JA anchors: そんなの出して / どうした+出してきて / なに出してきて.
+     * Keep ejac reading for 出してきて…んー and rod/semen/climax cues.
+     */
+    function isDiscourseBringOutDashiteJa(src = '') {
+        const s = String(src || '');
+        if (!/出して/.test(s)) return false;
+        if (/(?:ちんぽ|チンポ|おちん|ちんちん|ペニス|精液|中に出|いっぱい出|射精|イッ|イキ|イク|いく|びゅ|出そう|出ちゃう|まんこ|おまんこ|フェラ)/.test(s)) {
+            return false;
+        }
+        // Soft moan-only 出してきて…んー — existing ejac fixture; not deixis concern.
+        if (
+            /出してきて/.test(s)
+            && /(?:んー+|んっ|はぁ|はあ|あん)/.test(s)
+            && !/そんな|どうした|なに|何/.test(s)
+        ) {
+            return false;
+        }
+        if (/そんなの出して|そんなもの出して|そんな物出して/.test(s)) return true;
+        if (/どうした/.test(s) && /出してきて/.test(s)) return true;
+        if (/(?:なに|何)[をっ]?出してきて/.test(s)) return true;
+        return false;
+    }
+
     function applyAdultSemanticFixes(text, sourceText = '', mark) {
         let cur = String(text ?? '');
         const src = String(sourceText || '');
@@ -9047,6 +9111,44 @@
                 .replace(RE.angryG, T.hardOkZh);
             note('domain_term');
         }
+        // Soft-AV euphemism ゾウさん → literal elephant ZH
+        // Also after ASR ゾウさん→おちんちん: ZH may still say 大象 against rod JA.
+        {
+            const zouCue = src.includes(T.zouSanJa) || src.includes(T.zouSanHiraJa);
+            const rodCue = lexicon?.jaHasRodCue
+                ? lexicon.jaHasRodCue(src, RE)
+                : (src.includes(T.ochinchinJa) || RE.jaHasRodSrc.test(src));
+            if (cur.includes(T.elephantZh) && (zouCue || rodCue)) {
+                const ele = T.elephantZh;
+                const rod = T.meatRodZh;
+                if (cur.includes(`${ele}的事也可以攻略`)) {
+                    cur = cur.split(`${ele}的事也可以攻略`).join(`${rod}也可以弄`);
+                } else if (cur.includes(`${ele}也可以攻略`)) {
+                    cur = cur.split(`${ele}也可以攻略`).join(`${rod}也可以弄`);
+                } else if (cur.includes(`${ele}的事也可以弄`)) {
+                    cur = cur.split(`${ele}的事也可以弄`).join(`${rod}也可以弄`);
+                } else if (cur.includes(`${ele}也可以弄`)) {
+                    cur = cur.split(`${ele}也可以弄`).join(`${rod}也可以弄`);
+                } else {
+                    cur = cur.split(ele).join(rod);
+                }
+                note('domain_term');
+            }
+        }
+        // 乳首 cue → ZH 乳头天 garbage fragment
+        if (
+            (
+                src.includes(T.nippleJa)
+                || src.includes(T.chikubiJa)
+                || src.includes(T.chikubiHiraJa)
+            )
+            && cur.includes(T.nippleTianZh)
+        ) {
+            cur = cur
+                .split(`${T.nippleTianZh}啊`).join(T.nippleZh)
+                .split(T.nippleTianZh).join(T.nippleZh);
+            note('domain_term');
+        }
         // Finish-inside cue → put-inside mistranslation
         if (
             src.includes(T.nakaDashiteJa)
@@ -10082,6 +10184,23 @@
                 : '从房间出去';
             note('domain_term');
         }
+        // 出ていく / 出かけて leave-place → MT/lexicon poisoned as climax「我去了」(いく→去了)
+        // Keep real climax (イッ/イク bare) and already-correct 出去了. Skip 出てくる (fluid/cum sense).
+        if (
+            /出てい[くかきけこ]|出て行|出かけて/.test(src)
+            && !/(?:イッ|いっちゃ|イっちゃ|イキ|イく|イク|いくいく)/.test(src)
+            && /去了/.test(cur)
+            && !/出去了|进去了|出来了|回去了|带去了|拿去了/.test(cur)
+            && [...cur.replace(/\s/g, '')].length <= 18
+        ) {
+            let next = cur
+                .replace(/我去了/g, '我出去了')
+                .replace(/(^|[^进出来回带拿])去了/g, '$1出去了');
+            if (next !== cur) {
+                cur = next;
+                note('domain_term');
+            }
+        }
         // Hallucinated kana name scraps with no JA cue (shared lexicon table)
         {
             const scrap = lexicon?.applyKanaScrapsZh
@@ -10438,16 +10557,43 @@
                 }
             }
         }
-        // 出して → 流出来/拿出来 → 射出来 (skip 声/腕/T.breastJa)
+        // 出して → 流出来/拿出来 → 射出来 (skip 声/腕/T.breastJa / discourse bring-out)
         if (
             /出して/.test(src)
             && !/声|腕|引き出し/.test(src)
             && !re('44GK44Gj44Gx44GE').test(src)
+            && !isDiscourseBringOutDashiteJa(src)
             && (cur.includes(T.flowOutZh) || cur.includes(T.takeOutZh))
         ) {
             if (cur.includes(T.flowOutZh)) cur = cur.replace(new RegExp(T.flowOutZh, 'g'), T.shootOutZh);
             if (cur.includes(T.takeOutZh)) cur = cur.replace(new RegExp(T.takeOutZh, 'g'), T.shootOutZh);
             note('domain_term');
+        }
+        // Discourse そんなの出してきて / どうした+出してきて: undo false ejac gloss
+        if (isDiscourseBringOutDashiteJa(src) && /射出来|射了/.test(cur)) {
+            let next = cur
+                .replace(/射出来/g, T.takeOutZh)
+                .replace(/射了/g, '出来了');
+            const zhChars = [...String(next).replace(/\s/g, '')].length;
+            if (!/怎么了|怎么啦/.test(next) && /どうした/.test(src)) {
+                if (/^(?:拿出来|拿那种|拿这种)/.test(next.trim()) || zhChars <= 10) {
+                    next = /そんなの|そんなもの|そんな物/.test(src)
+                        ? `怎么了，拿那种东西出来…`
+                        : `怎么了，${next.replace(/^[…。．.\s]+|[…。．.\s]+$/g, '')}…`;
+                } else {
+                    next = `怎么了，${next.replace(/^[，,、\s]+/, '')}`;
+                }
+            } else if (
+                /そんなの|そんなもの|そんな物/.test(src)
+                && /拿出来/.test(next)
+                && !/那种|这种|那个/.test(next)
+            ) {
+                next = next.replace(/拿出来/g, '拿那种东西出来');
+            }
+            if (next !== cur) {
+                cur = next.replace(/\s{2,}/g, ' ').replace(/…{2,}/g, '…').trim();
+                note('domain_term');
+            }
         }
         // T.breastJa出して → 露出来 (not 射出来)
         if (re('44GK44Gj44Gx44GE').test(src) && /出して/.test(src) && cur.includes(T.takeOutZh)) {
@@ -12357,6 +12503,68 @@
             note('domain_term');
         }
 
+        // ハンド我慢 / ハンドガマン ≠ 手杖 (hand endurance after overslept)
+        if (
+            /ハンド我慢|ハンドガマン|ハンドで我慢/.test(src)
+            && /手杖/.test(cur)
+            && !/杖|ステッキ|つえ/.test(src)
+        ) {
+            cur = /寝坊|ぼーした/.test(src)
+                ? d('552h5oeS6KeJ5LqG5omA5Lul55So5omL5b+N552A')
+                : d('55So5omL5b+N552A');
+            note('domain_term');
+        }
+
+        // 出しちゃった / 出ちゃった ≠ 说出来了 (ejaculated; forbid discourse 声/名前)
+        if (
+            /出しちゃった|出ちゃった|出してしまった/.test(src)
+            && /说出来了|说出来了呢/.test(cur)
+            && !/声|名前|手紙|結果|成績|本音|秘密/.test(src)
+            && !/手出|目を出|場所を出/.test(src)
+        ) {
+            cur = /結局|結局は/.test(src)
+                ? d('57uT5p6c6L+Y5piv5bCE5LqG')
+                : d('6L+Y5piv5bCE5LqG');
+            note('domain_term');
+        }
+
+        // Short climax イク、だめ / 行く行く ≠ 去吧 (leave / go out)
+        if (
+            /^(?:イク|いく|イッ)[、,，\s]*(?:だめ|ダメ|駄目)/.test(src.trim())
+            && /去吧/.test(cur)
+            && !/駅|買い物|一緒に行|帰|外に行/.test(src)
+        ) {
+            cur = d('6KaB5Y675LqG77yM5LiN6KGM77yB');
+            note('domain_term');
+        }
+        if (
+            /^(?:行く行く|イクイク|いくいく|イクイク)[！!…。．.\s]*$/.test(src.trim())
+            && /去吧去吧|去吧/.test(cur)
+            && !/駅|買い物|一緒に|帰/.test(src)
+        ) {
+            cur = /！|!/.test(src) ? d('6KaB5Y675LqG77yB') : d('6KaB5Y675LqG');
+            note('domain_term');
+        }
+        // らいか、いく / いく moan scrap ≠ 来吧，走吧
+        if (
+            /(?:らいか|らいっ)[、,，\s]*(?:いく|イク)|^(?:いく|イク)[！!…。．.\s]*$/.test(src.trim())
+            && /来吧|走吧/.test(cur)
+            && [...src.replace(/\s/g, '')].length <= 12
+            && !/駅|買い物|一緒に行/.test(src)
+        ) {
+            cur = d('6KaB5Y675LqG');
+            note('domain_term');
+        }
+
+        // さっぱりして興奮 ≠ 散布/表演 (post-ASR or residual MT)
+        if (
+            /さっぱりして興奮|さっぱりしてこうふん/.test(src)
+            && /散布|表演/.test(cur)
+        ) {
+            cur = d('5riF54i95a6M5bCx5YW05aWL5LqG77yf');
+            note('domain_term');
+        }
+
         return { text: cur, changed: cur !== before };
     }
 
@@ -12956,6 +13164,32 @@
         shootWantDoneZh: d('6KaB5bCE5LqG'),
         pinpinLineJa: d('44GZ44GT44GE44OU44Oz44OU44Oz44Gr5YuD44Gj44Gm44KL44Gt4oCm'),
         chinponMishearJa: d('44Gh44KT44G944KT4oCm44GZ44GU44GE5rCX5oyB44Gh44GE44GE4oCm'),
+        // ABF-396 discovery samples (reusable JA/ZH patterns — not title-gated)
+        kaoDesuJa: d('6aGU44Gn44GZ'),
+        kaoDesuOkZh: d('6IS4'),
+        handGamanJa: d('44G844O844GX44Gf44KT44Gg44GL44KJ44OP44Oz44OJ44Ks44Oe44Oz44GX44Gm'),
+        handGamanBadZh: d('5Y+R5ZGG55qE6K+d5bCx6KaB5o+h57Sn5omL5p2W5ZWK'),
+        handGamanOkZh: d('552h5oeS6KeJ5LqG5omA5Lul55So5omL5b+N552A'),
+        dashichattaSaidJa: d('5Ye644GX44Gh44KD44Gj44Gf44Gu44CB57WQ5bGA'),
+        dashichattaSaidBadZh: d('57uT5p6c6L+Y5piv6K+05Ye65p2l5LqG'),
+        dashichattaSaidOkZh: d('57uT5p6c6L+Y5piv5bCE5LqG'),
+        ikuDameGoBadZh: d('5Y675ZCn77yM5LiN6KGM77yB'),
+        ikuDameOkZh: d('6KaB5Y675LqG77yM5LiN6KGM77yB'),
+        ikuIkuGoBadZh: d('5Y675ZCn5Y675ZCn77yB'),
+        ikuIkuOkZh: d('6KaB5Y675LqG77yB'),
+        hisabisaSexBadZh: d('5aW95LmF5rKh5YGa5LqG'),
+        hisabisaMeetOkZh: d('5aW95LmF5rKh6KeB5LqG'),
+        parasolPlayBadZh: d('5pyA6L+R5oiR5Lmf5Zyo5ZKM55S35a2p5a2Q5LiA6LW3546p5ZGi'),
+        parasolOkZh: d('5pyA6L+R55S35a2p5a2Q5Lmf5omT6Ziz5Lye5ZGi'),
+        // IPZZ-996 samples (reusable soft-AV / culinary patterns)
+        // Soft-AV body texture ASR (IPZZ-996 provenance): …おっぱいやらかくて
+        softOppaiYarakuteJa: d('44GK44Gw44Gh44KD44KT44Gu44GK44Gj44Gx44GE44KE44KJ44GL44GP44Gm'),
+        softOppaiYawarakuteJa: d('44GK44Gw44Gh44KD44KT44Gu44GK44Gj44Gx44GE5p+U44KJ44GL44GP44Gm'),
+        elephantAttackJa: d('44K+44Km44GV44KT44Gu44GT44Go44KC5pS744KB44Gm44GE44GE44Gn44GZ44GLPw=='),
+        elephantAttackBadZh: d('5aSn6LGh55qE5LqL5Lmf5Y+v5Lul5pS755Wl5ZCX77yf'),
+        elephantAttackOkNeedle: d('6IKJ5qOS5Lmf5Y+v5Lul5byE'),
+        nippleTianJa: d('5aeJ44Gh44KD44KT44Gj44Gm44Gp44GG44KE44Gj44Gm5YGl6JS144GV44KT44Gu5Lmz6aaW6IiQ44KB44KL44KT44Gn44GZ44GL'),
+        nippleTianBadZh: d('5Lmz5aS05aSp5ZWK77yM55yf6IiS5pyN'),
     });
 
     function glossAdultPartnerZh(raw) {
@@ -13017,6 +13251,12 @@
         if (/作詞|作曲|編曲|初音ミ/.test(src)) return null;
 
         const compact = src.replace(/\s+/g, '');
+        if (compact === String(FIX.kaoDesuJa || '').replace(/\s+/g, '') || /^顔です[。．.!！?？]*$/u.test(src)) {
+            return FIX.kaoDesuOkZh || d('6IS4');
+        }
+        if (/^今日あれですよ[。．.!！?？]*$/u.test(src) && compact.length <= 12) {
+            return d('5LuK5aSp5piv6YKj5Liq5ZOm');
+        }
         if (compact === String(FIX.wantSexDayJa || '').replace(/\s+/g, '')) {
             return FIX.wantSexDayOkZh;
         }
@@ -13089,6 +13329,10 @@
             return d('5Lmz5aS04oCm6K+277yM5a6M5YWo56uL6LW35p2l5LqG');
         }
         if (/^いれるよ$/u.test(src) || /^入れるよ$/u.test(src)) return d('6KaB5o+S6L+b5Y675LqG5ZOm');
+        // Soft-AV want-to-see anatomy (reception / play cue) — never ship JA surface
+        if (/^(?:お)?まんこ見たい[。．.!！?？…·\s]*$/u.test(src)) {
+            return `想看${T.pussyZh}`;
+        }
         if (/今日筋トレ/.test(src) && /おっぱい見て/.test(src)) {
             return d('5LuK5aSp57uD6IKM6IKJ55qE5pe25YCZ4oCm5L2g5Zyo55yL6IO46YOo5ZCn77yf');
         }

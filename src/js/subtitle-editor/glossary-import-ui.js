@@ -1,5 +1,5 @@
 /**
- * Subtitle editor — AniList / bad-pool glossary import buttons.
+ * Subtitle editor — AniList glossary import buttons.
  */
 (function (global) {
     function installGlossaryImportUi(ctx) {
@@ -17,7 +17,6 @@
             setStatus,
             glossaryCore,
             importCore,
-            getEffectiveGlossary,
             refreshGlossaryUi,
             saveGlossary,
             getGlossaryScope,
@@ -170,53 +169,12 @@
             return runAnilistImport(raw);
         }
 
-        async function importBadPoolGlossary() {
-            if (!electron?.transubImportBadPoolGlossary) {
-                setStatus('当前环境不支持坏句池导入', 'err');
-                return { ok: false };
-            }
-            const scope = typeof getGlossaryScope === 'function' ? getGlossaryScope() : 'global';
-            const payload = { scope };
-            if (scope === 'project') {
-                if (!state.path) {
-                    setStatus('请先保存字幕文件后再导入项目术语表', 'err');
-                    return { ok: false };
-                }
-                payload.subtitlePath = state.path;
-            }
-            setStatus('正在读取本地坏句池…', '');
-            try {
-                const result = await electron.transubImportBadPoolGlossary(payload);
-                if (!result?.ok) {
-                    setStatus(result?.error || '坏句池导入失败', 'err');
-                    return result;
-                }
-                if (scope === 'project') {
-                    state.projectGlossary = glossaryCore.normalizeGlossary(result.glossary);
-                } else {
-                    state.globalGlossary = glossaryCore.normalizeGlossary(result.glossary);
-                }
-                if (typeof refreshGlossaryUi === 'function') refreshGlossaryUi();
-                if (typeof saveGlossary === 'function') await saveGlossary();
-                const msg = ic()?.formatBadPoolImportMessage?.(result)
-                    || `已导入 ${result.entryCount || 0} 条`;
-                setStatus(msg, result.entryCount ? 'ok' : 'warn');
-                return result;
-            } catch (err) {
-                setStatus(err?.message || String(err), 'err');
-                return { ok: false, error: String(err) };
-            }
-        }
-
         populateAnilistHelp();
 
         els.glossaryAnilistBtn?.addEventListener('click', (ev) => {
             ev.preventDefault();
             ev.stopPropagation();
             void importAnilistGlossary();
-        });
-        els.glossaryBadPoolBtn?.addEventListener('click', () => {
-            importBadPoolGlossary();
         });
         els.anilistImportConfirm?.addEventListener('click', () => {
             confirmAnilistImportFromModal();
@@ -236,7 +194,6 @@
 
         return {
             importAnilistGlossary,
-            importBadPoolGlossary,
             showAnilistImportModal,
             hideAnilistImportModal,
         };

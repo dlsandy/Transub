@@ -62,6 +62,59 @@ function resolveSourceForTarget(sourcesByStem, zhPath, isSourceTrack) {
 }
 
 /**
+ * Build isSourceTrack: basename markers + explicit JA paths + ASR-only batches.
+ * Custom keep dirs often write plain `Stem.srt` without `.ja.` / `.transcribe.` —
+ * those must still get stitchJaFragments / JA noise deletion.
+ *
+ * @param {object} options
+ * @param {(p: string) => boolean} [isSourceSubtitleTrack]
+ * @returns {(p: string) => boolean}
+ */
+function buildPostBatchIsSourceTrack(options = {}, isSourceSubtitleTrack = null) {
+    const explicit = new Set();
+    const pushPath = (raw) => {
+        const s = String(raw || '').trim();
+        if (!s) return;
+        try {
+            explicit.add(path.resolve(s));
+        } catch {
+            /* ignore */
+        }
+    };
+    pushPath(options.sourceSubtitlePath);
+    if (Array.isArray(options.jaSourcePaths)) {
+        for (const p of options.jaSourcePaths) pushPath(p);
+    }
+    const task = String(options.engineTask || options.task || '').trim().toLowerCase();
+    // ASR-only: every listed subtitle is JA source (no ZH yet).
+    const asrOnly = task === 'transcribe' || task === 'asr';
+
+    return (subPath) => {
+        const resolved = (() => {
+            try {
+                return path.resolve(String(subPath || ''));
+            } catch {
+                return '';
+            }
+        })();
+        if (resolved && explicit.has(resolved)) return true;
+        if (typeof isSourceSubtitleTrack === 'function' && isSourceSubtitleTrack(subPath)) {
+            return true;
+        }
+        const base = path.basename(String(subPath || ''));
+        if (/\.src\.|_src\.|\.source\./i.test(base)
+            || /\.transcribe\./i.test(base)
+            || /_transcribe\./i.test(base)
+            || /\.original\./i.test(base)
+            || /_original\./i.test(base)
+            || /[.\\_-]ja(?:\.|$)/i.test(base)) {
+            return true;
+        }
+        return asrOnly;
+    };
+}
+
+/**
  * @param {string[]} subtitlePaths
  * @param {object} options - batch/runtime options with postBatch* flags
  * @param {{ onProgress?: (info: object) => void, onLog?: (line: string) => void }} [hooks]
@@ -78,14 +131,28 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
         return 'clear';
     })();
     const interjectionMode = (() => {
+        let mode;
         const v = String(options.postBatchInterjectionMode ?? '').trim().toLowerCase();
-        if (v === 'off' || v === 'light' || v === 'clear') return v;
-        return options.postBatchCompactPureInterjections === false ? 'off' : 'clear';
+        if (v === 'off' || v === 'light' || v === 'clear') mode = v;
+        else mode = options.postBatchCompactPureInterjections === false ? 'off' : 'clear';
+        try {
+            const soft = require('../src/js/av-soft-viewing-policy-core');
+            return soft.resolveAvSoftViewingCleanMode(options, mode);
+        } catch {
+            return mode;
+        }
     })();
     const onomatopoeiaMode = (() => {
+        let mode;
         const v = String(options.postBatchOnomatopoeiaMode ?? '').trim().toLowerCase();
-        if (v === 'off' || v === 'light' || v === 'clear') return v;
-        return options.postBatchCompactPureInterjections === false ? 'off' : 'clear';
+        if (v === 'off' || v === 'light' || v === 'clear') mode = v;
+        else mode = options.postBatchCompactPureInterjections === false ? 'off' : 'clear';
+        try {
+            const soft = require('../src/js/av-soft-viewing-policy-core');
+            return soft.resolveAvSoftViewingCleanMode(options, mode);
+        } catch {
+            return mode;
+        }
     })();
     const doViewingPunct = viewingPunctMode !== 'off';
     const doSoftenDiscourse = interjectionMode === 'light';
@@ -110,10 +177,7 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
     const processed = [];
     const done = new Set();
 
-    const isSourceTrack = (subPath) => (typeof isSourceSubtitleTrack === 'function'
-        ? isSourceSubtitleTrack(subPath)
-        : (/\.src\.|_src\.|\.source\./i.test(path.basename(subPath))
-            || /[.\\_-]ja(?:\.|$)/i.test(path.basename(subPath))));
+    const isSourceTrack = buildPostBatchIsSourceTrack(options, isSourceSubtitleTrack);
 
     const sources = unique.filter((p) => isSourceTrack(p));
     const nonSources = unique.filter((p) => !isSourceTrack(p));
@@ -240,6 +304,10 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
                 simplifyViewingPunctuation: doViewingPunct,
                 softenDiscourseFillers: doSoftenDiscourse,
                 softenOnomatopoeiaFillers: doSoftenOnomatopoeia,
+                // 清除档：行内剥「唉，啊…」等前置/夹杂语气，保留句末「好棒啊」
+                stripInlineFillers: doBilingualClear,
+                stripInlineDiscourse: interjectionMode === 'clear',
+                stripInlineOnomatopoeia: onomatopoeiaMode === 'clear',
                 dropBilingualPureFillers: doBilingualClear,
                 dropBilingualDiscourse: interjectionMode === 'clear',
                 dropBilingualOnomatopoeia: onomatopoeiaMode === 'clear',
@@ -272,9 +340,11 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
                 }
             }
 
-            if (pp?.ok && (pp.noise?.stats || pp.jaStitch?.stats || pp.jaAsrDomain?.changed || pp.written || pp.rematerialize?.written)) {
+            if (pp?.ok && (pp.noise?.stats || pp.jaStitch?.stats || pp.jaAsrDomain?.changed
+                || pp.trailingEllipsis?.changed || pp.written || pp.rematerialize?.written)) {
                 const bits = [];
                 if (pp.jaStitch?.summary) bits.push(pp.jaStitch.summary);
+                if (pp.trailingEllipsis?.summary) bits.push(pp.trailingEllipsis.summary);
                 if (pp.noise?.summary) bits.push(pp.noise.summary);
                 if (pp.jaAsrDomain?.summary) bits.push(pp.jaAsrDomain.summary);
                 if (pp.cpsSplit?.summary) bits.push(pp.cpsSplit.summary);
@@ -286,6 +356,10 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
                 }
                 if (pp.fillerSoften?.summary && pp.fillerSoften.stats?.cueTouched) {
                     bits.push(pp.fillerSoften.summary);
+                }
+                if (pp.inlineFillerStrip?.summary
+                    && (pp.inlineFillerStrip.stats?.cueTouched || pp.inlineFillerStrip.stats?.dropped)) {
+                    bits.push(pp.inlineFillerStrip.summary);
                 }
                 if (pp.bilingualFillerDrop?.summary && pp.bilingualFillerDrop.dropped) {
                     bits.push(pp.bilingualFillerDrop.summary);
@@ -308,4 +382,5 @@ module.exports = {
     applyPostBatchPipeline,
     stemKeyForPairing,
     resolveSourceForTarget,
+    buildPostBatchIsSourceTrack,
 };

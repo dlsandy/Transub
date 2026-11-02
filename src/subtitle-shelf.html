@@ -111,6 +111,11 @@
                     日语<span class="shelf-secondary-chip-count" id="shelfSecJaCount">0</span>
                 </button>
             </div>
+            <div class="shelf-batch-tools" role="group" aria-label="批量操作">
+                <button type="button" id="shelfSelectPageBtn" class="shelf-batch-btn" title="全选本页">全选本页</button>
+                <button type="button" id="shelfDeleteSelectedBtn" class="shelf-batch-btn shelf-batch-btn-danger" disabled title="删除所选条目">删除所选</button>
+                <span id="shelfSelectionCount" class="shelf-selection-count" hidden></span>
+            </div>
         </div>
         </div>
         <div class="shelf-body">
@@ -134,6 +139,11 @@
                 <div id="shelfTableScroll" class="shelf-table-scroll hidden">
                     <aside id="shelfList" class="shelf-list" aria-label="媒体列表"></aside>
                 </div>
+                <nav id="shelfPager" class="shelf-pager" aria-label="字幕库翻页" hidden>
+                    <button type="button" id="shelfPagePrev" class="shelf-pager-btn" disabled>上一页</button>
+                    <span id="shelfPageInfo" class="shelf-pager-info">第 1 / 1 页 · 0 条</span>
+                    <button type="button" id="shelfPageNext" class="shelf-pager-btn" disabled>下一页</button>
+                </nav>
             </div>
             <div id="shelfDetailSplitter" class="shelf-detail-splitter" role="separator" aria-orientation="vertical" aria-label="调节详情宽度" tabindex="0" hidden></div>
             <section id="shelfDetail" class="shelf-detail" aria-label="详情" data-empty="true"></section>

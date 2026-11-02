@@ -50,8 +50,9 @@ describe('compactPureInterjectionSubtitlePair', () => {
 
         const res = compactPureInterjectionSubtitlePair(zhPath, jaPath, { backupMode: 'off' });
         assert.strictEqual(res.ok, true);
-        assert.strictEqual(res.dropped, 3);
-        assert.strictEqual(res.afterCount, 2);
+        // Lone うん/嗯 + はぁ* + ふふっ dropped; keep only うん、大丈夫？
+        assert.strictEqual(res.dropped, 4);
+        assert.strictEqual(res.afterCount, 1);
 
         const zhOut = fs.readFileSync(zhPath, 'utf8');
         const jaOut = fs.readFileSync(jaPath, 'utf8');
@@ -61,11 +62,8 @@ describe('compactPureInterjectionSubtitlePair', () => {
         assert.ok(jaOut.includes('うん、大丈夫？'));
         assert.ok(!jaOut.includes('はぁ'));
         assert.ok(!jaOut.includes('ふふっ'));
-        // Renumbered; bridge filler 「嗯」 may remain when it links substantive neighbors
         assert.ok(/^1\n/m.test(zhOut));
-        assert.ok(/^2\n/m.test(zhOut));
-        assert.ok(!/^3\n/m.test(zhOut));
-        assert.ok(zhOut.includes('嗯'));
+        assert.ok(!/^2\n/m.test(zhOut));
         assert.strictEqual((zhOut.match(/没问题吧/g) || []).length, 1);
     });
 

@@ -70,4 +70,19 @@ describe('setup-wizard prepare next gate', () => {
     it('does not treat missing result as complete', () => {
         assert.strictEqual(detect.isPrepareEnvComplete(null), false);
     });
+
+    it('blocks next when discrete GPU hardware is only a warning', () => {
+        const result = {
+            ok: true,
+            fix: { fixable: false },
+            items: [
+                { id: 'engine', status: 'ok', label: 'Transub Engine' },
+                { id: 'gpu', status: 'warn', label: 'GPU' },
+                { id: 'gpuRuntime', status: 'ok', label: 'GPU 运行时' },
+                { id: 'llamaServerRuntime', status: 'ok', label: 'llama-server 运行时' },
+            ],
+        };
+        assert.strictEqual(detect.isPrepareEnvComplete(result), false);
+        assert.ok(detect.listPrepareBlockers(result).some((it) => it.id === 'gpu'));
+    });
 });

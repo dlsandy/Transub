@@ -50,6 +50,9 @@ function stopActiveJobs() {
     try {
         require('./advanced-llama-server').stopLlamaServer();
     } catch (_) { /* ignore */ }
+    try {
+        require('./jev-local-service').stopLocalLaya();
+    } catch (_) { /* ignore */ }
 }
 
 module.exports = {

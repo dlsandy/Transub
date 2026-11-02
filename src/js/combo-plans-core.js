@@ -222,6 +222,26 @@
                 && String(p.group || '') !== String(f.group).trim().toLowerCase()) {
                 return false;
             }
+            const query = String(f.query || '').trim().toLowerCase();
+            if (query) {
+                const opts = p.options && typeof p.options === 'object' ? p.options : {};
+                const hay = [
+                    p.name,
+                    p.summary,
+                    p.description,
+                    p.language,
+                    p.subtitleTargetLang,
+                    p.translateMode,
+                    p.group,
+                    p.hardware?.label,
+                    p.hardware?.tier,
+                    opts.engineAsrModel,
+                    opts.engineLlmMtModel,
+                    opts.smartTranslateModelId,
+                    ...(Array.isArray(p.models) ? p.models : []),
+                ].join('\n').toLowerCase();
+                if (!hay.includes(query)) return false;
+            }
             return true;
         });
     }
@@ -291,6 +311,7 @@
             translateMode: '',
             pro: 'all',
             group: '',
+            query: '',
         };
     }
 

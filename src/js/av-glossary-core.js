@@ -34,6 +34,19 @@
     /** @type {Array<object>|null} */
     let domainEntriesSorted = null;
 
+    /**
+     * Soft-AV meal / interview culinary readings (reusable across titles).
+     * Merged after SakuraDict domain pack so food senses win on equal length.
+     */
+    const CULINARY_DOMAIN_EXTRA = Object.freeze([
+        { src: '味噌田楽', zh: '味噌田乐', info: 'culinary' },
+        { src: 'こんにゃく', zh: '魔芋', info: 'culinary' },
+        { src: 'からみ', zh: '辣味', info: 'culinary' },
+        { src: '辛み', zh: '辣味', info: 'culinary' },
+        { src: 'レバー', zh: '肝脏', info: 'culinary' },
+        { src: '田楽', zh: '田乐', info: 'culinary' },
+    ]);
+
     /** @type {Map<string, object>} */
     let actorI18nBySrc = new Map();
     /** @type {Map<string, object>} */
@@ -129,8 +142,23 @@
         loadI18nOverrides();
         domainPack = loadJsonFile('av-domain-glossary.json') || { version: 1, entries: [] };
         const entries = Array.isArray(domainPack.entries) ? domainPack.entries : [];
-        domainEntriesSorted = entries
-            .map((raw) => mergeI18nOntoRow(raw, 'domain'))
+        const seen = new Set();
+        const merged = [];
+        for (const raw of CULINARY_DOMAIN_EXTRA) {
+            const row = mergeI18nOntoRow(raw, 'domain');
+            const src = String(row?.src || '').trim();
+            if (!src || seen.has(src)) continue;
+            seen.add(src);
+            merged.push(row);
+        }
+        for (const raw of entries) {
+            const row = mergeI18nOntoRow(raw, 'domain');
+            const src = String(row?.src || '').trim();
+            if (!src || seen.has(src)) continue;
+            seen.add(src);
+            merged.push(row);
+        }
+        domainEntriesSorted = merged
             .slice()
             .sort((a, b) => b.src.length - a.src.length || a.src.localeCompare(b.src, 'ja'));
     }
@@ -210,6 +238,35 @@
     }
 
     /**
+     * Culinary nouns are often kana + particle (からみが好き / レバーという).
+     * Allow particles on either side; still reject mid-stem glue (じゃこんにゃく).
+     */
+    function isCulinaryGlossaryTokenMatch(hay, src) {
+        if (isWholeGlossaryTokenMatch(hay, src)) return true;
+        const h = String(hay || '');
+        const s = String(src || '');
+        if (!h || !s || !h.includes(s)) return false;
+        const isKata = (ch) => /[\u30A0-\u30FFー]/.test(ch);
+        const isHira = (ch) => /[\u3040-\u309F]/.test(ch);
+        const isParticle = (ch) => !!ch && /[がをにではももとのへや、。．！？!?\s\u3000]/.test(ch);
+        const kataStem = isKata(s[0]);
+        let from = 0;
+        while (from <= h.length - s.length) {
+            const idx = h.indexOf(s, from);
+            if (idx < 0) return false;
+            const before = idx > 0 ? h[idx - 1] : '';
+            const after = idx + s.length < h.length ? h[idx + s.length] : '';
+            const beforeOk = !before
+                || isParticle(before)
+                || (kataStem ? !isKata(before) : !isHira(before));
+            const afterOk = !after || isParticle(after);
+            if (beforeOk && afterOk) return true;
+            from = idx + 1;
+        }
+        return false;
+    }
+
+    /**
      * @param {string} text
      * @param {Array<object>} rows
      * @param {{ maxTerms?: number, info?: string, targetLang?: string|object, kind?: string }} [options]
@@ -230,8 +287,15 @@
             const src = String(row?.src || '').trim();
             if (!src || seenSrc.has(src)) continue;
             // Prefer includes for speed, then reject katakana/kanji substring poison
-            // (セックス→做爱 must not fire on セックスレス).
-            if (!hay.includes(src) || !isWholeGlossaryTokenMatch(hay, src)) continue;
+            // (セックス→做爱 must not fire on セックスレス). Culinary hiragana nouns
+            // allow particles (からみが好き) via isCulinaryGlossaryTokenMatch.
+            const culinary = String(row?.info || '') === 'culinary';
+            if (!hay.includes(src)) continue;
+            if (culinary) {
+                if (!isCulinaryGlossaryTokenMatch(hay, src)) continue;
+            } else if (!isWholeGlossaryTokenMatch(hay, src)) {
+                continue;
+            }
             let translation = '';
             if (pickApi?.pickGlossaryTranslation) {
                 translation = pickApi.pickGlossaryTranslation(row, target, {

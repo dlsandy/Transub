@@ -8,6 +8,16 @@ describe('engine-models-ui-core', () => {
         const keep = '无法连接模型仓库：自定义';
         assert.strictEqual(ui.formatEngineDownloadError(keep), keep);
         assert.ok(ui.formatEngineDownloadError('numba failed to build wheel').includes('numpy 2.4'));
+        const localCache = (
+            'An error happened while trying to locate the file on the Hub and we cannot find '
+            + 'the requested files in the local cache. Please check your connection and try again '
+            + 'or make sure your Internet connection is on.'
+        );
+        assert.ok(
+            ui.formatEngineDownloadError(localCache, { hfEndpoint: 'https://hf-mirror.com' })
+                .includes('无法连接模型仓库'),
+            'Hub local-cache wrapper should map to connectivity hint',
+        );
     });
 
     it('clamps progress and ring-buffers log lines', () => {
@@ -44,6 +54,7 @@ describe('engine-models-ui-core', () => {
             asr: 2,
             vad: 0,
             llm: 2,
+            decision: 0,
             separate: 1,
         });
         assert.strictEqual(ui.filterAndSortEnginePickItems(catalog, { status: 'installed' }).length, 1);
@@ -74,6 +85,7 @@ describe('engine-models-ui-core', () => {
             asr: 2,
             vad: 0,
             llm: 2,
+            decision: 0,
             separate: 1,
         });
     });
@@ -123,7 +135,21 @@ describe('engine-models-ui-core', () => {
         });
         assert.ok(built.html.includes('m1'));
         assert.ok(built.html.includes('missing'));
+        assert.ok(built.html.includes('未下载'));
         assert.ok(!built.html.includes('m2'));
+
+        const tenVad = ui.buildInstalledModelSelectOptionsHtml({
+            models: [
+                { id: 'firered-vad', name: 'FireRedVAD', kind: 'vad', installed: true },
+            ],
+            kind: 'vad',
+            selectedId: 'ten-vad',
+            esc,
+        });
+        assert.ok(tenVad.html.includes('value="ten-vad"'));
+        assert.ok(tenVad.html.includes('TEN VAD'));
+        assert.ok(!tenVad.html.includes('ten-vad（未下载）'));
+        assert.ok(tenVad.html.includes('value="silero-vad"'));
 
         const llmAsMt = ui.buildInstalledModelSelectOptionsHtml({
             models: [
@@ -243,6 +269,7 @@ describe('engine-models-ui-core', () => {
             },
             { id: 'demucs', kind: 'demucs', name: 'skip-me' },
             { id: 'qwen3-asr-1.7b-ja', kind: 'asr', name: 'retired neosophie' },
+            { id: 'qwen3-asr-1.7b-ja-anime-lora-v3', kind: 'asr', name: 'retired lora v3' },
             {
                 id: 'sakura-1.5b',
                 kind: 'mt',
@@ -256,6 +283,7 @@ describe('engine-models-ui-core', () => {
         });
         assert.strictEqual(normalized.length, 2);
         assert.ok(!normalized.some((m) => m.id === 'qwen3-asr-1.7b-ja'));
+        assert.ok(!normalized.some((m) => m.id === 'qwen3-asr-1.7b-ja-anime-lora-v3'));
         assert.strictEqual(normalized.find((m) => m.id === 'sakura-1.5b').group, 'llm');
         assert.ok(normalized.find((m) => m.id === 'opus-mt-ja-zh').sizeHint.includes('100'));
         assert.ok(normalized.find((m) => m.id === 'opus-mt-ja-zh').ramHint.includes('GB'));
@@ -320,6 +348,16 @@ describe('engine-models-ui-core', () => {
         assert.strictEqual(demucs.installed, true);
         assert.strictEqual(demucs.incomplete, false);
         assert.strictEqual(ui.engineModelGroupLabel('llm'), 'LLM推理翻译');
+        assert.strictEqual(ui.engineModelGroupLabel('decision'), '决策辅助');
+        assert.ok(ui.MODELS_GROUP_FILTERS.includes('decision'));
+        const layaPick = ui.normalizeEnginePickCatalog([{
+            id: 'opendecider-nano',
+            kind: 'decision',
+            name: 'OpenDecider nano（Laya）',
+            installed: false,
+            size_hint_mb: 800,
+        }], { demucsModelId: 'demucs' });
+        assert.strictEqual(layaPick[0].group, 'decision');
 
         const partial = ui.buildDemucsPickItem({ status: 'partial', ok: true }, 'demucs');
         assert.strictEqual(partial.installed, true);
@@ -334,6 +372,20 @@ describe('engine-models-ui-core', () => {
         assert.ok(!ui.isDemucsFullyReady({ status: 'need_torch_cuda', ok: true }));
 
         assert.ok(!ui.isDemucsRuntimeUsable({ status: 'need_install', ok: true }));
+
+        // Legacy IPC bug: HTTP code overwritten onto semantic status.
+        const httpLeak = ui.buildDemucsPickItem({
+            status: '200',
+            ok: true,
+            installed: true,
+            hint: 'Demucs 已安装（4.1.0），GPU 可用',
+            version: '4.1.0',
+        }, 'demucs');
+        assert.strictEqual(httpLeak.installed, true);
+        assert.strictEqual(httpLeak.incomplete, false);
+        assert.ok(ui.isDemucsRuntimeUsable({ status: '200', ok: true, installed: true }));
+        assert.ok(ui.isDemucsFullyReady({ status: '200', ok: true, installed: true }));
+        assert.ok(ui.isDemucsFullyReady({ status: 'ready', ok: true }));
     });
 
     it('delete button visibility and confirm copy', () => {

@@ -25,6 +25,8 @@ const { createAdvancedReconstructOrchestration } = require('./advanced-reconstru
 const { createAdvancedLicenseLifecycle } = require('./advanced-license-lifecycle');
 const { createAdvancedManagedLlmJobs } = require('./advanced-managed-llm-jobs');
 const { registerAdvancedManagedLlmIpc } = require('./advanced-managed-llm-ipc');
+const { createJevRuntime } = require('./jev-runtime');
+const { registerJevIpc } = require('./jev-ipc');
 
 function isAppPackaged() {
     try {
@@ -93,6 +95,17 @@ function ensureByokLoaded(doc) {
     byok.loadByokKeyBlob(blob);
 }
 
+const jevRuntime = createJevRuntime({
+    getAdvancedDeviceId,
+    readAdvancedDoc,
+    writeAdvancedDoc,
+    publicStatus: (doc, deviceId) => publicStatus(doc, deviceId),
+    requireJevDecision: () => {
+        const { requireJevDecision } = require('./advanced-gates');
+        return requireJevDecision();
+    },
+});
+
 function publicStatus(doc, deviceId) {
     ensureByokLoaded(doc);
     const status = entitlement.buildStatusView(doc.license, deviceId);
@@ -102,7 +115,7 @@ function publicStatus(doc, deviceId) {
         status.message = '开发解锁（TRANSUB_ADVANCED_DEV_UNLOCK）';
         status.devUnlock = true;
     }
-    return {
+    const out = {
         ...status,
         byok: byok.getByokPublicConfig(doc.byok),
         byokKeyHint: byok.maskKeyHint(),
@@ -128,6 +141,7 @@ function publicStatus(doc, deviceId) {
         module: getAdvancedModuleInfo(),
         path: undefined,
     };
+    return jevRuntime.attachPublicJev(out, doc);
 }
 
 /** @type {{ setMainWindowTitle?: Function, refreshProductTitle?: Function } | null} */
@@ -178,6 +192,11 @@ const {
     publicStatus,
     shouldUseLicenseServer,
     isDevUnlockEnabled,
+    notifyEntitlementChanged(status) {
+        try {
+            require('./advanced-entitlement-broadcast').broadcastAdvancedEntitlementChanged(status);
+        } catch (_) { /* ignore */ }
+    },
 });
 
 
@@ -507,6 +526,7 @@ function setupAdvancedBridge(api, deps = {}) {
     windowManagerRef = deps.windowManager || null;
     const current = readAdvancedDoc();
     ensureByokLoaded(current.doc);
+    jevRuntime.ensureJevLoaded(current.doc);
     syncMainWindowTitle();
 
     register('transub-advanced-get-status', async () => {
@@ -557,6 +577,8 @@ function setupAdvancedBridge(api, deps = {}) {
     register('transub-advanced-deactivate', async () => deactivateLicense());
 
     register('transub-advanced-save-byok', async (_event, payload = {}) => saveByokConfig(payload));
+
+    registerJevIpc(register, jevRuntime);
 
     registerAdvancedManagedLlmIpc(register, {
         getManagedLlmStatus,

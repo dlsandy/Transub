@@ -30,6 +30,7 @@ const KIND_LABELS = {
     advanced_batch_reconstruct: '批量语境重构',
     advanced_asr_semantic_repair: '转录语义校正',
     sakura_translate: '推理翻译',
+    ellipsis_backfill: '省略号补译',
     managed_llm_perf: '模型性能测试',
     ffmpeg_burn: '字幕烧录',
 };

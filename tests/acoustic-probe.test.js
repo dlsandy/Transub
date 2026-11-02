@@ -28,4 +28,19 @@ describe('ffmpeg acoustic probe parse', () => {
         assert.ok(hit.softSparse);
         assert.strictEqual(hit.hint, 'soft');
     });
+
+    it('flags noisy floor', () => {
+        // ~3s silence / 12s → ratio 0.25; mean −20 → elevated floor, not music/soft
+        const log = [
+            '[silencedetect @] silence_start: 1.0',
+            '[silencedetect @] silence_end: 2.5',
+            '[silencedetect @] silence_start: 6.0',
+            '[silencedetect @] silence_end: 7.5',
+            '[Parsed_volumedetect_0 @] mean_volume: -20.0 dB',
+            '[Parsed_volumedetect_0 @] max_volume: -8.0 dB',
+        ].join('\n');
+        const hit = parseAcousticProbeLog(log, 12);
+        assert.ok(hit.noisyFloor);
+        assert.strictEqual(hit.hint, 'noisy');
+    });
 });

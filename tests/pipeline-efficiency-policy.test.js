@@ -42,13 +42,13 @@ describe('blank-mt-retry-policy slot filter + weak yield', () => {
             blankPolicy.classifyBlankSlotForLlm('はぁ…はぁ…めちゃめちゃしちゃいます…', '…'),
             'llm',
         );
-        // Discourse with neighbors → recover/llm
+        // Discourse with neighbors + deterministic fill (嗯) → det_only, not LLM
         assert.strictEqual(
             blankPolicy.classifyBlankSlotForLlm('うん', '…', {
                 prevJa: '今日は何する？',
                 nextJa: '映画でも見る？',
             }),
-            'llm',
+            'det_only',
         );
     });
 

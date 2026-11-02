@@ -47,7 +47,9 @@ describe('extensions-subtitle-document', () => {
         assert.strictEqual(isSourceSubtitleTrack('movie.src.srt'), true);
         assert.strictEqual(isSourceSubtitleTrack('movie.ja.srt'), true);
         assert.strictEqual(isSourceSubtitleTrack('movie.transcribe.srt'), true);
+        assert.strictEqual(isSourceSubtitleTrack('movie_transcribe.srt'), true);
         assert.strictEqual(isSourceSubtitleTrack('movie.original.srt'), true);
+        assert.strictEqual(isSourceSubtitleTrack('movie_original.srt'), true);
         assert.strictEqual(isSourceSubtitleTrack('movie.zh.srt'), false);
     });
 

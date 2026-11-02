@@ -91,6 +91,15 @@ describe('engine-log-filter', () => {
         assert.ok(out.includes('原始错误'));
     });
 
+    it('friendly OMP Error #15 mentions ROCm / Anime Whisper restart', () => {
+        const raw = (
+            'OMP: Error #15: Initializing libiomp5md.dll, but found libomp140.x86_64.dll already initialized.'
+        );
+        const out = friendlyEngineError(raw);
+        assert.ok(out.includes('OpenMP'));
+        assert.ok(/ROCm|Anime Whisper|KMP_DUPLICATE/i.test(out));
+    });
+
     it('friendly torch docstring poison asks for restart (not bare WinError 1114 wrap)', () => {
         const { isTorchEngineProcessPoisonError } = require('../electron/engine-log-filter');
         const raw = (

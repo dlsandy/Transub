@@ -63,6 +63,7 @@
             if (fromMt) return fromMt.label;
             if (id === 'fsmn-vad') return 'FSMN-VAD（语音活动检测）';
             if (id === 'silero-vad') return 'Silero VAD（随 Whisper 内置）';
+            if (id === 'ten-vad') return 'TEN VAD（随引擎运行时）';
             if (id === 'whisperseg-asmr') return 'WhisperSeg ASMR（必装 · 灵敏检出）';
             const cat = state.catalogById[id];
             return cat?.name || id;
@@ -317,9 +318,18 @@
                     ],
                 };
             }
+            if (data.vendor === 'intel' && data.detected) {
+                return {
+                    device: 'intel',
+                    lines: [
+                        uiTf('检测到 Intel Arc 显卡：{name}', { name: data.gpuName || 'Intel Arc' }),
+                        uiTx('建议使用 GPU（XPU）：Qwen3 / SenseVoice / Demucs 可加速；Whisper 仍走 CPU。软件内大模型推荐 SYCL（也可 Vulkan）。'),
+                    ],
+                };
+            }
             return {
                 device: 'cpu',
-                lines: [uiTx('未检测到可用的 NVIDIA / AMD GPU，Engine 听写建议使用 CPU。')],
+                lines: [uiTx('未检测到可用的 NVIDIA / AMD / Intel Arc GPU，Engine 听写建议使用 CPU。')],
             };
         }
 
@@ -328,19 +338,45 @@
             const deviceSel = $('wizardDeviceSelect');
             if (!deviceSel) return;
             const amd = state.detect.gpuVendor === 'amd';
+            const intel = state.detect.gpuVendor === 'intel';
             const cudaOpt = deviceSel.querySelector('option[value="cuda"]');
+            let intelOpt = deviceSel.querySelector('option[value="intel"]');
             const cpuOpt = deviceSel.querySelector('option[value="cpu"]');
+            if (!intelOpt && deviceSel) {
+                intelOpt = document.createElement('option');
+                intelOpt.value = 'intel';
+                if (cudaOpt?.nextSibling) deviceSel.insertBefore(intelOpt, cudaOpt.nextSibling);
+                else deviceSel.appendChild(intelOpt);
+            }
             if (cudaOpt) {
-                cudaOpt.disabled = false;
+                cudaOpt.disabled = !!intel;
                 cudaOpt.textContent = amd
                     ? uiTx('GPU（AMD · ROCm · Qwen/SenseVoice）')
                     : uiTx('GPU（NVIDIA · Engine 听写）');
             }
+            if (intelOpt) {
+                intelOpt.disabled = !intel;
+                intelOpt.hidden = !intel;
+                intelOpt.textContent = uiTx('GPU（Intel · XPU · Qwen/SenseVoice/Demucs）');
+            }
             if (cpuOpt) {
                 cpuOpt.textContent = uiTx('CPU（Engine 听写）');
             }
+            // Honor detect suggestion, but do not clobber an explicit user CPU choice.
             const want = state.detect.suggestedDevice || 'cpu';
-            deviceSel.value = want === 'cuda' || want === 'cpu' ? want : 'cpu';
+            const cur = String(deviceSel.value || '').trim();
+            const userPickedCpu = cur === 'cpu' && deviceSel.dataset.userTouched === '1';
+            if (!userPickedCpu) {
+                if (want === 'intel' || want === 'xpu') deviceSel.value = 'intel';
+                else if (want === 'cuda' || want === 'amd') deviceSel.value = 'cuda';
+                else deviceSel.value = 'cpu';
+            }
+            if (!deviceSel.dataset.boundDeviceTouch) {
+                deviceSel.dataset.boundDeviceTouch = '1';
+                deviceSel.addEventListener('change', () => {
+                    deviceSel.dataset.userTouched = '1';
+                });
+            }
         }
 
         function renderPlanCard() {
@@ -377,15 +413,20 @@
                 : '';
             if (host) {
                 const amd = state.detect.gpuVendor === 'amd';
-                const computeLabel = device === 'cuda'
-                    ? (amd ? 'Engine 听写 · GPU（ROCm）' : 'Engine 听写 · GPU（CUDA）')
-                    : 'Engine 听写 · CPU';
+                const intel = state.detect.gpuVendor === 'intel';
+                const computeLabel = (device === 'intel' || device === 'xpu')
+                    ? 'Engine 听写 · GPU（XPU）'
+                    : (device === 'cuda'
+                        ? (amd ? 'Engine 听写 · GPU（ROCm）' : 'Engine 听写 · GPU（CUDA）')
+                        : 'Engine 听写 · CPU');
                 const lines = [
                     `任务：${TASK_LABELS[goals.task] || goals.task}`,
                     `速度：${PROFILE_LABELS[profile] || profile}`,
                     `片子语言：${LANG_LABELS[goals.language] || goals.language}`,
                     `计算：${computeLabel}${
-                        amd ? ' · llama-server 可用 ROCm/Vulkan · Whisper 仍 CPU' : ''
+                        amd
+                            ? ' · llama-server 可用 ROCm/Vulkan · Whisper 仍 CPU'
+                            : (intel ? ' · llama-server 推荐 SYCL/Vulkan · Whisper 仍 CPU' : '')
                     }`,
                 ];
                 if (asrList[0]) lines.push(`听写：${modelLabel(asrList[0])}`);
@@ -402,6 +443,8 @@
                 else if (!state.detect.engineOk) lines.push('转写引擎待配置');
                 if (amd && state.detect.gpuName) {
                     lines.push(`显卡：${state.detect.gpuName}（AMD）`);
+                } else if (intel && state.detect.gpuName) {
+                    lines.push(`显卡：${state.detect.gpuName}（Intel Arc）`);
                 }
                 if (pipe?.smartTranslate) lines.push('翻译模式：智能翻译（Pro）');
                 else if (goals.task !== 'transcribe' && mtList.length) lines.push('翻译模式：推理翻译');
@@ -419,6 +462,8 @@
                     hint.textContent = uiTx('转写引擎尚未就绪：仍会保存偏好；可稍后在环境页补齐。');
                 } else if (state.detect.gpuVendor === 'amd') {
                     hint.textContent = uiTx('已检测到 AMD 显卡：Qwen3 / SenseVoice 可用 ROCm GPU；Whisper 仍走 CPU。大模型优先 ROCm（也可 Vulkan）。');
+                } else if (state.detect.gpuVendor === 'intel') {
+                    hint.textContent = uiTx('已检测到 Intel Arc：Qwen3 / SenseVoice / Demucs 可用 XPU；Whisper 仍走 CPU。大模型推荐 SYCL（也可 Vulkan）。');
                 } else {
                     hint.textContent = '';
                 }
@@ -487,7 +532,7 @@
 
             const rows = modelIds.map((id) => {
                 const live = state.catalogById[id] || {};
-                let installed = id === 'silero-vad' ? true : !!live.installed;
+                let installed = (id === 'silero-vad' || id === 'ten-vad') ? true : !!live.installed;
                 if (isManagedLlmModelId(id) && Object.prototype.hasOwnProperty.call(managedInstalled, id)) {
                     installed = !!managedInstalled[id];
                 } else if (isManagedLlmModelId(id) && isSakuraModelId(id) === false && live.installed == null) {

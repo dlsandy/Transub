@@ -70,7 +70,7 @@ print(json.dumps({
         assert.doesNotMatch(body, /__import__\(mod\)/);
     });
 
-    it('env-check Whisper probe uses importlib.metadata, not import av', function () {
+    it('env-check Whisper probe uses engine probe_asr_whisper, not import av', function () {
         const fs = require('fs');
         const src = fs.readFileSync(
             path.join(__dirname, '..', 'electron', 'env-check.js'),
@@ -78,9 +78,10 @@ print(json.dumps({
         );
         const fn = src.slice(src.indexOf('async function checkWhisperRuntime'));
         const body = fn.slice(0, Math.min(fn.length, 3500));
-        assert.match(body, /from importlib\.metadata import PackageNotFoundError, version/);
+        assert.match(body, /probe_asr_whisper/);
         assert.doesNotMatch(body, /['"] import av['"]/);
         assert.doesNotMatch(body, /['"] import ctranslate2/);
+        assert.doesNotMatch(body, /['"] import torch['"]/);
     });
 
     it('torch CUDA direct-download URLs encode pytorch.org plus signs', function () {
@@ -106,6 +107,39 @@ print(json.dumps({
         assert.ok(payload.aliyun.includes('+cu126'));
         assert.ok(payload.official.includes('%2Bcu126'));
         assert.ok(payload.cu128.includes('%2Bcu128'));
+    });
+
+    it('torch CUDA direct_sources prefer Aliyun before download.pytorch.org', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runPy(`
+import json
+from transub_engine.pip_mirror_util import TORCH_CUDA_VARIANT_CONFIG
+out = {}
+for key in ("cu126", "cu128", "cu130"):
+    hosts = [h for _u, h in TORCH_CUDA_VARIANT_CONFIG[key]["direct_sources"]]
+    out[key] = hosts
+print(json.dumps(out))
+`);
+        const payload = JSON.parse(out);
+        for (const key of ['cu126', 'cu128', 'cu130']) {
+            const hosts = payload[key] || [];
+            assert.ok(hosts.length >= 2, `${key} needs >=2 direct sources`);
+            assert.strictEqual(
+                hosts[0],
+                'mirrors.aliyun.com',
+                `${key} must try Aliyun before official (got ${hosts.join(' → ')})`,
+            );
+            assert.ok(
+                hosts.includes('download.pytorch.org'),
+                `${key} should keep official as fallback`,
+            );
+            assert.ok(
+                hosts.indexOf('mirrors.aliyun.com') < hosts.indexOf('download.pytorch.org'),
+                `${key} Aliyun must precede download.pytorch.org`,
+            );
+        }
     });
 
     it('needs_torch_cuda128 detects Blackwell compute capability', function () {
@@ -204,5 +238,43 @@ ra.clear_pending_torch_cuda_install()
         assert.strictEqual(payload.deferred, true);
         assert.strictEqual(payload.restartRequired, true);
         assert.strictEqual(payload.code, 'TORCH_CUDA_DEFERRED');
+    });
+
+    it('keeps pending marker when cold-install verify fails', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runPy(`
+import json, tempfile
+from pathlib import Path
+from unittest.mock import patch
+from transub_engine import runtime_audio as ra
+
+td = Path(tempfile.mkdtemp())
+w1 = td / "torch-2.11.0+cu126-cp312-cp312-win_amd64.whl"
+w2 = td / "torchaudio-2.11.0+cu126-cp312-cp312-win_amd64.whl"
+w1.write_bytes(b"PK")
+w2.write_bytes(b"PK")
+ra.mark_pending_torch_cuda_install([str(w1), str(w2)], variant="cu126", source="test")
+marker = ra._pending_torch_cuda_marker_path()
+assert marker.is_file(), "marker missing before apply"
+
+with patch.object(ra, "_torch_native_live_in_process", return_value=False), \\
+     patch("transub_engine.pip_mirror_util.install_local_wheel_files", return_value={"ok": True}), \\
+     patch.object(ra, "_verify_torch_cuda_after_install", return_value=None):
+    out = ra.apply_pending_torch_cuda_install()
+print(json.dumps({
+    "ok": out.get("ok"),
+    "code": out.get("code"),
+    "suggestManual": bool(out.get("suggestManual")),
+    "markerStill": marker.is_file(),
+}))
+ra.clear_pending_torch_cuda_install()
+`, 30000);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ok, false);
+        assert.strictEqual(payload.code, 'TORCH_CUDA_INSTALL_FAILED');
+        assert.strictEqual(payload.suggestManual, true);
+        assert.strictEqual(payload.markerStill, true);
     });
 });

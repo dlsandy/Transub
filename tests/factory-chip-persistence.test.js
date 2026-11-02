@@ -73,18 +73,22 @@ describe('factory command-bar chip persistence', () => {
         assert.strictEqual(normalized.mergeBilingualSubtitles, true);
     });
 
-    it('partial-save whitelist in transwithai-bridge includes chip keys', () => {
-        const src = fs.readFileSync(
+    it('partial-save whitelist includes chip keys', () => {
+        const bridgeSrc = fs.readFileSync(
             path.join(__dirname, '../electron/transwithai-bridge.js'),
             'utf8',
         );
-        const start = src.indexOf("register('transwithai-save-options'");
-        assert.ok(start >= 0, 'transwithai-save-options handler missing');
-        const slice = src.slice(start, start + 12000);
+        assert.ok(
+            bridgeSrc.includes("require('./settings-partial-save-keys')")
+                || bridgeSrc.includes('settings-partial-save-keys'),
+            'transwithai-save-options should use settings-partial-save-keys',
+        );
+        const { PARTIAL_SAVE_OPTION_KEYS } = require('../electron/settings-partial-save-keys');
+        const keySet = new Set(PARTIAL_SAVE_OPTION_KEYS);
         for (const key of FACTORY_CHIP_OPTION_KEYS) {
             assert.ok(
-                slice.includes(`'${key}'`),
-                `transwithai-save-options whitelist missing chip key: ${key}`,
+                keySet.has(key),
+                `PARTIAL_SAVE_OPTION_KEYS missing chip key: ${key}`,
             );
         }
     });

@@ -411,6 +411,79 @@ print(json.dumps({'ok': ok, 'lens': lens, 'starts': starts, 'sr': SAMPLE_RATE}))
         assert.ok(j.lens[1] >= 31000 && j.lens[1] <= 33000);
     });
 
+    it('FireRed merge respects max_speech (no Demucs mega-islands)', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+from transub_engine.vad.firered_vad_seg import merge_firered_intervals
+# Adjacent soft-AV stamps that used to glue into a 35s mega-island.
+raw = [(4.2, 8.9), (9.1, 13.8), (14.0, 18.5), (18.7, 22.4), (22.6, 27.0), (27.2, 31.5), (31.7, 39.8)]
+out = merge_firered_intervals(
+    raw, merge_gap_s=0.5, max_speech_s=5.0, pad_s=0.12, min_speech_s=0.12, audio_end_s=50.0,
+)
+durs = [round(b - a, 2) for a, b in out]
+print(json.dumps({
+    'n': len(out),
+    'max_dur': max(durs) if durs else 0,
+    'first': [round(out[0][0], 2), round(out[0][1], 2)] if out else None,
+}))
+`);
+        const j = JSON.parse(out);
+        assert.ok(j.n >= 6, `expected capped pieces, n=${j.n}`);
+        assert.ok(j.max_dur <= 5.3, `max_speech must hold, max_dur=${j.max_dur}`);
+    });
+
+    it('Demucs-VAD refine silence-splits without dropping speech coverage', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+import numpy as np
+from transub_engine.asr.whisper_fw import (
+    _coalesce_short_vad_islands,
+    refine_demucs_vad_intervals,
+)
+merged = _coalesce_short_vad_islands(
+    [(11.60, 12.29), (13.40, 14.03), (15.38, 16.88)],
+    short_s=0.55,
+    max_gap_s=0.55,
+    max_merged_s=4.5,
+)
+sr = 16000
+pcm = np.zeros(30 * sr, dtype=np.float32)
+pcm[int(1 * sr):int(12 * sr)] = 0.05 * np.sin(
+    2 * np.pi * 220 * np.arange(11 * sr) / sr
+)
+pcm[int(13.4 * sr):int(14.0 * sr)] = 0.035 * np.sin(
+    2 * np.pi * 260 * np.arange(int(0.6 * sr)) / sr
+)
+pcm[int(16 * sr):int(20 * sr)] = 0.05 * np.sin(
+    2 * np.pi * 200 * np.arange(4 * sr) / sr
+)
+refined = refine_demucs_vad_intervals([(1.0, 29.7)], pcm, sr, long_island_s=10.0, min_silence_s=0.48)
+# Speech regions only (silence between phrases may be trimmed).
+speech_cov = 0.0
+for a, b in refined:
+    # intersect with known speech bands
+    for u, v in [(1.0, 12.0), (13.4, 14.0), (16.0, 20.0)]:
+        speech_cov += max(0.0, min(b, v) - max(a, u))
+print(json.dumps({
+    'merged_n': len(merged),
+    'refined_n': len(refined),
+    'refined': [[round(a, 2), round(b, 2)] for a, b in refined],
+    'speech_cov': round(speech_cov, 2),
+    'has_gap': any(
+        refined[i + 1][0] - refined[i][1] > 0.1
+        for i in range(len(refined) - 1)
+    ),
+}))
+`);
+        const j = JSON.parse(out);
+        assert.ok(j.merged_n >= 3, `expected no aggressive merge: ${JSON.stringify(j)}`);
+        assert.ok(j.refined_n >= 2, `expected silence splits: ${JSON.stringify(j.refined)}`);
+        assert.ok(j.speech_cov >= 14.5, `speech coverage dropped: ${j.speech_cov}`);
+        assert.strictEqual(j.has_gap, true, 'silence cuts must leave a pause gap');
+    });
+
     it('anime TEN island ASR forces greedy beam_size=1', function () {
         if (process.platform !== 'win32') this.skip();
         const out = runPy(`
@@ -618,6 +691,7 @@ print(json.dumps({
     'flush_lt_old': len(flush_marks) < 200 // 8,
     'has_wav2vec_release': 'wav2vec_align_cache' in freed,
     'has_cohere_release': 'cohere_asr_cache' in freed,
+    'has_firered2_release': 'firered_asr2_cache' in freed,
 }))
 `);
         const j = JSON.parse(out);
@@ -627,5 +701,6 @@ print(json.dumps({
         assert.ok(j.flush_lt_old, `expected fewer flushes than every-8, got ${j.flush_n}`);
         assert.strictEqual(j.has_wav2vec_release, true);
         assert.strictEqual(j.has_cohere_release, true);
+        assert.strictEqual(j.has_firered2_release, true);
     });
 });

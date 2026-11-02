@@ -204,10 +204,12 @@ async function runDownloadBackground({
             ? await deps.loadMergedOptions(body.options || {})
             : await defaultMergedOptions(body.options || {});
 
-        const hfEndpoint = body.hfEndpoint != null
-            ? String(body.hfEndpoint || '').trim().replace(/\/+$/, '')
-            : String(options.engineHfEndpoint || '').trim().replace(/\/+$/, '');
-        const hfToken = body.hfToken != null
+        const { resolveHfEndpointForDownload } = require('./engine-download-urls');
+        const hfEndpoint = resolveHfEndpointForDownload(
+            body.hfEndpoint,
+            options.engineHfEndpoint,
+        );
+        const hfToken = body.hfToken != null && String(body.hfToken).trim()
             ? String(body.hfToken || '').trim()
             : String(options.engineHfToken || '').trim();
         const optionsWithHf = {
@@ -239,7 +241,9 @@ async function runDownloadBackground({
             hfToken: hfToken || undefined,
             force: !!body.force,
         }, {
-            timeoutMs: 1800000,
+            timeoutMs: 1200000,
+            idleTimeoutMs: 1200000,
+            maxTimeoutMs: 4 * 60 * 60 * 1000,
             signal,
             onEvent: (ev) => {
                 emitProgress({

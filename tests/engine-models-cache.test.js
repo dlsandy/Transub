@@ -151,14 +151,36 @@ describe('engine-models-cache disk', () => {
         assert.strictEqual(loaded.cache.demucsProbe.status, 'ready');
     });
 
+    it('sanitizes demucsProbe HTTP status leak and keeps installed hint', () => {
+        const snap = sanitizeSnapshot({
+            models: [{ id: 'whisper-tiny', name: 'Tiny', kind: 'asr', installed: true }],
+            pickCatalog: [{ id: 'whisper-tiny', name: 'Tiny', group: 'asr', installed: true }],
+            demucsProbe: {
+                ok: true,
+                status: 200,
+                installed: true,
+                hint: 'Demucs 已安装（4.1.0），GPU 可用',
+                version: '4.1.0',
+                message: '',
+            },
+        });
+        assert.ok(snap);
+        assert.strictEqual(snap.demucsProbe.installed, true);
+        assert.strictEqual(snap.demucsProbe.status, 'ready');
+        assert.ok(String(snap.demucsProbe.hint).includes('Demucs'));
+        assert.strictEqual(snap.demucsProbe.version, '4.1.0');
+    });
+
     it('drops retired non-hf Qwen3 JA from snapshots', () => {
         const snap = sanitizeSnapshot({
             models: [
                 { id: 'qwen3-asr-1.7b-ja', name: 'neosophie', kind: 'asr' },
+                { id: 'qwen3-asr-1.7b-ja-anime-lora-v3', name: 'lora v3', kind: 'asr' },
                 { id: 'qwen3-asr-1.7b', name: 'Qwen3 1.7B', kind: 'asr' },
             ],
             pickCatalog: [
                 { id: 'qwen3-asr-1.7b-ja', name: 'neosophie', group: 'asr' },
+                { id: 'qwen3-asr-1.7b-ja-anime-lora-v3', name: 'lora v3', group: 'asr' },
                 { id: 'qwen3-asr-1.7b', name: 'Qwen3 1.7B', group: 'asr' },
             ],
         });

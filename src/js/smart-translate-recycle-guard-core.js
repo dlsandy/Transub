@@ -186,6 +186,19 @@
 
             // Near-paraphrase family (same long stem, tweaked ending) on divergent JA
             if (looksLikePrefixFamilyRecycle(zhKey, seen, jaKey)) {
+                if (Array.isArray(options._layaRecyclePending)) {
+                    options._layaRecyclePending.push({
+                        index: idx,
+                        text,
+                        before: text,
+                        after: blankText,
+                        blankText,
+                        id: `r${idx}`,
+                        sourceText: getSrc(c),
+                    });
+                    rememberSeen(seen, zhKey, jaKey);
+                    return { ...c, text };
+                }
                 scrubbedIndexes.push(idx);
                 rememberSeen(seen, zhKey, jaKey);
                 return { ...c, text: blankText };

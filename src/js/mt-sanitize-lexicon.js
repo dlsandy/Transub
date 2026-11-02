@@ -89,7 +89,9 @@
      * Adult JA anchors for training scan (under_formable / recover coverage).
      * Mild dialogue without these is noise for sanitize training.
      */
-    const ADULT_JA_ANCHOR = reFromB64('44GK44Gh44KTfOOCquODgeODs3zjgaHjgpPjgb1844OB44Oz44OdfOOBoeOCk+OBoeOCk3zjg4Hjg7Pjg4Hjg7N844Oa44OL44K5fOOBiuOBoVvil4vjgIfil68qXeOBoeOCk3zjgaFb4peL44CH4pevKl3jgpN85Lmz6aaWfOOBoeOBj+OBs3zoiJB844OV44Kn44OpfCg/PCFb44OQ44O0XSnjgqRb44Kv44OD44GNXXzjgYTjgaPjgaHjgoN844Kk44KtfOOBvuOCk+OBk3zjgYrjgb7jgpPjgZN85oy/5YWlfOWFpeOCjHzlsITnsr585Ye644GX44GmfOWHuuOBleOCjHzjgq3jgrl844Ko44OD44OBfOOBm+OCk+OBm+OBhHzlhYjnlJ985YWI44Gj44G9fOWFiOOBo+OBoeOCh3zjg5Hjg7Pjg5Hjg7N844KJ44KBfOOChOOCgeOBrXzlhoXlr4Z85a+G552AfOinpuOBo+OBpnzjgaHjgofjgYbjgaDjgYR8KD88IVvjgq3jg4Pjg4NdKeODgeODs3woPzpefFte44GK44Kq44KtXSnjgaHjgpM=');
+    // Soft-AV body / texture lemmas (おっぱい・やらしい・柔らか) must exempt long hiragana
+    // dialogue from Whisper-mash false positives (IPZZ-996-style おばちゃんの…やらかくて).
+    const ADULT_JA_ANCHOR = reFromB64('44GK44Gh44KTfOOCquODgeODs3zjgaHjgpPjgb1844OB44Oz44OdfOOBoeOCk+OBoeOCk3zjg4Hjg7Pjg4Hjg7N844Oa44OL44K5fOOBiuOBoVvil4vjgIfil68qXeOBoeOCk3zjgaFb4peL44CH4pevKl3jgpN85Lmz6aaWfOOBoeOBj+OBs3zoiJB844OV44Kn44OpfCg/PCFb44OQ44O0XSnjgqRb44Kv44OD44GNXXzjgYTjgaPjgaHjgoN844Kk44KtfOOBvuOCk+OBk3zjgYrjgb7jgpPjgZN85oy/5YWlfOWFpeOCjHzlsITnsr585Ye644GX44GmfOWHuuOBleOCjHzjgq3jgrl844Ko44OD44OBfOOBm+OCk+OBm+OBhHzlhYjnlJ985YWI44Gj44G9fOWFiOOBo+OBoeOCh3zjg5Hjg7Pjg5Hjg7N844KJ44KBfOOChOOCgeOBrXzlhoXlr4Z85a+G552AfOinpuOBo+OBpnzjgaHjgofjgYbjgaDjgYR8KD88IVvjgq3jg4Pjg4NdKeODgeODs3woPzpefFte44GK44Kq44KtXSnjgaHjgpN844GK44Gj44Gx44GEfOOChOOCieOBl+OBhHzmn5TjgonjgYs=');
 
     /** Residual class for scan bucketing (tooling). */
     const RESIDUAL_CLASS = Object.freeze({
@@ -214,6 +216,8 @@
         const s = String(src || '');
         if (reFromB64('44GK44Gh44KT44Gu5Lmz6aaW').test(s) && !reFromB64('44GK44Gh44KT44Gh44KTfOOBoeOCk+OBvXzjg4Hjg7Pjg51844OH44Kr44OB44Oz').test(s)) return false;
         if (RE?.dekachinSrc?.test?.(s)) return true;
+        // Soft-AV euphemism ゾウさん / ぞうさん (not literal zoo talk)
+        if (reFromB64('44K+44Km44GV44KTfOOBnuOBhuOBleOCkw==').test(s)) return true;
         // Prefer lookbehind-aware ROD_JA_EXTRA over opaque jaHasRodSrc (bare チン → ディッチンコ FP)
         if (ROD_JA_EXTRA.test(s)) return true;
         // Censored / ASR-truncated rod scraps
@@ -245,21 +249,33 @@
      * blank LLM and leaves shippable「…」(MFYD-186).
      */
     function looksLikeUnusableAsrJa(src = '') {
-        const s = String(src || '').trim();
+        const raw = String(src || '').trim();
+        if (!raw) return false;
+        // Trailing punct must not inflate length into the mid-kana mash branch
+        // (またこういうのしようね。 was false-positive when 。 counted toward len≥12).
+        const s = raw.replace(/[。．.!！?？…\s　]+$/u, '').trim();
         if (!s) return false;
         const len = textLen(s);
         if (len < 10) return false;
         if (isAdultJaAnchor(s)) return false;
+        // Katakana/Latin loan + digits (ポジティブ100パーセント) is dialogue, not Whisper mash.
+        if (/[A-Za-z0-9０-９]/.test(s) && /[\u30a0-\u30ff]/.test(s)) return false;
         // Soft-AV erect / sensation stems — never Whisper mash (WAWA 硬くなってきちゃ…)
-        if (/硬くなって|硬くなっ|きちゃい[まも]/.test(s)) return false;
+        if (/硬くなって|硬くなっ|きちゃい[まも]|なってきちゃ|きちゃった/.test(s)) return false;
+        // Colloquial contractions / quotative って — real dialogue, not kana mash
+        // (IESP-763: まだいいってゆってないんだから / おっきくなってきちゃった).
+        // Include ちゃい (されちゃいたい) — desiderative of ちゃう, not only ちゃう/ちゃっ.
+        if (/(?:って|ってる|んだ(?:から|けど|よ)?|てない|てた|てる|ちゃう|ちゃい|ちゃっ|そしたら|したら|だから|なのに|かも(?:しれ)?)/.test(s)) {
+            return false;
+        }
 
         const hira = (s.match(/[\u3040-\u309f]/g) || []).length;
         const kata = (s.match(/[\u30a0-\u30ff]/g) || []).length;
         const kanji = (s.match(/[\u4e00-\u9fff]/g) || []).length;
         const kana = hira + kata;
-        // Soft-AV dialogue is often long hiragana with です/ます — never treat as mash
-        // when clear discourse / verb stems are present (EYAN-221 / DLDSS-533 false delete).
-        const discourseOk = /(?:なに|何|ちょっと|ダメ|だめ|わか|教え|やって|やる|あげ|見て|やめ|ください|して|ないで|てくれ|ですか|だよ|ですよ|ますよ|でしょう|でしょ|なりたい|うまく|したい|ありがとう|ございま|すみません|失礼|もちろん|正解|おはよう|お疲れ|どうぞ)/.test(s);
+        // Soft-AV / dialect dialogue is often long hiragana — never treat as mash when
+        // clear discourse / verb stems are present (EYAN-221 / DLDSS-533 / JUR dialect FP).
+        const discourseOk = /(?:なに|何|ちょっと|ダメ|だめ|わか|教え|やって|やる|あげ|見て|やめ|ください|して|ないで|てくれ|ですか|だよ|ですよ|ますよ|でしょう|でしょ|なりたい|うまく|したい|ありがとう|ございま|すみません|失礼|もちろん|正解|おはよう|お疲れ|どうぞ|申します|言います|洗え|動かない|また|こういう|そういう|ああいう|しよう|するね|しようね|お世話|ほんなら|びっくり|どんな|ほら|ここ|それと|するかな)/.test(s);
         if (discourseOk) return false;
 
         if (len >= 12 && kanji <= 1 && kana >= len * 0.8) {
@@ -283,14 +299,19 @@
             }
             // Long / mid kana with almost no discourse particles / copula (no ellipsis cuts).
             // Catches Whisper phonetic junk like ふせんばとみんたんげーん.
+            // Do NOT fire when clear verb/deixis stems remain (dialect FP:
+            // ほんならそれとびっくりするかな). Keep grafted-tail branch above intact —
+            // bare した would false-exempt …聞いてきました via ました.
             const ellip = (s.match(/…+|\.{2,}/g) || []).length;
             const particles = (s.match(/[はがをにでのもへと]/g) || []).length;
+            const lexicalStem = /(?:する|して[いいわくのか]|したい|された|するかな|かな$|思う|言う|見る|聞く|これ|それ|あれ|ここ|ほら|びっくり)/.test(s);
             if (
                 ellip === 0
                 && particles <= 1
                 && len >= 12
                 && kanji === 0
                 && kana >= len * 0.85
+                && !lexicalStem
                 && !/(?:です|ます|ました|ください|でしょう|でしょ|ません|ですね|だよ|ですか)/.test(s)
                 && /[ぁ-んー]{10,}/.test(s)
             ) {
@@ -307,6 +328,10 @@
         // Long katakana loans / names with nakaguro are recoverable (not Whisper mash)
         if (/[・･]/.test(s) && /^[\u30a0-\u30ff・･ー\s　]+$/.test(s.trim())) {
             return false;
+        }
+        // Katakana loan + Latin/digits (ポジティブ100パーセント) is real dialogue.
+        if (/[A-Za-z0-9０-９]/.test(s) && /[\u30a0-\u30ff]/.test(s) && !ASR_GARBAGE_JA.test(s)) {
+            return looksLikeUnusableAsrJa(s);
         }
         // Heavy katakana mash with almost no content kanji / known adult lemma
         const kata = (s.match(/[\u30a0-\u30ff]/g) || []).length;

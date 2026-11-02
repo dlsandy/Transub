@@ -98,6 +98,22 @@ async function runQcSilenceSplitOnCues(cues, options = {}) {
                     minSegmentMs: detectOpts.minSegmentMs,
                 },
             ),
+            // Prefer mid-cue energy valleys when multiple silence cut points exist.
+            rankSplitPoints: options.waveformValleySplit === false
+                ? undefined
+                : async (c, points) => {
+                    try {
+                        const wave = require('./qc-waveform-timing');
+                        return await wave.rerankSilenceSplitPointsWithValley(c, points, {
+                            mediaPath,
+                            videoPath: mediaPath,
+                            ffmpegPath,
+                            minValleyDepth: 0.22,
+                        });
+                    } catch {
+                        return points;
+                    }
+                },
         }),
         onProgress: options.onProgress,
         isCancelled: () => {

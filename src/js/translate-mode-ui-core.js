@@ -25,6 +25,11 @@
         const getAdvancedEntitled = typeof d.getAdvancedEntitled === 'function'
             ? d.getAdvancedEntitled
             : () => !!d.advancedEntitled;
+        // Missing getter means "already known" so older callers still gate Pro modes.
+        // Boot passes the real flag: options load before the license check returns.
+        const getAdvancedEntitlementKnown = typeof d.getAdvancedEntitlementKnown === 'function'
+            ? d.getAdvancedEntitlementKnown
+            : () => true;
         const getCachedEngineModels = d.getCachedEngineModels || (() => []);
         const getCachedHardwareRecommend = d.getCachedHardwareRecommend || (() => null);
         const getCachedBundledEnginePath = d.getCachedBundledEnginePath || (() => '');
@@ -708,6 +713,29 @@
                 els.smartTranslateVerifyWrap.classList.toggle('opacity-50', !proOk);
                 els.smartTranslateVerifyWrap.classList.toggle('pointer-events-none', !proOk);
             }
+            for (const id of [
+                'jevDecisionModeSelect',
+                'jevDecisionEndpointInput',
+                'jevDecisionMinConfidenceInput',
+                'jevApiKeyInput',
+                'jevSaveApiKeyBtn',
+                'jevTestApiKeyBtn',
+                'jevClearApiKeyBtn',
+                'jevInstallLayaBtn',
+            ]) {
+                if (els[id]) els[id].disabled = !proOk;
+            }
+            for (const wrapId of [
+                'jevDecisionModeWrap',
+                'jevDecisionEndpointWrap',
+                'jevDecisionMinConfidenceWrap',
+                'jevApiKeyWrap',
+            ]) {
+                if (els[wrapId]) {
+                    els[wrapId].classList.toggle('opacity-50', !proOk);
+                    els[wrapId].classList.toggle('pointer-events-none', !proOk);
+                }
+            }
             if (els.smartTranslateAddressCheck) {
                 els.smartTranslateAddressCheck.disabled = !proOk;
             }
@@ -737,6 +765,14 @@
             if (els.filmAudioEnhanceCheck) {
                 els.filmAudioEnhanceCheck.disabled = locked;
             }
+            if (els.enhanceForVadOnlyWrap) {
+                const enhanceOn = !locked && !!els.filmAudioEnhanceCheck?.checked;
+                els.enhanceForVadOnlyWrap.classList.toggle('opacity-50', !enhanceOn);
+                els.enhanceForVadOnlyWrap.classList.remove('pointer-events-none');
+            }
+            if (els.enhanceForVadOnlyCheck) {
+                els.enhanceForVadOnlyCheck.disabled = locked || !els.filmAudioEnhanceCheck?.checked;
+            }
             if (els.filmVadPresetWrap) {
                 els.filmVadPresetWrap.classList.toggle('opacity-50', locked);
                 els.filmVadPresetWrap.classList.remove('pointer-events-none');
@@ -753,15 +789,33 @@
             els.translateModeGotoProBtn?.classList.toggle('hidden', !smartLocked);
         }
 
+        function restoreRecommendedSmartPipelineChecks() {
+            const polish = els.smartTranslatePolishCheck;
+            const verify = els.smartTranslateVerifyCheck;
+            const address = els.smartTranslateAddressCheck;
+            if (!polish && !verify && !address) return;
+            const allOff = (!polish || polish.checked === false)
+                && (!verify || verify.checked === false)
+                && (!address || address.checked === false);
+            if (!allOff) return;
+            if (polish) polish.checked = true;
+            if (verify) verify.checked = true;
+            if (address) address.checked = true;
+        }
+
         function applyTranslateModeToForm(mode, { fromUser = false } = {}) {
             if (syncingTranslateMode) return;
             syncingTranslateMode = true;
             try {
                 const task = readTaskFromForm();
                 const allowTranslate = task === 'translate' || task === 'dual';
+                const prevMode = readTranslateModeFromForm();
                 let next = normalizeTranslateModeLocal(mode);
                 if (!allowTranslate) next = 'llm';
-                if (isProTranslateModeLocal(next) && !canUseSmartTranslateUi()) {
+                // License status arrives after the first options apply. Downgrading
+                // 混合翻译 before that sticks 推理翻译 for the whole session.
+                const entitlementKnown = !!getAdvancedEntitlementKnown();
+                if (isProTranslateModeLocal(next) && !canUseSmartTranslateUi() && entitlementKnown) {
                     if (fromUser) {
                         void promptProUnlockRequired({
                             featureLabel: next === 'dialog' ? uiTx('智能翻译') : uiTx('混合翻译'),
@@ -771,6 +825,9 @@
                 }
 
                 setTranslateModeRadios(next);
+                if (isProTranslateModeLocal(next) && !isProTranslateModeLocal(prevMode)) {
+                    restoreRecommendedSmartPipelineChecks();
+                }
                 if (els.smartTranslateCheck) {
                     els.smartTranslateCheck.checked = isProTranslateModeLocal(next);
                 }

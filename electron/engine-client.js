@@ -207,22 +207,45 @@ async function deleteModels(baseUrl, body = {}, options = {}) {
 
 /**
  * Consume Engine SSE (`text/event-stream`) and invoke onEvent for each JSON payload.
+ *
+ * `timeoutMs` is an *idle* timeout (reset whenever the engine sends bytes), not a
+ * wall-clock cap. Large Hub weights (Qwen 1.7B ~3.8GB) need many minutes after
+ * the last progress line while huggingface_hub hashes the file.
  */
 async function engineFetchSse(baseUrl, pathPart, {
     method = 'POST',
     body = undefined,
     headers = {},
     timeoutMs = 1800000,
+    idleTimeoutMs = undefined,
+    maxTimeoutMs = undefined,
     signal = undefined,
     onEvent = null,
 } = {}) {
     const url = joinUrl(baseUrl, pathPart);
     const ctrl = new AbortController();
     let timedOut = false;
-    const timer = setTimeout(() => {
-        timedOut = true;
-        ctrl.abort();
-    }, Math.max(1000, Number(timeoutMs) || 1800000));
+    let timeoutKind = '';
+    const idleMs = Math.max(1000, Number(idleTimeoutMs ?? timeoutMs) || 1800000);
+    const maxMsRaw = Number(maxTimeoutMs);
+    const maxMs = Number.isFinite(maxMsRaw) && maxMsRaw > 0 ? Math.max(idleMs, maxMsRaw) : 0;
+    let idleTimer = null;
+    const bumpIdle = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+            timedOut = true;
+            timeoutKind = 'idle';
+            ctrl.abort();
+        }, idleMs);
+    };
+    bumpIdle();
+    const maxTimer = maxMs
+        ? setTimeout(() => {
+            timedOut = true;
+            timeoutKind = 'max';
+            ctrl.abort();
+        }, maxMs)
+        : null;
     const onOuterAbort = () => ctrl.abort();
     if (signal) {
         if (signal.aborted) ctrl.abort();
@@ -259,6 +282,7 @@ async function engineFetchSse(baseUrl, pathPart, {
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+            bumpIdle();
             buffer += decoder.decode(value, { stream: true });
             let sep;
             while ((sep = buffer.indexOf('\n\n')) >= 0) {
@@ -295,9 +319,12 @@ async function engineFetchSse(baseUrl, pathPart, {
                     data: lastPayload,
                 };
             }
+            const idleMsg = timeoutKind === 'max'
+                ? '下载超过最长等待时间'
+                : '请求超时';
             return {
                 ok: false,
-                error: '请求超时',
+                error: idleMsg,
                 code: 'timeout',
                 data: lastPayload,
             };
@@ -309,7 +336,8 @@ async function engineFetchSse(baseUrl, pathPart, {
             data: lastPayload,
         };
     } finally {
-        clearTimeout(timer);
+        if (idleTimer) clearTimeout(idleTimer);
+        if (maxTimer) clearTimeout(maxTimer);
         if (signal) {
             try { signal.removeEventListener('abort', onOuterAbort); } catch { /* ignore */ }
         }
@@ -321,7 +349,9 @@ async function downloadModelsStream(baseUrl, body = {}, options = {}) {
         ...options,
         method: 'POST',
         body,
-        timeoutMs: options.timeoutMs || 1800000,
+        timeoutMs: options.timeoutMs || 1200000,
+        idleTimeoutMs: options.idleTimeoutMs || options.timeoutMs || 1200000,
+        maxTimeoutMs: options.maxTimeoutMs || 4 * 60 * 60 * 1000,
         onEvent: options.onEvent,
         signal: options.signal,
     });
@@ -541,11 +571,14 @@ async function waitJobViaEvents(baseUrl, jobId, {
         }
     }, 2000);
 
-    const stopPoll = setInterval(() => {
-        if (typeof shouldStop === 'function' && shouldStop()) {
-            try { ctrl.abort(); } catch { /* ignore */ }
-        }
-    }, 250);
+    // Only poll cancel when a shouldStop callback exists; 500ms is enough for UI cancel.
+    const stopPoll = typeof shouldStop === 'function'
+        ? setInterval(() => {
+            if (shouldStop()) {
+                try { ctrl.abort(); } catch { /* ignore */ }
+            }
+        }, 500)
+        : null;
 
     try {
         const sse = await engineFetchSse(baseUrl, `/v1/jobs/${encodeURIComponent(jobId)}/events`, {
@@ -614,7 +647,7 @@ async function waitJobViaEvents(baseUrl, jobId, {
         return { ok: false, error: 'sse_incomplete', code: 'sse_unavailable', data: finalJob.data };
     } finally {
         clearInterval(idleWatch);
-        clearInterval(stopPoll);
+        if (stopPoll) clearInterval(stopPoll);
         if (signal) {
             try { signal.removeEventListener('abort', onOuterAbort); } catch { /* ignore */ }
         }

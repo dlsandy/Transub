@@ -60,7 +60,21 @@
     }
 
     /**
-     * MoE expert CPU offload layers from catalog + VRAM hints.
+     * Prefer free MiB; fall back to total when free is unknown.
+     * @param {object} [input]
+     * @returns {number} MiB, or 0
+     */
+    function resolveGpuVramMiB(input = {}) {
+        const free = Number(input.gpuFreeMiB);
+        if (Number.isFinite(free) && free > 0) return free;
+        const total = Number(input.gpuTotalMiB);
+        if (Number.isFinite(total) && total > 0) return total;
+        return 0;
+    }
+
+    /**
+     * MoE expert CPU offload layers from catalog + VRAM / weight hints.
+     * Heavier GGUF than card VRAM → raise --n-cpu-moe so first load is less likely to OOM.
      * @param {object} [input]
      * @returns {number} 0 = all experts on GPU / omit flag
      */
@@ -77,16 +91,208 @@
         const base = Number.isFinite(configured) && configured > 0
             ? Math.min(64, Math.round(configured))
             : 14;
+        const vram = resolveGpuVramMiB(input);
+        if (!(vram > 0)) return base;
+        const vramGiB = vram / 1024;
+        if (vramGiB >= 22) return 0;
+        if (vramGiB >= 16) return Math.min(base, 8);
+        const weight = modelWeightGiB(input.paramBillion, {
+            weightGiB: input.weightGiB,
+            sizeBytes: input.sizeBytes,
+        });
+        const deficit = weight - vramGiB;
+        let need = base;
+        if (deficit > 6) need = Math.max(need, 24);
+        else if (deficit > 3) need = Math.max(need, 20);
+        else if (deficit > 1.5) need = Math.max(need, 18);
+        // Near-fit Mini (~10.5 on 10GB): do not force ≥18 offload — that kills tok/s.
+        else if (vramGiB < 8 && deficit > 0.5) need = Math.max(need, 18);
+        return Math.min(64, need);
+    }
+
+    /**
+     * Preferred starting -ngl from catalog + weight vs VRAM (avoid opening at 99 on tight cards).
+     * @param {object} [input]
+     * @returns {number}
+     */
+    function resolvePreferNgl(input = {}) {
+        const configured = Number(
+            input.nGpuLayers
+            ?? input.llamaServer?.nGpuLayers,
+        );
+        const hasCfg = Number.isFinite(configured) && configured >= 0;
+        const vram = resolveGpuVramMiB(input);
+        if (!(vram > 0)) return hasCfg ? Math.round(configured) : 99;
+        const vramGiB = vram / 1024;
+        const weight = modelWeightGiB(input.paramBillion, {
+            weightGiB: input.weightGiB,
+            sizeBytes: input.sizeBytes,
+        });
+        let cap = 99;
+        // Compact~13 on ~10GB → 20; Mini~10.5 on ~10GB → 60 (fits with modest MoE offload).
+        if (weight > vramGiB * 1.25) cap = 20;
+        else if (weight > vramGiB * 1.08) cap = 40;
+        else if (weight > vramGiB * 0.92) cap = 60;
+        if (!hasCfg) return cap;
+        if (configured === 0) return 0;
+        return Math.min(Math.round(configured), cap);
+    }
+
+    /**
+     * Clamp context for heavy MoE on tight VRAM (sentence MT rarely needs 8k).
+     * @param {object} [input]
+     * @returns {number}
+     */
+    function resolveLlamaContextSize(input = {}) {
+        const configured = Number(input.contextSize);
+        const base = Number.isFinite(configured) && configured > 0
+            ? Math.round(configured)
+            : 8192;
+        const vram = resolveGpuVramMiB(input);
+        if (!(vram > 0)) return Math.max(512, base);
+        const vramGiB = vram / 1024;
+        const weight = modelWeightGiB(input.paramBillion, {
+            weightGiB: input.weightGiB,
+            sizeBytes: input.sizeBytes,
+        });
+        let maxCtx = base;
+        if (weight > vramGiB * 1.4) maxCtx = Math.min(maxCtx, 2048);
+        else if (weight > vramGiB * 1.15) maxCtx = Math.min(maxCtx, 4096);
+        else if (weight > vramGiB * 0.95 && vramGiB < 12) maxCtx = Math.min(maxCtx, 4096);
+        return Math.max(512, maxCtx);
+    }
+
+    /**
+     * Parse llama.cpp nightly build number from a tag (e.g. b12032 → 12032).
+     * @param {unknown} tag
+     * @returns {number} 0 when unknown
+     */
+    function parseLlamaBuildNumber(tag) {
+        const raw = String(tag || '').trim();
+        if (!raw) return 0;
+        const matched = raw.match(/\bb(\d{4,})\b/i);
+        return matched ? Number(matched[1]) : 0;
+    }
+
+    /**
+     * llama.cpp v0.7.0-era server flags (--moe-cache-mib / --spec-draft-n-ubatch).
+     * Missing tag means the catalog pin (assumed new enough).
+     * An older installed build must not receive flags it will reject.
+     * @param {unknown} tag
+     * @returns {boolean}
+     */
+    function runtimeSupportsLlamaV07Flags(tag) {
+        const n = parseLlamaBuildNumber(tag);
+        if (!n) return true;
+        return n >= 11669;
+    }
+
+    /**
+     * Dense FFN CPU offload (`--n-cpu-ffn`) since b10645.
+     * @param {unknown} tag
+     * @returns {boolean}
+     */
+    function runtimeSupportsNCpuFfn(tag) {
+        const n = parseLlamaBuildNumber(tag);
+        if (!n) return true;
+        return n >= 10645;
+    }
+
+    /**
+     * Dense FFN layers kept in host RAM (`--n-cpu-ffn`).
+     * MoE models use `--n-cpu-moe` instead — never both.
+     * Explicit `nCpuFfn: 0` disables; omit for auto on heavy dense vs tight VRAM.
+     * @param {object} [input]
+     * @returns {number} 0 = omit flag
+     */
+    function resolveNCpuFfn(input = {}) {
+        if (!runtimeSupportsNCpuFfn(input.runtimeTag)) return 0;
+        if (input.moe === true) return 0;
+        if (resolveNCpuMoe(input) > 0) return 0;
+        const ngl = Number(input.nGpuLayers);
+        if (Number.isFinite(ngl) && ngl <= 0) return 0;
+
+        const hasExplicit = Object.prototype.hasOwnProperty.call(input, 'nCpuFfn')
+            || Object.prototype.hasOwnProperty.call(input.llamaServer || {}, 'nCpuFfn');
+        const configured = Number(
+            input.nCpuFfn ?? input.llamaServer?.nCpuFfn,
+        );
+        if (hasExplicit && Number.isFinite(configured)) {
+            if (configured <= 0) return 0;
+            return Math.min(128, Math.round(configured));
+        }
+
+        const vram = resolveGpuVramMiB(input);
+        if (!(vram > 0)) return 0;
+        const vramGiB = vram / 1024;
+        if (vramGiB >= 22) return 0;
+        const weight = modelWeightGiB(input.paramBillion, {
+            weightGiB: input.weightGiB,
+            sizeBytes: input.sizeBytes,
+        });
+        const billion = Number(input.paramBillion);
+        // Small dense models should stay fully on GPU.
+        if (!(weight >= 10 || (Number.isFinite(billion) && billion >= 14))) return 0;
+        const deficit = weight - vramGiB;
+        if (!(deficit > 0.8)) return 0;
+        // First-N-layer FFN offload; keep modest — too many kills tok/s on dense.
+        if (deficit > 8) return 24;
+        if (deficit > 4) return 16;
+        if (deficit > 2) return 12;
+        return 8;
+    }
+
+    /**
+     * GPU LRU cache (MiB) for MoE experts kept in host memory (`--moe-cache-mib`).
+     * @param {object} [input]
+     * @returns {number}
+     */
+    function resolveMoeCacheMiB(input = {}) {
+        if (!runtimeSupportsLlamaV07Flags(input.runtimeTag)) return 0;
+        const ngl = Number(input.nGpuLayers);
+        if (Number.isFinite(ngl) && ngl <= 0) return 0;
+        if (resolveNCpuMoe(input) <= 0) return 0;
+        const explicit = Number(input.moeCacheMiB);
+        if (Number.isFinite(explicit)) {
+            return Math.max(0, Math.min(8192, Math.round(explicit)));
+        }
         const total = Number(input.gpuTotalMiB);
         const free = Number(input.gpuFreeMiB);
         const vram = Number.isFinite(free) && free > 0
             ? free
             : (Number.isFinite(total) && total > 0 ? total : 0);
-        if (!(vram > 0)) return base;
-        if (vram >= 22000) return 0;
-        if (vram >= 16000) return Math.min(base, 8);
-        if (vram >= 10000) return base;
-        return Math.max(base, 18);
+        if (!(vram > 0)) return 512;
+        const weight = modelWeightGiB(input.paramBillion, {
+            weightGiB: input.weightGiB,
+            sizeBytes: input.sizeBytes,
+        });
+        const vramGiB = vram / 1024;
+        // Heavy MoE on mid cards: keep expert cache modest so KV + layers fit.
+        if (weight > vramGiB * 1.2) {
+            if (vram < 10000) return 256;
+            if (vram < 14000) return 384;
+        }
+        if (vram < 8000) return 256;
+        if (vram < 12000) return 512;
+        if (vram < 16000) return 1024;
+        return 2048;
+    }
+
+    /**
+     * Draft-context ubatch. Smaller than the main ubatch saves VRAM during speculative decode.
+     * @param {object} [input]
+     * @param {boolean} [specActive]
+     * @returns {number} 0 = omit flag
+     */
+    function resolveSpecDraftNUbatch(input = {}, specActive = false) {
+        if (!specActive) return 0;
+        if (!runtimeSupportsLlamaV07Flags(input.runtimeTag)) return 0;
+        const explicit = Number(input.specDraftNUbatch);
+        if (Number.isFinite(explicit)) {
+            if (explicit <= 0) return 0;
+            return Math.min(4096, Math.max(32, Math.round(explicit)));
+        }
+        return 256;
     }
 
     /**
@@ -348,10 +554,11 @@
             '-ngl', String(Number.isFinite(nGpuLayers) ? nGpuLayers : 99),
             '-a', alias,
         ];
-        if (parallelSlots > 1) {
-            args.push('-np', String(parallelSlots));
-        } else if (input.forceSingleSlot === true) {
+        // forceSingleSlot must win: MT auto-plan may still pass parallelSlots=2 for ≤7B.
+        if (input.forceSingleSlot === true) {
             args.push('-np', '1');
+        } else if (parallelSlots > 1) {
+            args.push('-np', String(parallelSlots));
         }
         if (input.llamaJinja === true) {
             args.push('--jinja');
@@ -374,6 +581,14 @@
         const nCpuMoe = resolveNCpuMoe(input);
         if (nCpuMoe > 0) {
             args.push('--n-cpu-moe', String(nCpuMoe));
+        }
+        const moeCacheMiB = resolveMoeCacheMiB(input);
+        if (moeCacheMiB > 0) {
+            args.push('--moe-cache-mib', String(moeCacheMiB));
+        }
+        const nCpuFfn = resolveNCpuFfn(input);
+        if (nCpuFfn > 0) {
+            args.push('--n-cpu-ffn', String(nCpuFfn));
         }
         const temp = Number(input.temp ?? input.temperature);
         if (Number.isFinite(temp) && temp >= 0) {
@@ -402,6 +617,7 @@
         const nMaxStr = String(
             Number.isFinite(nMax) && nMax >= 1 ? Math.min(8, Math.round(nMax)) : (specType === 'draft-mtp' ? 2 : 3),
         );
+        const specActive = specType === 'draft-mtp' || !!(input.speculativeEnabled && draftModelPath);
         if (specType === 'draft-mtp') {
             args.push('--spec-type', 'draft-mtp');
             args.push('--spec-draft-n-max', nMaxStr);
@@ -409,6 +625,10 @@
             args.push('-md', draftModelPath);
             args.push('--spec-type', 'draft-simple');
             args.push('--spec-draft-n-max', nMaxStr);
+        }
+        const specDraftNUbatch = resolveSpecDraftNUbatch(input, specActive);
+        if (specDraftNUbatch > 0) {
+            args.push('--spec-draft-n-ubatch', String(specDraftNUbatch));
         }
         return args;
     }
@@ -427,13 +647,31 @@
             ? entry.chatDefaults
             : {};
         const specType = String(ls.specType || entry?.specType || '').trim().toLowerCase();
-        return {
+        const baseOpts = {
             moe: entry?.moe === true || ls.moe === true,
             weightGiB: entry?.weightGiB,
             sizeBytes: entry?.sizeBytes,
             activeParamBillion: entry?.activeParamBillion,
             paramBillion: entry?.paramBillion,
             nCpuMoe: ls.nCpuMoe ?? entry?.nCpuMoe,
+            nCpuFfn: ls.nCpuFfn ?? entry?.nCpuFfn,
+            nGpuLayers: ls.nGpuLayers ?? entry?.nGpuLayers,
+            contextSize: entry?.contextSize,
+            gpuFreeMiB: hints.gpuFreeMiB,
+            gpuTotalMiB: hints.gpuTotalMiB,
+            runtimeTag: hints.runtimeTag,
+        };
+        const preferNgl = resolvePreferNgl(baseOpts);
+        return {
+            moe: baseOpts.moe,
+            weightGiB: baseOpts.weightGiB,
+            sizeBytes: baseOpts.sizeBytes,
+            activeParamBillion: baseOpts.activeParamBillion,
+            paramBillion: baseOpts.paramBillion,
+            nCpuMoe: ls.nCpuMoe ?? entry?.nCpuMoe,
+            nCpuFfn: ls.nCpuFfn ?? entry?.nCpuFfn,
+            nGpuLayers: preferNgl,
+            contextSize: resolveLlamaContextSize(baseOpts),
             flashAttn: ls.flashAttn === true,
             batchSize: ls.batchSize,
             reasoning: ls.reasoning,
@@ -449,6 +687,7 @@
             repeatPenalty: ls.repeatPenalty ?? chat.repeatPenalty,
             gpuFreeMiB: hints.gpuFreeMiB,
             gpuTotalMiB: hints.gpuTotalMiB,
+            runtimeTag: hints.runtimeTag,
         };
     }
 
@@ -505,6 +744,15 @@
         resolveLlamaGpuStallAfterMs,
         buildLlamaServerSpawnArgs,
         resolveNCpuMoe,
+        resolveNCpuFfn,
+        resolvePreferNgl,
+        resolveLlamaContextSize,
+        resolveGpuVramMiB,
+        resolveMoeCacheMiB,
+        resolveSpecDraftNUbatch,
+        parseLlamaBuildNumber,
+        runtimeSupportsLlamaV07Flags,
+        runtimeSupportsNCpuFfn,
         resolveLlamaServerOptsFromEntry,
         modelWeightGiB,
     };

@@ -1,0 +1,9 @@
+﻿Silero VAD ONNX reconstructed for faster-whisper (drop-in for assets/silero_vad_v6.onnx).
+
+Upstream: SYSTRAN/faster-whisper PR #1390 (merged 2025-11-19) — Silero-VAD v6.2 weights.
+Source URL: https://raw.githubusercontent.com/SYSTRAN/faster-whisper/2eeafe05de1ec8d5e63b2a858cce4f4c6530da0d/faster_whisper/assets/silero_vad_v6.onnx
+SHA256: 914fd98ac0a73d69ba1e70c9b1d66acb740eff90500dfde08b89a961b168a6a9
+Size: 1249744
+
+PyPI faster-whisper==1.2.1 still ships Silero v6.0; this patch upgrades the bundled asset
+until a newer faster-whisper release includes v6.2.

@@ -90,11 +90,12 @@
     /**
      * @returns {{ kind: string, severity: 'repair'|'gate' }|null}
      */
-    function classifyDeliveryUnderfill(zhText, jaText, sanitize = null, ellipsisPolicy = null) {
+    function classifyDeliveryUnderfill(zhText, jaText, sanitize = null, ellipsisPolicy = null, options = {}) {
         const zh = String(zhText || '').trim();
         const ja = String(jaText || '').trim();
         const san = sanitize || loadSanitize();
         const policy = ellipsisPolicy || loadEllipsisPolicy();
+        const opts = options && typeof options === 'object' ? options : {};
 
         if (isJaLeakZh(zh)) {
             return { kind: 'ja_leak', severity: 'repair' };
@@ -120,12 +121,22 @@
         }
         // Thin vocative / filler stub on lexical JA (SNOS-299 vocative-stub collapse).
         // Blank-retry used to classify these as det_only → never LLM-retried.
+        // Also catch long-duration filler stubs (NIMA-085:「嗯」stretched over lexical JA).
+        const durMs = Number(opts.durationMs);
+        const longFillerStub = Number.isFinite(durMs) && durMs >= 2500
+            && san.isFillerOnlyZh?.(zh)
+            && ja
+            && (
+                san.jaCueHasLexicalResidue?.(ja)
+                || String(ja).replace(/[\s　]+/g, '').length >= 6
+            );
         if (
             zh
             && ja
             && !isVisibleEllipsisZh(zh)
             && (
-                san.looksLikeFillerGlossMisattach?.(zh, ja)
+                longFillerStub
+                || san.looksLikeFillerGlossMisattach?.(zh, ja)
                 || san.looksLikeStockGlossMisattach?.(zh, ja)
                 || (
                     san.isFillerOnlyZh?.(zh)
@@ -198,6 +209,41 @@
                 return { text: String(lick.text), changed: true };
             }
         }
+
+        // Vocative / filler stub on lexical JA — force blank-then-recover when sanitize kept「嗯」
+        if (
+            san.isFillerOnlyZh?.(cur)
+            && san.jaCueHasLexicalResidue?.(ja)
+            && String(ja).replace(/[\s　]+/g, '').length >= 4
+        ) {
+            if (typeof san.sanitizeMtCueText === 'function') {
+                const hit = san.sanitizeMtCueText('…', ja, {
+                    avSoft: true,
+                    smartTranslateFaithfulTone: true,
+                    ...options,
+                });
+                const next = String(hit?.text || '').trim();
+                if (next && next !== cur && !san.isFillerOnlyZh?.(next) && !isJaLeakZh(next)) {
+                    return { text: next, changed: true };
+                }
+            }
+            try {
+                const policy = loadEllipsisPolicy();
+                const det = policy?.deterministicEllipsisFill?.(ja, options);
+                if (det && !isVisibleEllipsisZh(det) && !san.isFillerOnlyZh?.(det)) {
+                    return { text: String(det), changed: true };
+                }
+            } catch { /* optional */ }
+            if (san.remapJaPreferLexical) {
+                const remapped = san.remapJaPreferLexical(ja);
+                if (remapped && !san.isFillerOnlyZh?.(remapped) && !isVisibleEllipsisZh(remapped)) {
+                    return { text: String(remapped), changed: true };
+                }
+            }
+            // Last resort: blank for LLM retry rather than ship long「嗯」
+            if (cur !== '…') return { text: '…', changed: true };
+        }
+
         return { text: cur, changed: false };
     }
 
@@ -230,7 +276,12 @@
             const z = zhList[i];
             const jaText = resolveJaTextForZhCue(z, jaList, dual, overlapIndex);
             const before = String(z?.text || '');
-            let defect = classifyDeliveryUnderfill(before, jaText, san, policy);
+            const startMs = Number(z?.startMs);
+            const endMs = z?.endMs != null ? Number(z.endMs) : startMs;
+            const durationMs = Number.isFinite(startMs) && Number.isFinite(endMs)
+                ? Math.max(0, endMs - startMs)
+                : 0;
+            let defect = classifyDeliveryUnderfill(before, jaText, san, policy, { durationMs });
             if (!defect) continue;
 
             const fixed = tryRepairCueText(before, jaText, options, san);
@@ -238,7 +289,7 @@
                 zhList[i] = { ...z, text: fixed.text };
                 stats.repaired += 1;
                 changed = true;
-                defect = classifyDeliveryUnderfill(fixed.text, jaText, san, policy);
+                defect = classifyDeliveryUnderfill(fixed.text, jaText, san, policy, { durationMs });
             }
             if (!defect) continue;
             if (defect.kind === 'bare_ha') stats.bareHa += 1;

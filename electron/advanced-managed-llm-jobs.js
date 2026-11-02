@@ -115,6 +115,18 @@ function createAdvancedManagedLlmJobs(host = {}) {
             nextPatch.activeModelId = entry.id;
             // Do not auto-fill smartTranslateModelId from inference — hybrid/smart
             // polish must be an explicit 润色模型 pick (avoids reconstruct→translate confusion).
+            // Exception: 润色位 still points at an undownloaded sibling quant of this pick.
+            const smartPrev = String(prev.smartTranslateModelId || '').trim();
+            if (
+                role === 'inference'
+                && smartPrev
+                && !managedCatalog.isTranslateOnlyModel(entry)
+                && typeof managedCatalog.isSmartTranslateQuantSibling === 'function'
+                && managedCatalog.isSmartTranslateQuantSibling(smartPrev, entry.id)
+                && !llmFs.isModelInstalled(smartPrev)
+            ) {
+                nextPatch.smartTranslateModelId = entry.id;
+            }
         }
 
         const nextManaged = entitlement.normalizeManagedLlm(nextPatch);
@@ -192,12 +204,25 @@ function createAdvancedManagedLlmJobs(host = {}) {
         const doc = current.doc;
         const managed = entitlement.normalizeManagedLlm(doc.managedLlm);
         const pulledIds = Array.from(new Set([...(managed.pulledIds || []), entry.id]));
+        let smartTranslateModelId = String(managed.smartTranslateModelId || '').trim();
+        // If 润色位 still points at an undownloaded sibling quant of this pull, retarget.
+        if (
+            smartTranslateModelId
+            && smartTranslateModelId.toLowerCase() !== entry.id.toLowerCase()
+            && !managedCatalog.isTranslateOnlyModel(entry)
+            && typeof managedCatalog.isSmartTranslateQuantSibling === 'function'
+            && managedCatalog.isSmartTranslateQuantSibling(smartTranslateModelId, entry.id)
+            && !llmFs.isModelInstalled(smartTranslateModelId)
+        ) {
+            smartTranslateModelId = entry.id;
+        }
         const saved = host.writeAdvancedDoc({
             ...doc,
             llmSource: 'managed',
             managedLlm: {
                 ...managed,
                 activeModelId: managed.activeModelId || entry.id,
+                smartTranslateModelId,
                 pulledIds,
                 runtimeId: result.meta?.packageId
                     || managed.runtimeId
@@ -229,25 +254,30 @@ function createAdvancedManagedLlmJobs(host = {}) {
                 event?.sender?.send?.('transub-advanced-managed-llm-progress', info);
             } catch (_) { /* ignore */ }
         };
+        let hints = runtimePreferHints();
+        let runtimeId = '';
         try {
-            await require('./advanced-runtime-prefer').ensurePreferCudaReady();
+            const prefer = require('./advanced-runtime-prefer');
+            const selection = await prefer.resolveInstallRuntimeSelection({
+                runtimeId: asString(patch.runtimeId || patch.packageId, 64),
+                forceRefresh: true,
+            });
+            hints = selection.hints || hints;
+            runtimeId = selection.runtimeId || '';
         } catch (_) { /* ignore */ }
-        const hints = runtimePreferHints();
-        // When installing without an explicit package, align preference to detected CUDA / ROCm.
-        if (!String(patch.runtimeId || patch.packageId || '').trim() && (hints.preferCuda || hints.preferRocm)) {
-            try {
-                managedLlm.syncRuntimePreferenceToHardware({ force: true });
-            } catch (_) { /* ignore */ }
-        }
         const deviceId = host.getAdvancedDeviceId();
         const docBefore = host.readAdvancedDoc().doc;
         const managedBefore = entitlement.normalizeManagedLlm(docBefore.managedLlm, hints);
-        const runtimeId = managedCatalog.normalizeRuntimeId(
-            asString(patch.runtimeId || patch.packageId || managedBefore.runtimeId, 64),
-            process.platform,
-            process.arch,
-            hints,
-        );
+        if (!runtimeId) {
+            const probedNoGpu = !!(hints.ready && !hints.preferCuda && !hints.preferRocm && !hints.preferSycl);
+            const explicitRuntimeId = asString(patch.runtimeId || patch.packageId, 64).trim();
+            runtimeId = managedCatalog.pickInstallRuntimeId(
+                explicitRuntimeId || (probedNoGpu ? '' : managedBefore.runtimeId),
+                process.platform,
+                process.arch,
+                hints,
+            );
+        }
         if (runtimeId && runtimeId !== managedBefore.runtimeId) {
             host.writeAdvancedDoc({
                 ...docBefore,
@@ -478,20 +508,19 @@ function createAdvancedManagedLlmJobs(host = {}) {
         }
     }
 
-    function buildDownloadInfo(payload = {}) {
+    async function buildDownloadInfo(payload = {}) {
         const patch = asPlainObject(payload);
         const kind = String(patch.kind || 'model').trim() === 'runtime' ? 'runtime' : 'model';
         if (kind === 'runtime') {
-            const hints = runtimePreferHints();
-            const doc = host.readAdvancedDoc().doc;
-            const managed = entitlement.normalizeManagedLlm(doc.managedLlm, hints);
-            const runtimeId = managedCatalog.normalizeRuntimeId(
-                asString(patch.runtimeId || patch.packageId || managed.runtimeId, 64),
-                process.platform,
-                process.arch,
-                hints,
-            );
-            const pkg = managedCatalog.getRuntimePackage(process.platform, process.arch, runtimeId, hints);
+            const prefer = require('./advanced-runtime-prefer');
+            const selection = await prefer.resolveInstallRuntimeSelection({
+                runtimeId: asString(patch.runtimeId || patch.packageId, 64),
+                forceRefresh: true,
+            });
+            const hints = selection.hints || runtimePreferHints();
+            const runtimeId = selection.runtimeId || '';
+            const pkg = selection.pkg
+                || managedCatalog.getRuntimePackage(process.platform, process.arch, runtimeId, hints);
             if (!pkg) {
                 return { ok: false, error: `当前平台不支持内置运行时（${process.platform}-${process.arch}）` };
             }
@@ -500,6 +529,13 @@ function createAdvancedManagedLlmJobs(host = {}) {
             const companionUrl = String(pkg.companionUrl || '').trim();
             const companionUrls = companionUrl ? expandDownloadUrls(companionUrl) : [];
             const companionMirrorUrl = companionUrls.find((u) => u !== companionUrl) || '';
+            let localArchive = '';
+            let localCompanion = '';
+            try {
+                const found = require('./advanced-llama-server').findDownloadedRuntimeArchives(pkg);
+                localArchive = found?.archivePath || '';
+                localCompanion = found?.companionPath || '';
+            } catch (_) { /* ignore */ }
             return {
                 ok: true,
                 info: {
@@ -521,6 +557,9 @@ function createAdvancedManagedLlmJobs(host = {}) {
                     note: pkg.note || '',
                     folder: llmFs.getRuntimeDir(),
                     needsCompanion: !!companionUrl,
+                    localArchive,
+                    localCompanion,
+                    downloaded: !!localArchive,
                 },
             };
         }
@@ -560,7 +599,7 @@ function createAdvancedManagedLlmJobs(host = {}) {
 
     async function openManualDownload(payload = {}) {
         const patch = asPlainObject(payload);
-        const infoRes = buildDownloadInfo(patch);
+        const infoRes = await buildDownloadInfo(patch);
         if (!infoRes.ok) return infoRes;
         const info = infoRes.info;
         const which = String(patch.which || 'mirror').trim().toLowerCase();

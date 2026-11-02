@@ -39,6 +39,30 @@ describe('TransubEngineEnvUi', () => {
         assert.strictEqual(typeof ui.setEngineStatusText, 'function');
     });
 
+    it('setProxyTestStatus / setNetworkHfStatus write live settings DOM', () => {
+        const prevDocument = global.document;
+        const proxyStatus = { textContent: '', className: '' };
+        const hfStatus = { textContent: '', className: '' };
+        global.document = {
+            getElementById: (id) => {
+                if (id === 'proxyTestStatus') return proxyStatus;
+                if (id === 'networkHfStatus') return hfStatus;
+                return null;
+            },
+        };
+        try {
+            const ui = createEngineEnvUi({ els: {} });
+            ui.setProxyTestStatus('代理可用', 'ok');
+            ui.setNetworkHfStatus('镜像可用', 'ok');
+            assert.strictEqual(proxyStatus.textContent, '代理可用');
+            assert.ok(String(proxyStatus.className).includes('emerald'));
+            assert.strictEqual(hfStatus.textContent, '镜像可用');
+            assert.ok(String(hfStatus.className).includes('emerald'));
+        } finally {
+            global.document = prevDocument;
+        }
+    });
+
     it('sameFsPath normalizes separators', () => {
         const ui = createEngineEnvUi({ els: {} });
         assert.strictEqual(ui.sameFsPath('C:\\Foo\\Bar', 'C:/Foo/Bar'), true);

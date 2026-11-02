@@ -471,6 +471,103 @@ body.factory-shell {
     overflow: hidden;
     }
 
+#envCheckModal .env-check-locale-gate {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    }
+#envCheckModal .env-check-locale-gate.hidden,
+#envCheckModal .env-check-locale-gate[hidden] {
+    display: none !important;
+    }
+#envCheckModal.env-check-locale-picking #envCheckMainPane {
+    display: none !important;
+    }
+#envCheckModal .env-check-locale-body {
+    min-height: 0;
+    overflow-y: auto;
+    flex: 1 1 auto;
+    }
+#envCheckModal .env-check-locale-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    }
+#envCheckModal .env-check-locale-choice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+    padding: 0.75rem 0.9rem;
+    cursor: pointer;
+    background: #fff;
+    transition: border-color .15s, background .15s;
+    text-align: left;
+    }
+#envCheckModal .env-check-locale-choice:hover {
+    border-color: rgba(124, 58, 237, 0.35);
+    background: #f5f3ff;
+    }
+#envCheckModal .env-check-locale-choice:has(input:checked) {
+    border-color: #7c3aed;
+    background: #f5f3ff;
+    box-shadow: inset 0 0 0 1px #7c3aed;
+    }
+#envCheckModal .env-check-locale-actions {
+    display: flex;
+    flex-shrink: 0;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 0.85rem 1.25rem 1.15rem;
+    border-top: 1px solid #f1f5f9;
+    background: #fafafa;
+    }
+#envCheckModal .env-check-locale-bar {
+    display: flex;
+    justify-content: center;
+    margin-top: 0.75rem;
+    }
+#envCheckModal .env-check-locale-bar.hidden,
+#envCheckModal .env-check-locale-bar[hidden] {
+    display: none !important;
+    }
+#envCheckModal .env-check-locale-bar-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.75rem;
+    color: #6b7280;
+    }
+#envCheckModal .env-check-locale-select {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    padding: 0.2rem 0.45rem;
+    font-size: 0.75rem;
+    background: #fff;
+    color: #111827;
+    max-width: 11rem;
+    }
+html.main-theme-dark #envCheckModal .env-check-locale-choice {
+    background: var(--fx-surface, #1c1a1b);
+    border-color: var(--fx-line-soft, #2a2728);
+    color: var(--fx-text, #f3efef);
+    }
+html.main-theme-dark #envCheckModal .env-check-locale-choice:hover,
+html.main-theme-dark #envCheckModal .env-check-locale-choice:has(input:checked) {
+    background: color-mix(in srgb, var(--fx-accent-soft, #2a2030) 80%, #000);
+    border-color: var(--fx-accent, #8b5cf6);
+    }
+html.main-theme-dark #envCheckModal .env-check-locale-actions {
+    background: color-mix(in srgb, var(--fx-surface, #1c1a1b) 90%, #000);
+    border-top-color: var(--fx-line-soft, #2a2728);
+    }
+html.main-theme-dark #envCheckModal .env-check-locale-select {
+    background: var(--fx-surface, #1c1a1b);
+    border-color: var(--fx-line-soft, #2a2728);
+    color: var(--fx-text, #f3efef);
+    }
+
 #envCheckModal .env-check-list {
     background: #f8fafc;
     border: 1px solid #e2e8f0;
@@ -660,44 +757,9 @@ body.factory-shell {
 #envCheckModal .env-check-actions {
     padding: 0.35rem 1.25rem 1.75rem;
     display: flex;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+    align-items: stretch;
     gap: 0.5rem;
-    }
-
-#envCheckModal .env-check-more {
-    border: 1px solid var(--wiz-line-soft, #e2e8f0);
-    border-radius: 0.65rem;
-    background: var(--wiz-bg, #fafafa);
-    padding: 0;
-    }
-
-#envCheckModal .env-check-more > summary {
-    list-style: none;
-    cursor: pointer;
-    user-select: none;
-    padding: 0.55rem 0.75rem;
-    font-size: 0.75rem;
-    color: var(--fx-muted, #5f6670);
-    }
-
-#envCheckModal .env-check-more > summary::-webkit-details-marker {
-    display: none;
-    }
-
-#envCheckModal .env-check-more > summary::before {
-    content: '▸ ';
-    display: inline-block;
-    transition: transform 0.12s ease;
-    }
-
-#envCheckModal .env-check-more[open] > summary::before {
-    transform: rotate(90deg);
-    }
-
-#envCheckModal .env-check-more-body {
-    padding: 0 0.75rem 0.75rem;
-    border-top: 1px solid var(--wiz-line-soft, #e2e8f0);
-    padding-top: 0.65rem;
     }
 
 #envCheckModal .env-fix-whl-drop,
@@ -706,9 +768,17 @@ body.factory-shell {
     transition: border-color .15s ease, background-color .15s ease;
     }
 
+#manualWhlModal.is-installing #manualWhlSetup,
+#manualWhlModal.is-installing #manualWhlPickBtn,
+#manualWhlModal.is-installing #manualWhlInstallBtn {
+    display: none !important;
+}
+#manualWhlModal.is-installing #manualWhlProgressWrap {
+    display: block;
+}
 #manualWhlModal .manual-whl-tool-menu:not(.hidden) {
     display: block;
-    }
+}
 
 html.main-theme-dark #manualWhlModal .manual-whl-tool-menu {
     background: var(--fx-surface, #1c1a1b);
@@ -728,31 +798,17 @@ html.main-theme-dark #envCheckModal #envCheckRepairTools {
     border-top-color: rgba(255, 255, 255, 0.08);
     }
 
-html.main-theme-dark #envCheckModal .env-check-more {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: color-mix(in srgb, var(--fx-surface, #1c1a1b) 92%, #000);
-    }
-
-html.main-theme-dark #envCheckModal .env-check-more-body {
-    border-top-color: rgba(255, 255, 255, 0.08);
-    }
-
 html.main-theme-dark #envCheckModal .env-fix-whl-drop,
 html.main-theme-dark #envFixStartModal .env-fix-whl-drop {
     border-color: rgba(167, 139, 250, 0.45);
     background: rgba(91, 33, 182, 0.18);
     }
 
-html.main-theme-dark #envCheckModal #envCheckPipMirrorSelect {
-    background: var(--fx-surface, #1c1a1b);
-    border-color: rgba(255, 255, 255, 0.12);
-    color: var(--fx-text, #f3efef);
-    }
-
 #envCheckModal .env-check-actions > button {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 1 1 auto;
+    min-width: max-content;
     white-space: nowrap;
+    text-align: center;
     }
 
 #envCheckModal .env-check-btn-primary:disabled,
@@ -784,6 +840,29 @@ html.main-theme-dark #envCheckModal #envCheckPipMirrorSelect {
     display: none;
     }
 
+#envFixProgressModal .env-fix-progress-manual-hint {
+    color: #b45309;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 0.5rem;
+    padding: 0.4rem 0.55rem;
+    }
+#envFixProgressModal .env-fix-progress-manual-btn {
+    background: #d97706;
+    border: 1px solid #b45309;
+    color: #fff;
+    min-width: max-content;
+    }
+#envFixProgressModal .env-fix-progress-manual-btn:hover:not(:disabled) {
+    background: #b45309;
+    }
+#envFixProgressModal .env-fix-progress-manual-btn:focus-visible {
+    outline: 2px solid #f59e0b;
+    outline-offset: 2px;
+    }
+#envFixProgressModal .env-fix-progress-cancel-btn {
+    background: transparent;
+    }
 #envFixProgressModal .env-fix-progress-track {
     background: var(--fx-prog-track, #e2e7ec);
     }
@@ -1144,6 +1223,8 @@ html.wizard-standalone #paramsModal {
 /* Keep boot mask until the wizard shell is painted (cleared in app-init). */
 html.wizard-standalone #loadingOverlay.is-open {
     display: flex !important;
+    /* Below the wizard. Init keeps this mask up while options load; the first
+       step is language pick and must stay clickable (下一步). */
     z-index: 6000;
 }
 
@@ -1156,6 +1237,10 @@ html.wizard-standalone #setupWizardModal {
     background: var(--fx-bg, #f3f5f7);
     backdrop-filter: none;
     }
+
+html.wizard-standalone #setupWizardModal:not(.hidden) {
+    z-index: 6100 !important;
+}
 
 html.wizard-standalone #setupWizardModal > div {
     width: 100%;
@@ -1258,11 +1343,11 @@ html.wizard-standalone #envCheckModal:not(.hidden),
     html.wizard-standalone #appConfirmModal:not(.hidden),
     html.wizard-standalone #manualWhlModal:not(.hidden) {
     display: flex !important;
-    z-index: 5000 !important;
+    z-index: 6300 !important;
     }
 
 html.wizard-standalone #toastHost {
-    z-index: 5100 !important;
+    z-index: 6400 !important;
     }
 
 /* Self-contained boot spinner — visible before Font Awesome / app.css finish */
@@ -1556,6 +1641,19 @@ html.main-theme-dark #envFixProgressTransfer,
 html.main-theme-dark #envFixProgressModal .env-fix-progress-transfer {
     color: #c4b5fd;
 }
+html.main-theme-dark #envFixProgressModal .env-fix-progress-manual-hint {
+    color: #fbbf24;
+    background: color-mix(in srgb, #f59e0b 14%, var(--fx-surface, #1c1a1b));
+    border-color: color-mix(in srgb, #f59e0b 35%, var(--fx-line-soft, #2a2728));
+}
+html.main-theme-dark #envFixProgressModal .env-fix-progress-manual-btn {
+    background: #d97706;
+    border-color: #b45309;
+    color: #fff;
+}
+html.main-theme-dark #envFixProgressModal .env-fix-progress-manual-btn:hover:not(:disabled) {
+    background: #b45309;
+}
 html.main-theme-dark #envFixProgressModal .env-fix-progress-track {
     background: var(--fx-prog-track, #2c292a);
 }
@@ -1568,4 +1666,186 @@ html.main-theme-dark #envFixProgressModal > div {
 html.main-theme-dark #envCheckModal .env-check-list {
     background: color-mix(in srgb, var(--fx-surface, #1c1a1b) 86%, #000);
     border-color: var(--fx-line-soft, #2a2728);
+}
+
+/* Dedicated env-doctor BrowserWindow: system-check fills the window (GPU hard gate). */
+html.env-doctor-standalone,
+html.env-doctor-standalone body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--fx-bg, #f3f5f7);
+}
+
+html.env-doctor-standalone body > *:not(#envCheckModal):not(#envFixProgressModal):not(#envFixStartModal):not(#appConfirmModal):not(#toastHost):not(#manualWhlModal):not(#paramsModal):not(#loadingOverlay):not(#transubBusyOverlay) {
+    display: none !important;
+}
+
+html.env-doctor-standalone #paramsModal {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+html.env-doctor-standalone #loadingOverlay.is-open {
+    display: flex !important;
+    /* Boot mask stays up through options load. Language gate must sit above it
+       or Continue never receives the click. */
+    z-index: 6000;
+}
+
+html.env-doctor-standalone #envCheckModal {
+    display: flex !important;
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    padding: 0;
+    background: var(--fx-bg, #f3f5f7);
+    backdrop-filter: none;
+}
+
+html.env-doctor-standalone #envCheckModal .env-check-card {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    height: 100%;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    display: flex;
+    flex-direction: column;
+}
+html.env-doctor-standalone #envCheckModal .env-check-locale-gate:not(.hidden):not([hidden]) {
+    flex: 1;
+    min-height: 0;
+    max-width: 28rem;
+    margin: 0 auto;
+    width: 100%;
+    /* safe center: short lists stay centered; tall lists start at the top
+       so the Continue button is not clipped by overflow:hidden on the card. */
+    justify-content: safe center;
+    overflow: hidden;
+}
+html.env-doctor-standalone #envCheckModal #envCheckMainPane {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+}
+
+html.env-doctor-standalone #envCheckModal:not(.hidden) {
+    display: flex !important;
+    z-index: 6100 !important;
+}
+html.env-doctor-standalone #envFixProgressModal:not(.hidden),
+html.env-doctor-standalone #envFixStartModal:not(.hidden),
+html.env-doctor-standalone #manualWhlModal:not(.hidden) {
+    display: flex !important;
+    z-index: 6300 !important;
+}
+html.env-doctor-standalone #appConfirmModal:not(.hidden) {
+    display: flex !important;
+    z-index: 6400 !important;
+}
+
+html.main-theme-dark.env-doctor-standalone,
+html.main-theme-dark.env-doctor-standalone body,
+html.main-theme-dark.env-doctor-standalone #envCheckModal {
+    background: var(--fx-bg, #121011);
+}
+
+/* Beginner guide banner (system check + env doctor) */
+#envCheckModal .env-check-guide {
+    margin-top: 0.75rem;
+    text-align: left;
+    border-radius: 0.85rem;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid color-mix(in srgb, #8b5cf6 22%, #e5e7eb);
+    background: color-mix(in srgb, #8b5cf6 8%, #fff);
+}
+#envCheckModal .env-check-guide[data-tone="ok"] {
+    border-color: color-mix(in srgb, #10b981 28%, #e5e7eb);
+    background: color-mix(in srgb, #10b981 10%, #fff);
+}
+#envCheckModal .env-check-guide[data-tone="warn"] {
+    border-color: color-mix(in srgb, #f59e0b 30%, #e5e7eb);
+    background: color-mix(in srgb, #f59e0b 11%, #fff);
+}
+#envCheckModal .env-check-guide[data-tone="err"] {
+    border-color: color-mix(in srgb, #ef4444 28%, #e5e7eb);
+    background: color-mix(in srgb, #ef4444 9%, #fff);
+}
+#envCheckModal .env-check-guide-headline {
+    font-size: 0.95rem;
+    font-weight: 650;
+    color: #111827;
+    margin: 0;
+}
+#envCheckModal .env-check-guide-next {
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: #374151;
+    margin: 0.35rem 0 0;
+}
+#envCheckModal .env-check-guide-tip {
+    font-size: 0.75rem;
+    line-height: 1.45;
+    color: #6b7280;
+    margin: 0.4rem 0 0;
+}
+#envCheckModal .env-check-guide-actions {
+    margin-top: 0.55rem;
+}
+#envCheckModal .env-check-guide-link {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #5b21b6;
+    text-decoration: underline;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+#envCheckModal .env-check-btn-quit.hidden {
+    display: none !important;
+}
+html.env-doctor-standalone #envCheckModal .env-check-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+html.env-doctor-standalone #envCheckModal .env-check-btn-fix:not(.hidden) {
+    order: -2;
+    flex: 1 1 8rem;
+    min-width: max-content;
+    min-height: 2.75rem;
+    font-size: 1rem;
+    font-weight: 700;
+    box-shadow: 0 0 0 3px color-mix(in srgb, #8b5cf6 28%, transparent);
+}
+html.env-doctor-standalone #envCheckModal .env-check-btn-primary:not(:disabled) {
+    order: -1;
+    flex: 1 1 8rem;
+    min-width: max-content;
+    min-height: 2.75rem;
+    font-size: 1rem;
+    font-weight: 700;
+}
+html.env-doctor-standalone #envDoctorQuitBtn {
+    display: inline-flex !important;
+}
+html.main-theme-dark #envCheckModal .env-check-guide {
+    background: color-mix(in srgb, #8b5cf6 14%, var(--fx-surface, #1c1a1b));
+    border-color: color-mix(in srgb, #8b5cf6 28%, var(--fx-line-soft, #2a2728));
+}
+html.main-theme-dark #envCheckModal .env-check-guide-headline {
+    color: var(--fx-text, #f3efef);
+}
+html.main-theme-dark #envCheckModal .env-check-guide-next {
+    color: color-mix(in srgb, var(--fx-text, #f3efef) 88%, #9ca3af);
+}
+html.main-theme-dark #envCheckModal .env-check-guide-tip {
+    color: var(--fx-muted, #9a9294);
+}
+html.main-theme-dark #envCheckModal .env-check-guide-link {
+    color: #c4b5fd;
 }

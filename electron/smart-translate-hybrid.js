@@ -23,10 +23,33 @@ function listInstalledTranslateOnlyIds() {
     return ids;
 }
 
+function resolveHybridPreferredId(input = {}) {
+    return asString(
+        input.preferredId
+            || input.hybridMtModelId
+            || input.engineLlmMtModel
+            || input.engineMtModel,
+        128,
+    ).trim();
+}
+
 function resolveHybridChunkModelId(preferredId, targetOpts = {}) {
+    let preferred = asString(preferredId, 128).trim();
+    const installedIds = listInstalledTranslateOnlyIds();
+    try {
+        const hymtCore = require('../src/js/hymt-translate-core');
+        if (hymtCore.isHyMtModel?.(preferred) && hymtCore.maybeUpgradeHyMtModelId) {
+            preferred = hymtCore.maybeUpgradeHyMtModelId(preferred, installedIds, {
+                contentProfile: targetOpts.contentProfile || targetOpts.senseProfile,
+                senseProfile: targetOpts.senseProfile || targetOpts.contentProfile,
+                vramGb: targetOpts.vramGb,
+                preferLargerHyMt: targetOpts.preferLargerHyMt,
+            }) || preferred;
+        }
+    } catch { /* keep preferred */ }
     return core.pickHybridMtModelId({
-        preferredId: asString(preferredId, 128).trim(),
-        installedIds: listInstalledTranslateOnlyIds(),
+        preferredId: preferred,
+        installedIds,
         subtitleTargetLang: targetOpts.subtitleTargetLang,
         targetLang: targetOpts.targetLang,
         chineseSubtitleVariant: targetOpts.chineseSubtitleVariant,
@@ -34,6 +57,7 @@ function resolveHybridChunkModelId(preferredId, targetOpts = {}) {
         contentProfile: targetOpts.contentProfile,
         senseProfile: targetOpts.senseProfile,
         strongAv: targetOpts.strongAv,
+        vramGb: targetOpts.vramGb,
     });
 }
 
@@ -61,7 +85,7 @@ function modelLabel(modelId) {
  * }} input
  */
 function decideHybridChunkMt(input = {}) {
-    const preferredId = asString(input.preferredId, 128).trim();
+    const preferredId = resolveHybridPreferredId(input);
     // Explicit general LLM (星火 / Qwen / …) in the sentence slot: skip specialist
     // hybrid and let the dialogue model translate line-by-line — never remap to GalTransl.
     if (preferredId && !core.isTranslateOnlyLike(preferredId)) {
@@ -81,6 +105,7 @@ function decideHybridChunkMt(input = {}) {
         contentProfile: input.contentProfile,
         senseProfile: input.senseProfile,
         strongAv: input.strongAv,
+        vramGb: input.vramGb,
     });
     const gate = core.shouldUseHybridChunkMt({
         enabled: input.enabled,
@@ -115,7 +140,7 @@ function canRunHybridChunkOnly(input = {}) {
         enabled: true,
         language: p.language || p.sourceLanguage,
         cues: p.cues,
-        preferredId: p.hybridMtModelId || p.engineLlmMtModel,
+        preferredId: resolveHybridPreferredId(p),
         targetLang: p.targetLang,
         subtitleTargetLang: p.subtitleTargetLang,
         chineseSubtitleVariant: p.chineseSubtitleVariant,
@@ -174,7 +199,7 @@ function shouldSkipLlmFilmBrief(input = {}) {
         enabled: input.enabled,
         language: input.language || input.sourceLanguage,
         cues: input.cues,
-        preferredId: input.hybridMtModelId || input.engineLlmMtModel || input.preferredId,
+        preferredId: resolveHybridPreferredId(input),
         targetLang: input.targetLang,
         subtitleTargetLang: input.subtitleTargetLang,
         chineseSubtitleVariant: input.chineseSubtitleVariant,
@@ -253,13 +278,26 @@ async function runHybridChunkTranslate(payload = {}) {
         : core.extractCastNames(glossary.entries);
     const cues = Array.isArray(p.cues) ? p.cues : [];
     // After ASR, swapping Sakura 1.5B → GalTransl 7B regularly OOMs / resets llama-server.
+    // Murasaki is already a small subtitle MT — 1.5B short-cue hop wastes a full
+    // load/unload and was a major reason dedicated hybrid felt “much slower”.
+    const shortRouteExplicit = p.hybridShortCueRouting;
+    const shortRouteEnabled = (() => {
+        if (shortRouteExplicit === false || shortRouteExplicit === 0) return false;
+        if (shortRouteExplicit === true || shortRouteExplicit === 1) return true;
+        const v = String(shortRouteExplicit ?? '').trim().toLowerCase();
+        if (v === 'false' || v === '0' || v === 'off' || v === 'no') return false;
+        if (v === 'true' || v === '1' || v === 'on' || v === 'yes') return true;
+        if (/murasaki/i.test(modelId)) return false;
+        return true;
+    })();
     const partition = router.partitionHybridMtCues(cues, {
         mainModelId: modelId,
         installedIds: listInstalledTranslateOnlyIds(),
-        enabled: p.hybridShortCueRouting,
+        enabled: shortRouteEnabled,
         engineExternalMt: !!p._engineExternalMt,
         allowModelSwap: (() => {
             if (p._engineExternalMt) return false;
+            if (!shortRouteEnabled) return false;
             try {
                 const { isByokSentenceMtPreferred } = require('./sakura-mt-endpoint-resolve');
                 if (isByokSentenceMtPreferred(null, p)) return false;
@@ -296,9 +334,18 @@ async function runHybridChunkTranslate(payload = {}) {
         language: p.language || p.sourceLanguage,
         // Blank-retry must stay single-cue and must not re-run sakura whole-track
         // 对位审计 (same storm as engine-blank-mt-retry prefer-Sakura path).
-        windowLines: (p._blankRetry || p._skipAlignAudit)
-            ? 1
-            : Math.max(1, Math.min(8, Number(p.windowLines) || 1)),
+        // Main pass: use model profile windows (Murasaki=3). Never default to 1 —
+        // that made engine hybrid far slower than dedicated scripts and crashed llama.
+        windowLines: typeof core.resolveHybridWindowLines === 'function'
+            ? core.resolveHybridWindowLines({
+                windowLines: p.windowLines,
+                modelId,
+                _blankRetry: !!p._blankRetry,
+                _skipAlignAudit: !!p._skipAlignAudit,
+            })
+            : ((p._blankRetry || p._skipAlignAudit)
+                ? 1
+                : Math.max(1, Math.min(8, Number(p.windowLines) || 3))),
         skipFakeGreeting: p.skipFakeGreeting,
         _blankRetry: !!p._blankRetry,
         _skipAlignAudit: !!p._skipAlignAudit || !!p._blankRetry,
@@ -406,6 +453,7 @@ async function runHybridChunkTranslate(payload = {}) {
 
 module.exports = {
     listInstalledTranslateOnlyIds,
+    resolveHybridPreferredId,
     resolveHybridChunkModelId,
     decideHybridChunkMt,
     canRunHybridChunkOnly,

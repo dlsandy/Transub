@@ -350,6 +350,9 @@ function createAdvancedQcSmartFix(host = {}) {
                 maxRanges: Number(input.maxRetranscribeRanges) || smartCore.DEFAULT_MAX_RETRANSCRIBE_RANGES,
                 maxDurationSec: Number(input.maxRetranscribeSec) || smartCore.DEFAULT_MAX_RANGE_SEC,
                 mergeAdjacentGapMs: Number(input.mergeAdjacentGapMs) || smartCore.DEFAULT_MERGE_GAP_MS,
+                waveformIndexes: Array.isArray(input.waveformTimingIndexes)
+                    ? input.waveformTimingIndexes
+                    : undefined,
             })
             : null;
         const ranges = merged?.ranges || (() => {
@@ -432,8 +435,19 @@ function createAdvancedQcSmartFix(host = {}) {
             + (writeToSource ? ' · 写入原文轨' : ''),
         );
 
+        const isEngineDownish = (resOrErr) => {
+            const code = String(resOrErr?.code || '').trim();
+            const err = String(resOrErr?.error || resOrErr?.message || resOrErr || '');
+            return code === 'compute_busy'
+                || /引擎未响应|连接被拒绝|ECONNREFUSED|fetch failed|引擎未运行|健康检查|进程退出|HTTP 0/i.test(err);
+        };
+
+        let engineRestartUsed = false;
+        let abortRemaining = false;
+
         try {
             for (let i = 0; i < ranges.length; i += 1) {
+                if (abortRemaining) break;
                 const range = ranges[i];
                 sendQcSmartProgress(event, input, {
                     phase: 'retranscribe',
@@ -442,34 +456,70 @@ function createAdvancedQcSmartFix(host = {}) {
                     range: i + 1,
                     totalRanges: ranges.length,
                 });
+
+                const runOnce = () => transcribeRangeWithEngine({
+                    mediaPath,
+                    startMs: range.startMs,
+                    endMs: range.endMs,
+                    padMs: Number(input.padMs) >= 0 ? Number(input.padMs) : smartCore.DEFAULT_PAD_MS,
+                    // 置信度 sidecar 跟写入轨走（原文对照时写 .transcribe，勿写译文）
+                    subtitlePath: writeTarget.confidencePath || writeTarget.writePath,
+                    asrModel: primaryAsr,
+                    options: engineOpts,
+                    skipLlmReclaim: burstMode && i > 0,
+                    allowDuringBatch: !!(input.allowDuringBatch || input._batchMode),
+                    _batchMode: !!input._batchMode,
+                    _skipComputeLock: !!(input._skipComputeLock || input._batchMode || input.allowDuringBatch),
+                }, {
+                    options: engineOpts,
+                    skipLlmReclaim: burstMode && i > 0,
+                    allowDuringBatch: !!(input.allowDuringBatch || input._batchMode),
+                    _batchMode: !!input._batchMode,
+                    _skipComputeLock: !!(input._skipComputeLock || input._batchMode || input.allowDuringBatch),
+                    invokeSender: event?.sender || null,
+                    onProgress: (info) => sendQcSmartProgress(event, input, {
+                        phase: 'retranscribe',
+                        message: info?.detail || info?.message || `局部重转写 ${i + 1}/${ranges.length}`,
+                        pct: Math.round(8 + ((i + 0.5) / Math.max(1, ranges.length)) * 22),
+                        stage: info?.stage,
+                    }),
+                });
+
                 try {
-                    const res = await transcribeRangeWithEngine({
-                        mediaPath,
-                        startMs: range.startMs,
-                        endMs: range.endMs,
-                        padMs: Number(input.padMs) >= 0 ? Number(input.padMs) : smartCore.DEFAULT_PAD_MS,
-                        // 置信度 sidecar 跟写入轨走（原文对照时写 .transcribe，勿写译文）
-                        subtitlePath: writeTarget.confidencePath || writeTarget.writePath,
-                        asrModel: primaryAsr,
-                        options: engineOpts,
-                        skipLlmReclaim: burstMode && i > 0,
-                        allowDuringBatch: !!(input.allowDuringBatch || input._batchMode),
-                        _batchMode: !!input._batchMode,
-                        _skipComputeLock: !!(input._skipComputeLock || input._batchMode || input.allowDuringBatch),
-                    }, {
-                        options: engineOpts,
-                        skipLlmReclaim: burstMode && i > 0,
-                        allowDuringBatch: !!(input.allowDuringBatch || input._batchMode),
-                        _batchMode: !!input._batchMode,
-                        _skipComputeLock: !!(input._skipComputeLock || input._batchMode || input.allowDuringBatch),
-                        invokeSender: event?.sender || null,
-                        onProgress: (info) => sendQcSmartProgress(event, input, {
-                            phase: 'retranscribe',
-                            message: info?.detail || info?.message || `局部重转写 ${i + 1}/${ranges.length}`,
-                            pct: Math.round(8 + ((i + 0.5) / Math.max(1, ranges.length)) * 22),
-                            stage: info?.stage,
-                        }),
-                    });
+                    let res = await runOnce();
+                    if ((!res?.ok || !Array.isArray(res.cues) || !res.cues.length) && isEngineDownish(res)) {
+                        if (!engineRestartUsed) {
+                            engineRestartUsed = true;
+                            try {
+                                const { ensureEngineRunning } = require('./engine-bridge');
+                                const again = await ensureEngineRunning({
+                                    ...engineOpts,
+                                    forceRestart: true,
+                                });
+                                if (again?.ok) {
+                                    logRetranscribe(
+                                        `[qc-smart] 局部重转写引擎崩溃后已重启，重试窗 ${i + 1}/${ranges.length}`,
+                                    );
+                                    res = await runOnce();
+                                }
+                            } catch (restartErr) {
+                                logRetranscribe(
+                                    `[qc-smart] 局部重转写引擎重启失败：${restartErr?.message || restartErr}`,
+                                );
+                            }
+                        }
+                        if ((!res?.ok || !Array.isArray(res.cues) || !res.cues.length) && isEngineDownish(res)) {
+                            failCount += 1;
+                            const skipped = ranges.length - i - 1;
+                            logRetranscribe(
+                                `[qc-smart] 局部重转写引擎仍不可用，跳过剩余 ${skipped + 1} 窗`
+                                + ` · ${String(res?.error || '引擎未响应').trim()}`,
+                            );
+                            abortRemaining = true;
+                            failCount += skipped;
+                            break;
+                        }
+                    }
                     if (!res?.ok || !Array.isArray(res.cues) || !res.cues.length) {
                         failCount += 1;
                         const code = String(res?.code || '').trim();
@@ -509,6 +559,33 @@ function createAdvancedQcSmartFix(host = {}) {
                     );
                 } catch (err) {
                     failCount += 1;
+                    if (isEngineDownish(err) && !engineRestartUsed) {
+                        engineRestartUsed = true;
+                        try {
+                            const { ensureEngineRunning } = require('./engine-bridge');
+                            const again = await ensureEngineRunning({
+                                ...engineOpts,
+                                forceRestart: true,
+                            });
+                            if (again?.ok) {
+                                logRetranscribe(
+                                    `[qc-smart] 局部重转写异常后已重启引擎，重试窗 ${i + 1}/${ranges.length}`,
+                                );
+                                i -= 1;
+                                failCount -= 1;
+                                continue;
+                            }
+                        } catch { /* ignore */ }
+                    }
+                    if (isEngineDownish(err)) {
+                        const skipped = ranges.length - i - 1;
+                        logRetranscribe(
+                            `[qc-smart] 局部重转写引擎异常，跳过剩余 ${skipped + 1} 窗 · ${err?.message || err}`,
+                        );
+                        abortRemaining = true;
+                        failCount += skipped;
+                        break;
+                    }
                     logRetranscribe(
                         `[qc-smart] 局部重转写 ${i + 1}/${ranges.length} 异常 · ASR=${primaryAsr} · ${err?.message || err}`,
                     );
@@ -683,7 +760,41 @@ function createAdvancedQcSmartFix(host = {}) {
         let changed = 0;
         let changedIndexes = [];
         if (autoApply && issueList.some((it) => it.suggestedTarget)) {
-            const applied = smartCore.applyQcSemanticSuggestions(cues, issueList);
+            let applyIssues = issueList;
+            try {
+                const candidates = [];
+                for (const it of issueList) {
+                    const suggested = String(it?.suggestedTarget || '').trim();
+                    if (!suggested) continue;
+                    const idx = Number(it.index);
+                    if (!Number.isInteger(idx) || idx < 0 || idx >= cues.length) continue;
+                    const before = String(cues[idx]?.text ?? '').trim();
+                    if (!before || before === suggested) continue;
+                    candidates.push({
+                        index: idx,
+                        before,
+                        after: suggested,
+                        suggestedTarget: suggested,
+                        id: `c${idx}`,
+                        issue: it,
+                    });
+                }
+                if (candidates.length) {
+                    const { runSemanticApplyGate } = require('./jev-laya-pipelines');
+                    const decided = await runSemanticApplyGate(candidates, input.options || input, {
+                        onLog: input.onLog,
+                    });
+                    const rejectIds = new Set((decided.reject || []).map((x) => String(x.id)));
+                    if (rejectIds.size) {
+                        applyIssues = issueList.filter((it) => {
+                            const idx = Number(it.index);
+                            if (!String(it?.suggestedTarget || '').trim()) return true;
+                            return !rejectIds.has(`c${idx}`);
+                        });
+                    }
+                }
+            } catch { /* soft-fail apply all */ }
+            const applied = smartCore.applyQcSemanticSuggestions(cues, applyIssues);
             next = applied.cues;
             changed = applied.changed;
             changedIndexes = applied.changedIndexes;
@@ -717,10 +828,16 @@ function createAdvancedQcSmartFix(host = {}) {
                     endMs: c?.endMs,
                     text: c?.text ?? '',
                 })),
-                pairPath: asString(input.pairPath || input.sourcePath, 4096).trim() || null,
+                pairPath: asString(
+                    input.pairPath || input.sourcePath || input.sourceSubtitlePath,
+                    4096,
+                ).trim() || null,
             };
         }
-        const pairPath = asString(input.pairPath || input.sourcePath, 4096).trim();
+        const pairPath = asString(
+            input.pairPath || input.sourcePath || input.sourceSubtitlePath,
+            4096,
+        ).trim();
         if (!pairPath) return { pairCues: [], pairPath: '' };
         const cached = qcPairCueCache.get(pairPath);
         if (cached) return { pairPath, pairCues: cached };
@@ -872,6 +989,7 @@ function createAdvancedQcSmartFix(host = {}) {
         }
 
         let silenceSplit = { stats: { skipped: true } };
+        // Paired JA↔ZH: do not silence-split ZH alone (count drift). Valley rank only helps unpaired tracks.
         if (input.silenceSplit !== false && !hasPair) {
             // Resolve threshold from input or saved options (default 15)
             if (input.qcSilenceSplitChars == null && input.maxChars == null) {
@@ -893,6 +1011,7 @@ function createAdvancedQcSmartFix(host = {}) {
 
         let llmSplit = { stats: { skipped: true } };
         let retranscribe = { stats: { skipped: true } };
+        let waveformTiming = { stats: { skipped: true } };
         // LLM split changes ZH cue count alone — skip when JA pair is present (DLDSS-533).
         if (input.llmSplit !== false && !hasPair) {
             llmSplit = await runQcLlmSplitOnCues(cues, workingScan.issues, input, event);
@@ -903,12 +1022,273 @@ function createAdvancedQcSmartFix(host = {}) {
                 scanIsFull = false;
             }
         }
+        // Retranscribe first, then edge-snap last so ASR merge cannot wipe energy bounds.
         if (input.retranscribeConnected !== false && asString(input.mediaPath || input.videoPath, 4096).trim()) {
             retranscribe = await runQcRetranscribeOnCues(cues, workingScan.issues, input, event);
             cues = retranscribe.cues;
             if (retranscribe?.stats && !retranscribe.stats.skipped && retranscribe.stats.okCount > 0) {
                 workingScan = qc.scanCueIssues(cues, ruleOpts);
                 scanIsFull = true;
+            }
+        }
+        // Waveform energy suspects + edge snap (after retranscribe) + optional Laya Score triage.
+        if (input.waveformTiming !== false && input.qcWaveformTiming !== false
+            && asString(input.mediaPath || input.videoPath, 4096).trim()) {
+            let waveSession = null;
+            try {
+                const waveApi = require('./qc-waveform-timing');
+                sendQcSmartProgress(event, input, {
+                    phase: 'waveform-timing',
+                    message: '波形计时扫描…',
+                    pct: 28,
+                });
+                const authHasPair = hasPair && Array.isArray(input.pairCues) && input.pairCues.length;
+                const snapSourceCues = authHasPair ? input.pairCues : cues;
+                const maxCandidates = Number(input.maxCandidates || input.waveformMaxCandidates) || 28;
+                const maxEdgeSnaps = Number(input.maxEdgeSnaps) || 16;
+                const mediaPathForWave = asString(input.mediaPath || input.videoPath, 4096).trim();
+                const lastSrc = Array.isArray(snapSourceCues) && snapSourceCues.length
+                    ? snapSourceCues[snapSourceCues.length - 1]
+                    : null;
+                const mediaDurationSec = Number(input.mediaDurationSec)
+                    || Number(input.durationSec)
+                    || (lastSrc
+                        ? Math.max(
+                            0,
+                            (Number(lastSrc.endMs) || Number(lastSrc.startMs) || 0) / 1000,
+                        )
+                        : 0);
+                const waveOptsBase = {
+                    ...input,
+                    mediaPath: mediaPathForWave,
+                    mediaDurationSec,
+                    maxCandidates,
+                    maxEdgeSnaps,
+                };
+                // Demux audio once; JA + ZH passes share the proxy + in-process WAV slices.
+                waveSession = await waveApi.prepareWaveformExtractSession(mediaPathForWave, {
+                    ...waveOptsBase,
+                    timingAudioPath: input.timingAudioPath || input.waveformAudioPath || '',
+                    waveformAudioPath: input.waveformAudioPath || input.timingAudioPath || '',
+                    outputDir: input.outputDir || require('path').dirname(mediaPathForWave),
+                    onProgress: (p) => sendQcSmartProgress(event, input, {
+                        phase: 'waveform-timing',
+                        message: p?.message || '波形计时：准备音轨…',
+                        pct: 27,
+                    }),
+                });
+                waveformTiming = await waveApi.runQcWaveformTimingPhase(snapSourceCues, {
+                    ...waveOptsBase,
+                    // Pair JA scan: use energy heuristics on the auth track, not ZH QC issue indexes.
+                    issues: authHasPair ? [] : (workingScan?.issues || []),
+                    waveformSession: waveSession,
+                    onProgress: (p) => sendQcSmartProgress(event, input, {
+                        phase: 'waveform-timing',
+                        message: p?.message || (authHasPair ? '波形计时（原文轴）…' : '波形计时扫描…'),
+                        pct: 28 + Math.min(10, Number(p?.pct) || 0) / 10,
+                    }),
+                });
+
+                let snapNEarly = Number(waveformTiming.snapChanged) || 0;
+                // Never rematerialize ZH onto a snapped JA track that looks glued/broken.
+                let jaSnapSafe = snapNEarly > 0 && Array.isArray(waveformTiming.cues);
+                if (jaSnapSafe && authHasPair) {
+                    try {
+                        const keep = require('./transcript-keep');
+                        if (keep.cuesHaveBrokenTimeline?.(waveformTiming.cues)
+                            || keep.cuesHaveMassZeroStartPile?.(waveformTiming.cues)) {
+                            jaSnapSafe = false;
+                            snapNEarly = 0;
+                            waveformTiming = {
+                                ...waveformTiming,
+                                snapChanged: 0,
+                                snapRejected: true,
+                                cues: snapSourceCues,
+                            };
+                        }
+                    } catch { /* optional */ }
+                }
+                if (jaSnapSafe && Array.isArray(waveformTiming.cues)) {
+                    if (authHasPair) {
+                        try {
+                            const { rematerializeCuesOntoSource } = require('./mt-pair-rematerialize');
+                            const laid = rematerializeCuesOntoSource(waveformTiming.cues, cues, {
+                                preferPositional: true,
+                            });
+                            if (Array.isArray(laid.cues)) {
+                                let zhOk = true;
+                                try {
+                                    const keep = require('./transcript-keep');
+                                    if (keep.cuesHaveBrokenTimeline?.(laid.cues)
+                                        || keep.cuesHaveMassZeroStartPile?.(laid.cues)) {
+                                        zhOk = false;
+                                    }
+                                } catch { /* optional */ }
+                                if (zhOk) {
+                                    cues = laid.cues;
+                                    input.pairCues = waveformTiming.cues;
+                                    waveformTiming.pairSnapped = true;
+                                    const pairPath = asString(
+                                        input.pairPath || input.sourcePath || input.sourceSubtitlePath,
+                                        4096,
+                                    ).trim();
+                                    if (pairPath) {
+                                        try {
+                                            const pairDoc = readSubtitleDocument(pairPath);
+                                            if (pairDoc?.ok) {
+                                                writeSubtitleDocument(pairPath, {
+                                                    cues: waveformTiming.cues,
+                                                    format: pairDoc.format,
+                                                    meta: pairDoc.meta,
+                                                });
+                                                qcPairCueCache.set(pairPath, waveformTiming.cues.map((c) => ({
+                                                    startMs: c?.startMs,
+                                                    endMs: c?.endMs,
+                                                    text: c?.text ?? '',
+                                                })));
+                                            }
+                                        } catch { /* soft-fail */ }
+                                    }
+                                } else {
+                                    snapNEarly = 0;
+                                    waveformTiming.snapRejected = true;
+                                    waveformTiming.snapChanged = 0;
+                                    waveformTiming.cues = snapSourceCues;
+                                }
+                            }
+                        } catch { /* keep zh texts */ }
+                    } else {
+                        cues = waveformTiming.cues;
+                    }
+                }
+
+                // Residual ZH pass: only when JA snap was thin (auth track usually enough
+                // after rematerialize). Skip when budget exhausted or JA already snapped well.
+                const jaHard = Number(waveformTiming?.stats?.hard) || 0;
+                const skipZhResidual = !authHasPair
+                    || !!waveformTiming?.budgetExhausted
+                    || snapNEarly >= 8
+                    || (snapNEarly >= 4 && jaHard <= 2);
+                if (!skipZhResidual) {
+                    try {
+                        const zhBudget = Math.max(4, Math.min(8, Math.floor(maxEdgeSnaps / 2)));
+                        const zhWave = await waveApi.runQcWaveformTimingPhase(cues, {
+                            ...waveOptsBase,
+                            issues: workingScan?.issues || [],
+                            maxCandidates: Math.min(maxCandidates, 12),
+                            maxEdgeSnaps: zhBudget,
+                            waveformTimingLaya: false,
+                            jevDecisionMode: 'off',
+                            waveformSession: waveSession,
+                            waveformPhaseBudgetMs: Math.min(
+                                12000,
+                                Number(input.waveformPhaseBudgetMs) || 12000,
+                            ),
+                            onProgress: (p) => sendQcSmartProgress(event, input, {
+                                phase: 'waveform-timing',
+                                message: p?.message || '波形计时（译文残余）…',
+                                pct: 33,
+                            }),
+                        });
+                        const zhSnap = Number(zhWave.snapChanged) || 0;
+                        if (zhSnap > 0 && Array.isArray(zhWave.cues)) {
+                            cues = zhWave.cues;
+                            snapNEarly += zhSnap;
+                            waveformTiming = {
+                                ...waveformTiming,
+                                snapChanged: snapNEarly,
+                                zhResidualSnap: zhSnap,
+                                suspects: [
+                                    ...(waveformTiming.suspects || []),
+                                    ...(zhWave.suspects || []),
+                                ],
+                                issues: [
+                                    ...(waveformTiming.issues || []),
+                                    ...(zhWave.issues || []),
+                                ],
+                                rankedIndexes: [
+                                    ...(waveformTiming.rankedIndexes || []),
+                                    ...(zhWave.rankedIndexes || []),
+                                ].filter((v, i, a) => a.indexOf(v) === i),
+                            };
+                        }
+                    } catch { /* soft-fail residual */ }
+                } else if (authHasPair) {
+                    waveformTiming = {
+                        ...waveformTiming,
+                        zhResidualSkipped: true,
+                        zhResidualSkipReason: waveformTiming?.budgetExhausted
+                            ? 'budget'
+                            : (snapNEarly >= 8 ? 'ja_snap_enough' : 'ja_light'),
+                    };
+                }
+
+                if (snapNEarly > 0) {
+                    sendQcSmartProgress(event, input, {
+                        phase: 'waveform-timing',
+                        message: `波形边沿吸附 ${snapNEarly} 条`,
+                        pct: 34,
+                    });
+                    try {
+                        workingScan = qc.scanCueIssues(cues, structuralScanOpts);
+                        scanIsFull = false;
+                    } catch { /* keep prior scan */ }
+                }
+
+                if (waveformTiming?.issues?.length || waveformTiming?.suspects?.length) {
+                    try {
+                        const waveCore = require('../src/js/waveform-timing-suspect-core');
+                        workingScan = {
+                            ...workingScan,
+                            issues: waveCore.mergeWaveformIssues(
+                                workingScan.issues || [],
+                                waveformTiming.suspects || [],
+                            ),
+                        };
+                        input.waveformTimingIndexes = waveformTiming.rankedIndexes || [];
+                    } catch { /* soft-fail merge */ }
+                }
+                const snapN = snapNEarly;
+                waveformTiming.stats = {
+                    ...(waveformTiming.stats || {}),
+                    skipped: !!waveformTiming.skipped,
+                    reason: waveformTiming.reason,
+                    usedLaya: !!waveformTiming.usedLaya,
+                    usedProxy: !!waveSession?.isProxy,
+                    fromTimingCache: !!waveSession?.fromTimingCache,
+                    demuxFailed: waveSession?.demuxFailed || undefined,
+                    snapChanged: snapN,
+                    zhResidualSnap: Number(waveformTiming.zhResidualSnap) || 0,
+                    pairSnapped: !!waveformTiming.pairSnapped,
+                    authHasPair: !!authHasPair,
+                    summary: waveApi.summarizeWaveformTiming(
+                        {
+                            ...(waveformTiming.stats || {}),
+                            snapChanged: snapN,
+                            usedProxy: !!waveSession?.isProxy,
+                            fromTimingCache: !!waveSession?.fromTimingCache,
+                        },
+                        waveformTiming,
+                    ),
+                };
+            } catch (err) {
+                waveformTiming = {
+                    stats: {
+                        skipped: true,
+                        reason: 'error',
+                        error: err?.message || String(err),
+                    },
+                };
+            } finally {
+                const cachePath = waveSession?.fromTimingCache
+                    ? String(waveSession.mediaPath || '')
+                    : String(input.timingAudioPath || input.waveformAudioPath || '');
+                try { await waveSession?.cleanup?.(); } catch { /* ignore */ }
+                // Drop engine timing PCM cache after QC (large; per-title).
+                try {
+                    require('./qc-waveform-timing').cleanupTimingAudioSidecar(cachePath, input);
+                } catch { /* ignore */ }
+                waveSession = null;
             }
         }
         // 润色目标需要 fluency / 怪句；若上一趟是结构扫则补一次完整扫
@@ -935,14 +1315,43 @@ function createAdvancedQcSmartFix(host = {}) {
             maxSmartCues: input.maxSmartCues,
             types: input.smartTypes,
         });
-        const targets = typeof smartCore.filterSoftwareCreditTargets === 'function'
+        let targets = typeof smartCore.filterSoftwareCreditTargets === 'function'
             ? smartCore.filterSoftwareCreditTargets(cues, rawTargets)
             : rawTargets;
+        // Laya Score: re-rank mid-list QC smart targets when over quota-ish
+        try {
+            if (targets.length >= 4) {
+                const { runScoreRank, pipe } = require('./jev-laya-pipelines');
+                const mid = targets.slice(0, 32).map((t) => {
+                    const idx = Number(t.index ?? t);
+                    return {
+                        index: idx,
+                        text: String(cues[idx]?.text ?? ''),
+                        id: `s${idx}`,
+                        reasons: Array.isArray(t.types) ? t.types.join(',') : String(t.type || 'qc'),
+                    };
+                });
+                const scoreMap = await runScoreRank(mid, input.options || input, {
+                    task: 'qc_smart_target_rank',
+                    instructionsLead: 'Score how urgently this cue needs QC smart-fix LLM (skip→must).',
+                });
+                if (scoreMap.size) {
+                    const order = pipe.mergeScoreReorder(
+                        mid.map((m) => m.index),
+                        scoreMap,
+                        {},
+                    );
+                    const byIdx = new Map(targets.map((t) => [Number(t.index ?? t), t]));
+                    targets = order.map((i) => byIdx.get(i)).filter(Boolean);
+                }
+            }
+        } catch { /* soft-fail */ }
 
         const changedByRule = !!(ruleResult?.stats?.affected);
         const changedBySilenceSplit = !!(silenceSplit?.stats && !silenceSplit.stats.skipped && silenceSplit.stats.splitCount > 0);
         const changedByLlmSplit = !!(llmSplit?.stats && !llmSplit.stats.skipped && llmSplit.stats.splitCount > 0);
         const changedByRetranscribe = !!(retranscribe?.stats && !retranscribe.stats.skipped && retranscribe.stats.okCount > 0);
+        const changedByWaveform = (Number(waveformTiming?.snapChanged) || Number(waveformTiming?.stats?.snapChanged) || 0) > 0;
 
         const wantSemantic = !!(input.semanticReview && Array.isArray(input.pairCues) && input.pairCues.length);
 
@@ -963,6 +1372,9 @@ function createAdvancedQcSmartFix(host = {}) {
             if (llmSplit?.stats?.splitCount) {
                 parts.push(`智能断句 ${llmSplit.stats.splitCount} 条(+${llmSplit.stats.added || 0})`);
             }
+            if (waveformTiming?.stats?.summary) {
+                parts.push(waveformTiming.stats.summary);
+            }
             if (retranscribe?.stats?.plan && !retranscribe.stats.skipped) {
                 const failN = Number(retranscribe.stats.failCount) || 0;
                 parts.push(
@@ -976,7 +1388,8 @@ function createAdvancedQcSmartFix(host = {}) {
             parts.push('无需智能润色');
             if (remainingText) parts.push(remainingText);
 
-            if (changedByRule || changedBySilenceSplit || changedByLlmSplit || changedByRetranscribe || cues.length !== doc.cues.length) {
+            if (changedByRule || changedBySilenceSplit || changedByLlmSplit || changedByRetranscribe
+                || changedByWaveform || cues.length !== doc.cues.length) {
                 const aligned = alignCuesToPair(cues);
                 cues = aligned.cues;
                 const healed = healSoftwareCreditCues(cues);
@@ -1001,6 +1414,7 @@ function createAdvancedQcSmartFix(host = {}) {
                         rule: ruleResult,
                         silenceSplit: silenceSplit.stats,
                         llmSplit: llmSplit.stats,
+                        waveformTiming: waveformTiming.stats,
                         retranscribe: retranscribe.stats,
                         remaining: beforeSmartScan.summary,
                         summary: parts.join('；'),
@@ -1019,6 +1433,7 @@ function createAdvancedQcSmartFix(host = {}) {
                     rule: ruleResult,
                     silenceSplit: silenceSplit.stats,
                     llmSplit: llmSplit.stats,
+                    waveformTiming: waveformTiming.stats,
                     retranscribe: retranscribe.stats,
                     remaining: beforeSmartScan.summary,
                     summary: parts.join('；'),
@@ -1039,6 +1454,7 @@ function createAdvancedQcSmartFix(host = {}) {
             ruleResult,
             silenceSplit: silenceSplit.stats,
             llmSplit: llmSplit.stats,
+            waveformTiming: waveformTiming.stats,
             retranscribe: retranscribe.stats,
             beforeSmartScan,
             targets,
@@ -1061,6 +1477,7 @@ function createAdvancedQcSmartFix(host = {}) {
             changedBySilenceSplit,
             changedByLlmSplit,
             changedByRetranscribe,
+            changedByWaveform,
             rematerialized: !!alignedForContinue.rematerialized,
         };
     }
@@ -1131,6 +1548,7 @@ function createAdvancedQcSmartFix(host = {}) {
                         rule: ruleResult,
                         silenceSplit: prepared.silenceSplit,
                         llmSplit: prepared.llmSplit,
+                        waveformTiming: prepared.waveformTiming,
                         retranscribe: prepared.retranscribe,
                     };
                 }
@@ -1251,6 +1669,7 @@ function createAdvancedQcSmartFix(host = {}) {
             || prepared.changedBySilenceSplit
             || prepared.changedByLlmSplit
             || prepared.changedByRetranscribe
+            || prepared.changedByWaveform
             || semanticChanged
             || creditHealed
             || cues.length !== doc.cues.length;
@@ -1267,6 +1686,9 @@ function createAdvancedQcSmartFix(host = {}) {
         }
         if (prepared.llmSplit?.splitCount) {
             parts.push(`智能断句 ${prepared.llmSplit.splitCount} 条(+${prepared.llmSplit.added || 0})`);
+        }
+        if (prepared.waveformTiming?.summary) {
+            parts.push(prepared.waveformTiming.summary);
         }
         if (prepared.retranscribe && !prepared.retranscribe.skipped) {
             const failN = Number(prepared.retranscribe.failCount) || 0;
@@ -1322,6 +1744,7 @@ function createAdvancedQcSmartFix(host = {}) {
                 rule: ruleResult,
                 silenceSplit: prepared.silenceSplit,
                 llmSplit: prepared.llmSplit,
+                waveformTiming: prepared.waveformTiming,
                 retranscribe: prepared.retranscribe,
                 semantic,
                 remaining: afterScan.summary,
@@ -1371,6 +1794,7 @@ function createAdvancedQcSmartFix(host = {}) {
             rule: ruleResult,
             silenceSplit: prepared.silenceSplit,
             llmSplit: prepared.llmSplit,
+            waveformTiming: prepared.waveformTiming,
             retranscribe: prepared.retranscribe,
             semantic,
             beforeSmart: beforeSmartScan.summary,

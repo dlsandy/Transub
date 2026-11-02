@@ -114,6 +114,27 @@ describe('subtitle-shelf-core', () => {
         assert.strictEqual(core.normalizeShelfSecondary('no_translation'), 'all');
     });
 
+    it('paginateShelfItems uses 50 per page and clamps page', () => {
+        const items = Array.from({ length: 120 }, (_, i) => ({ id: String(i + 1) }));
+        assert.strictEqual(core.SHELF_PAGE_SIZE, 50);
+        const p1 = core.paginateShelfItems(items, 1);
+        assert.strictEqual(p1.page, 1);
+        assert.strictEqual(p1.pageCount, 3);
+        assert.strictEqual(p1.total, 120);
+        assert.strictEqual(p1.items.length, 50);
+        assert.strictEqual(p1.items[0].id, '1');
+        assert.strictEqual(p1.items[49].id, '50');
+        const p3 = core.paginateShelfItems(items, 99);
+        assert.strictEqual(p3.page, 3);
+        assert.strictEqual(p3.items.length, 20);
+        assert.strictEqual(p3.items[0].id, '101');
+        assert.strictEqual(core.shelfPageForIndex(0), 1);
+        assert.strictEqual(core.shelfPageForIndex(49), 1);
+        assert.strictEqual(core.shelfPageForIndex(50), 2);
+        assert.strictEqual(core.paginateShelfItems([], 3).page, 1);
+        assert.strictEqual(core.paginateShelfItems([], 3).items.length, 0);
+    });
+
     it('buildShelfSlotTabs and formatCueTime / truncatePreviewCues', () => {
         const tabs = core.buildShelfSlotTabs({
             transcript: { path: 'a.transcribe.srt', exists: true },
@@ -270,6 +291,25 @@ describe('subtitle-shelf store', () => {
         assert.ok(fs.existsSync(path.join(tmp, 'subtitles', 'a.original.srt')));
     });
 
+    it('deleteMediaMany removes multiple index entries once', () => {
+        for (const name of ['b1.mp4', 'b2.mp4', 'b3.mp4']) {
+            const video = writeFile(name, 'v');
+            const asr = writeFile(name.replace('.mp4', '.srt'), 't');
+            shelf.ingestBatchHistoryEntry({
+                options: { language: 'en' },
+                outputs: [{ videoPath: video, subtitlePath: asr, status: 'generated' }],
+            }, { root: tmp });
+        }
+        const ids = shelf.listMediaSummaries({ root: tmp }).items.map((it) => it.id);
+        assert.strictEqual(ids.length, 3);
+        const res = shelf.deleteMediaMany(ids.slice(0, 2), { root: tmp });
+        assert.ok(res.ok);
+        assert.strictEqual(res.deleted, 2);
+        assert.strictEqual(shelf.listMediaSummaries({ root: tmp }).items.length, 1);
+        const empty = shelf.deleteMediaMany([], { root: tmp });
+        assert.strictEqual(empty.ok, false);
+    });
+
     it('listMediaSummariesAsync sets mediaExists without heal-on-list', async () => {
         const video = writeFile('alive.mp4', 'v');
         const asr = writeFile('alive.srt', 't');
@@ -411,7 +451,7 @@ describe('subtitle-shelf store', () => {
         assert.strictEqual(d2.media.translations.length, 1);
         assert.strictEqual(d2.media.translations[0].lang, 'zh-Hans');
 
-        // Re-ASR updates transcript only
+        // Re-ASR: default ingest keeps original; source-ready refresh syncs 原文 ← 转录
         const asr2 = writeFile('pipe.transcribe.srt', 'ASR2');
         shelf.ingestPipelineTranscript({
             mediaPath: video,
@@ -427,9 +467,18 @@ describe('subtitle-shelf store', () => {
         assert.strictEqual(fs.readFileSync(d3.media.transcript.path, 'utf8'), 'ASR2');
         assert.strictEqual(fs.readFileSync(d3.media.original.path, 'utf8'), 'ASR');
 
+        shelf.ingestPipelineOriginal({
+            mediaPath: video,
+            transcriptPath: asr2,
+            options: opts,
+            refreshContent: true,
+        }, { root: tmp });
+        const d4 = shelf.getMediaDetail(id, { root: tmp });
+        assert.strictEqual(fs.readFileSync(d4.media.original.path, 'utf8'), 'ASR2');
+
         assert.strictEqual(
             shelf.resolveOriginalSubtitlePath(video, opts, { root: tmp }),
-            path.resolve(d3.media.original.path),
+            path.resolve(d4.media.original.path),
         );
     });
 });
@@ -608,5 +657,17 @@ describe('subtitle-shelf-translate-core', () => {
         assert.strictEqual(tx.cuesLookPrimarilyChinese(zhCues), true);
         const jaCues = Array.from({ length: 30 }, (_, i) => ({ text: `これは日本語のセリフ${i}です` }));
         assert.strictEqual(tx.cuesLookPrimarilyChinese(jaCues), false);
+    });
+
+    it('keeps yue distinct from zh for shelf MT (粤→普通话)', () => {
+        assert.strictEqual(core.sourceLangFromOptions({ language: 'yue' }), 'yue');
+        assert.strictEqual(core.sourceLangFromOptions({ language: 'zh-yue' }), 'yue');
+        assert.strictEqual(tx.resolveShelfSourceLanguage({
+            original: { lang: 'yue' },
+        }, 'original', 'zh'), 'yue');
+        // Form 片源=粤语 wins over collapsed slot lang=zh
+        assert.strictEqual(tx.resolveShelfSourceLanguage({
+            original: { lang: 'zh' },
+        }, 'original', 'yue'), 'yue');
     });
 });

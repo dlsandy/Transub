@@ -247,6 +247,13 @@ async function runRetranslateFromModal() {
         const clampPct = (n) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
 
         const labelDetail = String(detail || '').trim();
+        // Keep session progress fields in sync so any incidental paint uses overall %
+        // (1-based index matches batch computeDisplayProgress).
+        state.index = idx + 1;
+        state.total = total;
+        state.videoProgress = displayOverall;
+        state.itemStage = 'translate';
+        if (path) state.activePath = path;
         if (els.progressBar) els.progressBar.style.width = `${displayOverall}%`;
         if (els.progressLabel) {
             els.progressLabel.textContent = labelDetail
@@ -327,8 +334,6 @@ async function runRetranslateFromModal() {
         itemPct: 0,
         detail: '准备中…',
     });
-    if (els.progressBar) els.progressBar.style.width = '0%';
-    if (els.progressCount) els.progressCount.textContent = `0 / ${plan.length}`;
 
     try {
         for (let i = 0; i < plan.length; i += 1) {

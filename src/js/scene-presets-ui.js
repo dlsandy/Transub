@@ -107,10 +107,10 @@
     }
 
     function isProEntitled() {
-        if (typeof global.TransubCore?.isAdvancedEntitled === 'function') {
-            return !!global.TransubCore.isAdvancedEntitled();
-        }
-        return !!state.proEntitled;
+        const fromCore = typeof global.TransubCore?.isAdvancedEntitled === 'function'
+            ? !!global.TransubCore.isAdvancedEntitled()
+            : false;
+        return fromCore || !!state.proEntitled;
     }
 
     async function refreshProEntitled() {

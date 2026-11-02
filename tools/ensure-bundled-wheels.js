@@ -69,6 +69,10 @@ const PACKAGES = [
     { id: 'flatbuffers', spec: 'flatbuffers==25.12.19', importName: 'flatbuffers', required: false },
     // FireRedVAD Python API (weights ship separately; torch still on-demand)
     { id: 'fireredvad', spec: 'fireredvad==0.0.2', importName: 'fireredvad', required: true },
+    // FireRedASR2-AED inference (weights on-demand; torch still on-demand)
+    { id: 'fireredasr2s', spec: 'fireredasr2s==0.0.1', importName: 'fireredasr2s', required: false },
+    // Laya / OpenDecider System One (weights on-demand via model manager; torch on-demand)
+    { id: 'opendecider', spec: 'opendecider==0.5.0', importName: 'opendecider', required: false },
 ];
 
 function listWheelFiles() {

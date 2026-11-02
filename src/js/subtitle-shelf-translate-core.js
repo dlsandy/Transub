@@ -170,12 +170,17 @@
             if (s === 'jp' || s === 'jpn' || s === 'japanese') return 'ja';
             if (s === 'eng' || s === 'english') return 'en';
             if (s === 'kr' || s === 'kor' || s === 'korean') return 'ko';
+            // Keep Cantonese distinct — Hy-MT2 / Qwen need language=yue for 粤→普通话.
+            if (s === 'yue' || s === 'zh-yue' || s === 'cantonese') return 'yue';
             if (s === 'zh-cn' || s === 'zh-hans' || s === 'cn' || s === 'chinese') return 'zh';
-            if (s === 'zh-tw' || s === 'zh-hk' || s === 'zh-hant' || s === 'yue') return 'zh';
+            if (s === 'zh-tw' || s === 'zh-hk' || s === 'zh-hant') return 'zh';
             if (s === 'ja' || s === 'en' || s === 'ko' || s === 'zh') return s;
             return '';
         };
-        return map(fromSlot) || map(formLang) || 'ja';
+        // Prefer explicit form 片源=粤语 over a collapsed slot lang=zh.
+        const formMapped = map(formLang);
+        if (formMapped === 'yue') return 'yue';
+        return map(fromSlot) || formMapped || 'ja';
     }
 
     /**

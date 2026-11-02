@@ -101,7 +101,10 @@ async function runPostQcLoopHandoff({
     const issues = scanned?.issues || [];
 
     const bandMeta = loadBandMeta(srcPath);
-    const plan = loopPlan.planPostQcLoop(cues, issues, {
+    const adaptiveCap = policy.resolveAdaptiveRetranslateIndexCap
+        ? policy.resolveAdaptiveRetranslateIndexCap(options, cues.length)
+        : 40;
+    let plan = loopPlan.planPostQcLoop(cues, issues, {
         ...options,
         pass,
         postQcLoopMaxPasses: maxPasses,
@@ -109,8 +112,47 @@ async function runPostQcLoopHandoff({
         holdIndexes: bandMeta.holdIndexes,
         blankExhaustedIndexes: options.blankExhaustedIndexes || options.blankMtSkipLlmIndexes || [],
         maxRetranscribeRanges: options.qcSmartMaxRetranscribeRanges || 8,
-        maxRetranslateIndexes: 40,
+        maxRetranslateIndexes: adaptiveCap,
     });
+
+    // Laya Score: prioritize yellow retranslate indexes when capped
+    try {
+        const yellow = (plan.retranslateIndexes || []).filter((idx) => {
+            const b = bandMeta.bandByIndex?.[idx] ?? bandMeta.bandByIndex?.[String(idx)];
+            return b === 'yellow';
+        });
+        if (yellow.length >= 2) {
+            const { runScoreRank, pipe } = require('./jev-laya-pipelines');
+            const scoreMap = await runScoreRank(
+                yellow.slice(0, 32).map((idx) => ({
+                    index: idx,
+                    text: String(cues[idx]?.text ?? ''),
+                    id: `s${idx}`,
+                    reasons: 'post_qc_yellow',
+                })),
+                options,
+                {
+                    task: 'post_qc_retranslate_rank',
+                    instructionsLead: 'Score how urgently this cue needs another MT pass (skip→must).',
+                },
+            );
+            if (scoreMap.size) {
+                const red = (plan.retranslateIndexes || []).filter((idx) => {
+                    const b = bandMeta.bandByIndex?.[idx] ?? bandMeta.bandByIndex?.[String(idx)];
+                    return b === 'red';
+                });
+                const other = (plan.retranslateIndexes || []).filter(
+                    (idx) => !red.includes(idx) && !yellow.includes(idx),
+                );
+                const orderedYellow = pipe.mergeScoreReorder(yellow, scoreMap, {});
+                const cap = Math.max(1, Number(plan.retranslateIndexes?.length) || 40);
+                plan = {
+                    ...plan,
+                    retranslateIndexes: [...red, ...orderedYellow, ...other].slice(0, cap),
+                };
+            }
+        }
+    } catch { /* soft-fail */ }
 
     if (plan.skip) {
         const skipMsg = plan.reason === 'nothing_to_do'
@@ -268,7 +310,7 @@ async function runPostQcLoopHandoff({
                     blankMtRetryMaxRounds: 1,
                 },
                 forceRetranslateIndexes: plan.retranslateIndexes,
-                maxCues: Math.min(40, plan.retranslateIndexes.length),
+                maxCues: Math.min(adaptiveCap, plan.retranslateIndexes.length),
                 maxRounds: 1,
                 onLog,
                 shouldStop: stopRequested,

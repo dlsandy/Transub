@@ -14,6 +14,9 @@ const {
     isRetiredEngineAsrModelId,
 } = require('./engine-asr-aliases');
 
+/** Runtime-bundled VAD ids — no Hub download; always treat as installed in catalog merge. */
+const BUNDLED_ALWAYS_READY_MODEL_IDS = new Set(['silero-vad', 'ten-vad']);
+
 const ENGINE_MODEL_HUB_FALLBACK = {
     'sensevoice-small': {
         hubId: 'FunAudioLLM/SenseVoiceSmall',
@@ -87,6 +90,12 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         name: 'Cohere Transcribe 03-2026',
         note: 'Cohere 2B Conformer；14 语；英语很强；短窗切条。门禁：HF 同意条款 + Token（建议官方端点）。依赖 transformers≥5.6。若提示 processor 缺失请强制重下（需完整 config/tokenizer）',
     },
+    'firered-asr2-aed': {
+        hubId: 'FireRedTeam/FireRedASR2-AED',
+        kind: 'asr',
+        name: 'FireRedASR2-AED（方言/中英）',
+        note: 'FireRed ~1.1B AED；普通话+20+方言口音、英语、中英混说；词级时间戳+置信度；约 4.7GB。按需安装 fireredasr2s（随 wheels 包装）。非日语专科；与随包装 FireRedVAD 无关',
+    },
     'parakeet-tdt-0.6b-v3': {
         hubId: 'nvidia/parakeet-tdt-0.6b-v3',
         kind: 'asr',
@@ -109,13 +118,7 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         hubId: 'Qwen/Qwen3-ASR-1.7B-hf',
         kind: 'asr',
         name: 'Qwen3-ASR 1.7B',
-        note: '官方 1.7B (-hf)；亦可作 LoRA 基座；需 transformers≥5.13 与较多显存',
-    },
-    'qwen3-asr-1.7b-ja-anime-lora-v3': {
-        hubId: 'hhim8826/qwen3-asr-lora-ja-anime-v3',
-        kind: 'asr',
-        name: 'Qwen3-ASR 1.7B JA Anime LoRA v3',
-        note: 'PEFT LoRA（hhim8826；动漫/VN 日语）；自动附带下载基座 qwen3-asr-1.7b；推理用 beam=4；需 peft + transformers≥5.13',
+        note: '官方 1.7B (-hf)；需 transformers≥5.13 与较多显存',
     },
     'qwen3-forced-aligner-0.6b': {
         hubId: 'Qwen/Qwen3-ForcedAligner-0.6B-hf',
@@ -149,6 +152,12 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         name: 'Silero VAD（随 faster-whisper 内置）',
         note: '随 faster-whisper 内置；无需单独下载',
     },
+    'ten-vad': {
+        hubId: '',
+        kind: 'vad',
+        name: 'TEN VAD（随引擎运行时）',
+        note: '通过 ten_vad Python 包提供；无需 Hub 下载',
+    },
     'whisperseg-asmr': {
         hubId: 'TransWithAI/Whisper-Vad-EncDec-ASMR-onnx',
         kind: 'vad',
@@ -160,6 +169,15 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         kind: 'vad',
         name: 'FireRedVAD（随包装）',
         note: 'SOTA 多语 VAD（约 2MB，随包装无需下载）；用于 anime-whisper / Qwen 帧时间戳（timingAlignModel=firered 或选此 VAD）；误报低于 TEN；需已有 torch（SenseVoice/Qwen 等会安装）',
+    },
+    'opendecider-nano': {
+        hubId: 'manjunathshiva/opendecider-nano',
+        kind: 'decision',
+        name: 'OpenDecider nano（Laya）',
+        sizeHint: '约 800 MB',
+        ramHint: '建议 ≥2 GB 显存 / 内存',
+        note: 'Pro Laya / System One 本地决策；约 0.8GB；在模型管理中下载后，安装/启动 Laya 会自动复用',
+        backend: 'opendecider',
     },
 };
 
@@ -456,11 +474,13 @@ function resolveTorchCudaVariantLabel(payload = {}) {
 
 function torchCudaPipCommand(pipPrefix, payload = {}) {
     const variant = resolveTorchCudaVariantLabel(payload);
+    // Prefer Aliyun flat --find-links (hosts real .whl). Official --index-url often
+    // redirects wheel bytes to download.pytorch.org and stalls on domestic networks.
     if (variant.startsWith('cu13')) {
-        return `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu130`;
+        return `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --find-links https://mirrors.aliyun.com/pytorch-wheels/cu130/ --no-index`;
     }
     if (variant === 'cu128') {
-        return `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128`;
+        return `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --find-links https://mirrors.aliyun.com/pytorch-wheels/cu128/ --no-index`;
     }
     return `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --find-links https://mirrors.aliyun.com/pytorch-wheels/cu126/ --no-index`;
 }
@@ -575,6 +595,8 @@ function manualPlaceHintForModel(spec = {}) {
         weightFile = 'model.onnx';
     } else if (kindName === 'mt' || be.includes('opus') || be.includes('marian')) {
         weightFile = 'pytorch_model.bin 或 model.safetensors';
+    } else if (kindName === 'decision' || be === 'opendecider' || mid.includes('opendecider')) {
+        weightFile = 'model.safetensors + opendecider.json';
     } else if (
         kindName === 'vad'
         || mid.includes('sensevoice')
@@ -596,6 +618,26 @@ function manualPlaceHintForModel(spec = {}) {
     };
 }
 
+/**
+ * Best-effort GPU vendor for download/manual copy (payload from env form / engineForm).
+ * @param {object} [payload]
+ * @returns {'nvidia'|'amd'|'intel'|''}
+ */
+function resolveDownloadGpuVendor(payload = {}) {
+    const raw = String(
+        payload.gpuVendor
+            || payload.vendor
+            || payload.device?.vendor
+            || '',
+    ).trim().toLowerCase();
+    if (raw === 'amd' || raw === 'intel' || raw === 'nvidia') return raw;
+    const name = String(payload.gpuName || payload.device?.gpuName || '').trim();
+    if (/Intel\s*Arc|XPU/i.test(name) && !/NVIDIA|GeForce|AMD|Radeon/i.test(name)) return 'intel';
+    if (/AMD|Radeon|ROCm/i.test(name) && !/NVIDIA|GeForce|RTX|GTX/i.test(name)) return 'amd';
+    if (/NVIDIA|GeForce|RTX|GTX/i.test(name)) return 'nvidia';
+    return '';
+}
+
 /** @param {string} value @returns {'models'|'gpu'|'demucs'|'sensevoice'|'whisper'|'torch-cuda'} */
 function normalizeEngineDownloadKind(value) {
     const k = String(value || 'models').trim().toLowerCase();
@@ -605,6 +647,9 @@ function normalizeEngineDownloadKind(value) {
     }
     if (k === 'torch-rocm' || k === 'torchrocm' || k === 'rocm-torch' || k === 'pytorch-rocm') {
         return 'torch-rocm';
+    }
+    if (k === 'torch-xpu' || k === 'torchxpu' || k === 'xpu-torch' || k === 'pytorch-xpu') {
+        return 'torch-xpu';
     }
     if (k === 'demucs' || k === 'audio-separate' || k === 'audioseparate' || k === 'separate') {
         return 'demucs';
@@ -634,9 +679,11 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
     const kind = normalizeEngineDownloadKind(payload.kind);
     const merged = mergeEngineOptions(payload || {});
     merged.engineInstallPath = resolveEngineInstallPath(merged.engineInstallPath);
-    const hfEndpoint = payload.hfEndpoint != null
-        ? String(payload.hfEndpoint || '').trim()
-        : String(merged.engineHfEndpoint || '').trim();
+    const { resolveHfEndpointForDownload } = require('./engine-download-urls');
+    const hfEndpoint = resolveHfEndpointForDownload(
+        payload.hfEndpoint,
+        merged.engineHfEndpoint,
+    );
     const modelsRoot = getEngineModelsRoot(merged.engineInstallPath);
 
     if (kind === 'gpu') {
@@ -708,6 +755,54 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
             ? `"${runtimePy}" -m pip`
             : 'python -m pip';
         const demucsPip = `${pipPrefix} install --upgrade -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com demucs`;
+        const demucsItem = {
+            id: 'demucs',
+            name: 'Demucs（Meta 人声分离）',
+            kind: 'demucs',
+            group: '人声分离',
+            fileName: 'demucs-4.1.0-py3-none-any.whl',
+            officialUrl: 'https://files.pythonhosted.org/packages/68/93/6f338f3f5c53522406dc32cd3b8a59abde20ac80d33604aa9dc8c82450e5/demucs-4.1.0-py3-none-any.whl',
+            mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/68/93/6f338f3f5c53522406dc32cd3b8a59abde20ac80d33604aa9dc8c82450e5/demucs-4.1.0-py3-none-any.whl',
+            defaultUrl: 'https://mirrors.aliyun.com/pypi/packages/68/93/6f338f3f5c53522406dc32cd3b8a59abde20ac80d33604aa9dc8c82450e5/demucs-4.1.0-py3-none-any.whl',
+            note: 'demucs-4.1.0-py3-none-any.whl',
+        };
+        const gpuVendor = resolveDownloadGpuVendor(payload);
+        if (gpuVendor === 'intel') {
+            const xpuInfo = await buildEngineDownloadInfo({ ...payload, kind: 'torch-xpu' }, deps);
+            const xpuPip = String(xpuInfo?.info?.pipCommand || '').trim();
+            return {
+                ok: true,
+                info: {
+                    kind: 'demucs',
+                    title: '下载 Demucs（人声分离 · Intel XPU）',
+                    folder,
+                    pipCommand: [demucsPip, xpuPip].filter(Boolean).join('\n\n'),
+                    hint: '自动安装 Demucs；Intel Arc 会补齐引擎内 XPU PyTorch（勿装 CUDA / ROCm）。无独立 torch .whl 直链时请复制下方 pip 命令。',
+                    wheelHint: '至少选择 demucs；GPU 加速请用下方 XPU pip 命令（无 CUDA whl 清单）',
+                    items: [demucsItem],
+                    gpuVendor: 'intel',
+                    preferPipCommand: true,
+                },
+            };
+        }
+        if (gpuVendor === 'amd') {
+            const rocmInfo = await buildEngineDownloadInfo({ ...payload, kind: 'torch-rocm' }, deps);
+            const rocmPip = String(rocmInfo?.info?.pipCommand || '').trim();
+            return {
+                ok: true,
+                info: {
+                    kind: 'demucs',
+                    title: '下载 Demucs（人声分离 · AMD ROCm）',
+                    folder,
+                    pipCommand: [demucsPip, rocmPip].filter(Boolean).join('\n\n'),
+                    hint: '自动安装 Demucs；AMD 会补齐引擎内 ROCm PyTorch（勿装 CUDA）。无独立 torch .whl 直链时请复制下方 pip 命令。',
+                    wheelHint: '至少选择 demucs；GPU 加速请用下方 ROCm pip 命令（无 CUDA whl 清单）',
+                    items: [demucsItem],
+                    gpuVendor: 'amd',
+                    preferPipCommand: true,
+                },
+            };
+        }
         const torchCudaPip = torchCudaPipCommand(pipPrefix, payload);
         const torchVariant = resolveTorchCudaVariantLabel(payload);
         const torchManual = resolveTorchCudaManualPackages(payload);
@@ -721,17 +816,7 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
                 hint: `自动安装 Demucs；有 NVIDIA GPU 时会强制重装 CUDA 版 PyTorch（${torchVariant}，约 2.5GB），替换 CPU torch。RTX 50 系：CUDA 13 驱动用 cu130，否则 cu128。与「下载 GPU 支持」互补。失败时可浏览器下载 .whl 后手动安装。`,
                 wheelHint: `至少选择 demucs；若需 GPU 加速请一并下载下方 torch / torchaudio（${torchVariant}、cp312、win_amd64）`,
                 items: [
-                    {
-                        id: 'demucs',
-                        name: 'Demucs（Meta 人声分离）',
-                        kind: 'demucs',
-                        group: '人声分离',
-                        fileName: 'demucs-4.1.0-py3-none-any.whl',
-                        officialUrl: 'https://files.pythonhosted.org/packages/68/93/6f338f3f5c53522406dc32cd3b8a59abde20ac80d33604aa9dc8c82450e5/demucs-4.1.0-py3-none-any.whl',
-                        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/68/93/6f338f3f5c53522406dc32cd3b8a59abde20ac80d33604aa9dc8c82450e5/demucs-4.1.0-py3-none-any.whl',
-                        defaultUrl: 'https://mirrors.aliyun.com/pypi/packages/68/93/6f338f3f5c53522406dc32cd3b8a59abde20ac80d33604aa9dc8c82450e5/demucs-4.1.0-py3-none-any.whl',
-                        note: 'demucs-4.1.0-py3-none-any.whl',
-                    },
+                    demucsItem,
                     ...torchManual.map((pkg) => ({
                         id: pkg.id,
                         name: pkg.name,
@@ -744,6 +829,7 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
                         note: pkg.note || pkg.fileName,
                     })),
                 ],
+                gpuVendor: gpuVendor || 'nvidia',
             },
         };
     }
@@ -839,28 +925,102 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
         const runtimeDir = path.join(installPath, 'runtime');
         const venv = path.join(installPath, '.venv');
         const folder = fs.existsSync(runtimeDir) ? runtimeDir : (fs.existsSync(venv) ? venv : installPath);
+        const runtimePythonExpected = installPath
+            ? path.join(installPath, 'runtime', 'python.exe')
+            : path.join('transub-engine', 'runtime', 'python.exe');
+        const runtimePythonMissing = !runtimePy;
         const pipPrefix = runtimePy
             ? `"${runtimePy}" -m pip`
             : 'python -m pip';
         const gfxRaw = String(payload.rocmGfx || payload.gfx || '').trim().toLowerCase();
-        const gfx = /^gfx\d+/.test(gfxRaw) ? gfxRaw : 'gfx1201';
+        // Unknown → device-all (same as engine rocm_device.py). Never default to gfx1201 —
+        // that would install RX 9070 wheels onto 7900/7800 cards via manual repair.
+        const gfx = (gfxRaw === 'all' || /^gfx\d+/.test(gfxRaw)) ? (gfxRaw || 'all') : 'all';
         const extra = gfx === 'all' ? 'device-all' : `device-${gfx}`;
         const index = 'https://stable.repo.amd.com/rocm/whl-next/';
         const pipCommand = [
+            runtimePythonMissing
+                ? `# 缺少引擎 Python：${runtimePythonExpected} — 请先重装/完整解压后再执行下面命令。`
+                : '',
             `${pipPrefix} install --upgrade --force-reinstall --index-url ${index} --extra-index-url https://pypi.org/simple `
-            + `"torch[${extra}]==2.12.0+rocm10.0.0" "torchvision[${extra}]==0.27.0+rocm10.0.0" "torchaudio==2.11.0+rocm10.0.0"`,
+            // Prefer rocm10.1.0 + torchaudio 2.11.0 (not 2.11.0.2+rocm10.0.0):
+            // the latter can fail on Windows with entry-point torch_new_stable_ivalue.
+            + `"torch[${extra}]==2.12.0+rocm10.1.0" "torchvision[${extra}]==0.27.0+rocm10.1.0" "torchaudio==2.11.0+rocm10.1.0"`
+            + (gfx !== 'all'
+                ? ` "amd-torch-device-${gfx}==2.12.0+rocm10.1.0" "amd-torchvision-device-${gfx}==0.27.0+rocm10.1.0"`
+                : ''),
+            gfx !== 'all'
+                ? `${pipPrefix} install --upgrade --index-url ${index} --extra-index-url https://pypi.org/simple amd-torch-device-${gfx} amd-torchvision-device-${gfx}`
+                : '',
+            `${pipPrefix} install "numpy>=2.0,<2.5"`,
             '# 必须用上面引擎 runtime\\python.exe；系统 Python 里的 ROCm 包对本软件无效。',
-            '# 若 pin 失败，可去掉版本号重试，或换 index：https://repo.amd.com/rocm/whl-multi-arch/',
-        ].join('\n');
+            '# 必须带 torch[device-gfx*] 或 amd-torch-device-gfx*。不要只装 torch==x+rocm（缺 HIP 内核 → hipErrorInvalidImage）。',
+            '# 请用 cmd.exe 执行（PowerShell 可能拆坏版本号里的 +）。',
+            '# 成功标志：python -c "import torch; print(torch.__version__)" 须含 +rocm10（不是 2.14.x 无后缀）。',
+            '# 配对：torch 2.12.0+rocm10.1.0 + torchaudio 2.11.0+rocm10.1.0（勿用 2.11.0.2+rocm10.0.0，Win 上易触发 torch_new_stable_ivalue）。',
+            '# 若 pinned 2.12 找不到内核包，第二条会升到源里匹配的 amd-torch-device（如 2.13）。勿混用 PyPI CPU torch / 旧 rocm7。',
+        ].filter(Boolean).join('\n');
+        const wheelHint = runtimePythonMissing
+            ? `引擎不完整：找不到 ${runtimePythonExpected}。请重新下载完整包并完整解压后再装 ROCm；无直链 .whl，装好引擎后用下方 pip 命令。`
+            : 'ROCm 无独立 .whl 直链清单。请复制下方 pip 命令，在 cmd.exe 中从 stable.repo.amd.com/rocm/whl-next 安装（含 amd-torch-device-gfx*）。勿下旧版 torch-2.9+rocmsdk。装完后重启 Transub 再检测。';
         return {
             ok: true,
             info: {
                 kind: 'torch-rocm',
                 title: `手动安装 ROCm 版 PyTorch（${gfx}）`,
                 folder,
+                engineInstallPath: installPath,
+                runtimePythonMissing,
+                runtimePythonExpected,
                 pipCommand,
-                hint: '自动修复失败时，请在「已完全退出引擎」后，把上面命令复制到终端执行。务必使用引擎 runtime\\python.exe。RX 9070 / 9070 XT 用 gfx1201。不要安装 CUDA 版 torch。',
-                wheelHint: 'ROCm 轮子体积较大，需稳定网络；安装完成后请重启 Transub 再检测。',
+                hint: '自动修复失败时，请在「已完全退出引擎」后，用 cmd 复制执行上面命令。务必使用引擎 runtime\\python.exe。RX 7900→gfx1100，RX 7800/7700→gfx1101，RX 9060→gfx1200，RX 9070→gfx1201；未知型号用 device-all。不要安装 CUDA 版 torch，不要卸载 torchvision。不要用旧名 torch-*-rocmsdk*.whl（AMD 源已改为 +rocm10）。',
+                wheelHint,
+                items: [],
+            },
+        };
+    }
+
+    if (kind === 'torch-xpu') {
+        const installPath = String(merged.engineInstallPath || '').trim();
+        const runtimePy = resolveEngineRuntimePython(installPath);
+        const runtimeDir = path.join(installPath, 'runtime');
+        const venv = path.join(installPath, '.venv');
+        const folder = fs.existsSync(runtimeDir) ? runtimeDir : (fs.existsSync(venv) ? venv : installPath);
+        const runtimePythonExpected = installPath
+            ? path.join(installPath, 'runtime', 'python.exe')
+            : path.join('transub-engine', 'runtime', 'python.exe');
+        const runtimePythonMissing = !runtimePy;
+        const pipPrefix = runtimePy
+            ? `"${runtimePy}" -m pip`
+            : 'python -m pip';
+        const index = 'https://download.pytorch.org/whl/xpu';
+        const pipCommand = [
+            runtimePythonMissing
+                ? `# 缺少引擎 Python：${runtimePythonExpected} — 请先重装/完整解压后再执行下面命令。`
+                : '',
+            `${pipPrefix} install --upgrade --force-reinstall --index-url ${index} --extra-index-url https://pypi.org/simple `
+            + '"torch==2.12.1+xpu" "torchvision==0.27.1+xpu" "torchaudio==2.12.1+xpu"',
+            `${pipPrefix} install "numpy==2.4.6"`,
+            '# 必须用上面引擎 runtime\\python.exe；系统 Python 里的 XPU 包对本软件无效。',
+            '# 请用 cmd.exe 执行（PowerShell 可能拆坏版本号里的 +）。',
+            '# 成功标志：python -c "import torch; print(torch.__version__, torch.xpu.is_available())" 须含 +xpu 且 True。',
+            '# 勿混用 CUDA / ROCm / 普通 PyPI CPU torch。',
+        ].filter(Boolean).join('\n');
+        const wheelHint = runtimePythonMissing
+            ? `引擎不完整：找不到 ${runtimePythonExpected}。请重新下载完整包并完整解压后再装 XPU；无直链 .whl 清单，装好引擎后用下方 pip 命令。`
+            : 'XPU 无独立 .whl 直链清单。请复制下方 pip 命令，在 cmd.exe 中从 download.pytorch.org/whl/xpu 安装。装完后重启 Transub 再检测。';
+        return {
+            ok: true,
+            info: {
+                kind: 'torch-xpu',
+                title: '手动安装 XPU 版 PyTorch（Intel Arc）',
+                folder,
+                engineInstallPath: installPath,
+                runtimePythonMissing,
+                runtimePythonExpected,
+                pipCommand,
+                hint: '自动修复失败时，请在「已完全退出引擎」后，用 cmd 复制执行上面命令。务必使用引擎 runtime\\python.exe。需要较新的 Intel Arc 驱动；不要安装 CUDA / ROCm 版 torch。',
+                wheelHint,
                 items: [],
             },
         };
@@ -938,7 +1098,7 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
         ...sakuraCatalog.listCatalog().map((e) => e.id),
         ...[...byId.keys()].map((id) => canonicalizeEngineAsrModelId(id)),
     ]).filter((id) => !isRetiredEngineAsrModelId(id));
-    const kindOrder = { asr: 0, mt: 1, vad: 2 };
+    const kindOrder = { asr: 0, mt: 1, vad: 2, decision: 3 };
 
     const catalog = catalogIds.map((id) => {
         const live = byId.get(id) || {};
@@ -960,7 +1120,7 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
         ).trim();
         const installed = sakuraEntry
             ? !!live.installed
-            : (live.installed === true || (id === 'silero-vad'));
+            : (live.installed === true || BUNDLED_ALWAYS_READY_MODEL_IDS.has(id));
         return {
             id,
             name,
@@ -1074,6 +1234,7 @@ async function buildEngineDownloadInfoWrapped(payload = {}, deps = {}) {
 }
 
 module.exports = {
+    BUNDLED_ALWAYS_READY_MODEL_IDS,
     ENGINE_MODEL_HUB_FALLBACK,
     ENGINE_PROFILE_MODELS,
     GPU_MANUAL_PACKAGES,
@@ -1084,6 +1245,7 @@ module.exports = {
     TORCH_CUDA126_MANUAL_PACKAGES,
     TORCH_CUDA128_MANUAL_PACKAGES,
     TORCH_CUDA130_MANUAL_PACKAGES,
+    resolveDownloadGpuVendor,
     resolveTorchCudaManualPackages,
     resolveTorchCudaVariantLabel,
     torchCudaPipCommand,

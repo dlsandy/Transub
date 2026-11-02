@@ -6,6 +6,7 @@ const {
     isVideoExt,
     isAudioExt,
     isMediaExt,
+    isInternalTimingCachePath,
     getMediaMime,
     isMediaMimeType,
     DEFAULT_AUDIO_SUFFIXES,
@@ -34,5 +35,16 @@ describe('media-extensions-core', () => {
         assert.strictEqual(isMediaMimeType('audio/wav'), true);
         assert.strictEqual(isMediaMimeType('video/webm'), true);
         assert.strictEqual(isMediaMimeType('text/plain'), false);
+    });
+
+    it('rejects internal timing-16k cache as media', () => {
+        assert.strictEqual(
+            isInternalTimingCachePath('E:/x/.transub-cache/foo.timing-16k.wav'),
+            true,
+        );
+        assert.strictEqual(isMediaExt('E:/x/.transub-cache/foo.timing-16k.wav'), false);
+        assert.strictEqual(isMediaExt('E:/x/foo.timing-16k.wav'), false);
+        assert.strictEqual(isMediaExt('E:/x/foo.mp4'), true);
+        assert.strictEqual(isMediaExt('E:/x/foo.wav'), true);
     });
 });

@@ -63,6 +63,27 @@
         #loadingOverlay.hidden { display: none !important; }
         #translateStylePresetListWrap[hidden],
         #translateStyleMenuCustomWrap[hidden] { display: none !important; }
+        /* Queue empty state: do not use absolute-only fill — in-flow flex so the
+           pane still has height when card/table lists are display:none. */
+        #taskWorkspace.factory-task-workspace,
+        #dropZone.factory-drop-zone {
+            display: flex !important;
+            flex-direction: column;
+            flex: 1 1 0;
+            min-height: 0;
+        }
+        #emptyState.factory-empty-state {
+            display: flex !important;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            flex: 1 1 auto;
+            min-height: 12rem;
+            z-index: 5;
+        }
+        #emptyState.factory-empty-state.hidden { display: none !important; }
+        body.factory-shell #emptyState .factory-empty-primary { color: #fff !important; }
     </style>
     <script>
         (function () {
@@ -96,6 +117,9 @@
                 <em id="factoryTitleBarLabel" class="factory-brand-sub">字幕工厂</em>
             </span>
             <span id="appVersionLabel" class="factory-titlebar-version" aria-label="软件版本"></span>
+            <button type="button" id="appUpdateAvailableBtn" class="factory-titlebar-update-btn hidden" hidden title="发现新版本" aria-label="发现新版本，打开更新中心" aria-hidden="true">
+                <i class="fa fa-arrow-circle-up" aria-hidden="true"></i>
+            </button>
             <span id="headerSettingsDirtyBadge" class="factory-pill factory-pill-muted hidden" title="设置有未保存修改">设置未保存</span>
             <span id="jobStatusBadge" class="factory-job-badge factory-job-badge--idle">空闲</span>
         </div>
@@ -384,9 +408,10 @@
                             <option value="yue">粤语</option>
                         </select>
                     </label>
-                    <label class="param-chip" id="quickTargetLangWrap" title="成片目标语言（翻译/双语；与界面语言无关）" data-settings-search="目标语言 字幕 简繁 英语 日语 韩语 subtitle target">
+                    <label class="param-chip" id="quickTargetLangWrap" title="成片目标：原文=仅转写；其它语言=翻译到该语（与界面语言无关）" data-settings-search="目标语言 原文 转写 字幕 简繁 英语 日语 韩语 subtitle target">
                         <span class="param-chip-label">目标</span>
                         <select id="quickTargetLangSelect" class="param-chip-select" aria-label="成片目标语言">
+                            <option value="source">原文</option>
                             <option value="simplified">简体中文</option>
                             <option value="traditional">繁体中文</option>
                             <option value="en">English</option>
@@ -542,7 +567,12 @@
                                     </section>
                                 </div>
                                 <footer class="models-pick-foot">
-                                    <p class="models-pick-foot-hint">点选立即生效</p>
+                                    <p id="modelsPickFootHint" class="models-pick-foot-hint hidden" hidden>点选立即生效</p>
+                                    <button type="button" id="comboPlanChipBtn" class="combo-plan-entry-btn" title="模型组合推荐" aria-haspopup="dialog" aria-expanded="false" aria-controls="comboPlansModal" aria-label="模型组合推荐">
+                                        <i class="fa fa-magic combo-plan-entry-icon" aria-hidden="true"></i>
+                                        <span class="param-chip-label">模型组合推荐</span>
+                                        <span id="comboPlanChipLabel" class="param-chip-value hidden" hidden></span>
+                                    </button>
                                     <button type="button" id="modelsPickDoneBtn" class="models-pick-done-btn">完成</button>
                                 </footer>
                             </div>
@@ -621,13 +651,8 @@
                         </div>
                     </div>
                     <span id="pendingQueueBadge" class="hidden text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">队列 0</span>
-                </div>
-                <button type="button" id="comboPlanChipBtn" class="param-chip param-chip-btn combo-plan-entry-btn shrink-0" title="组合方案（识别+翻译推荐）" aria-haspopup="dialog" aria-expanded="false" aria-controls="comboPlansModal" aria-label="组合方案">
-                    <i class="fa fa-magic combo-plan-entry-icon" aria-hidden="true"></i>
-                    <span class="param-chip-label">组合方案</span>
-                    <span id="comboPlanChipLabel" class="param-chip-value">推荐</span>
-                </button>
-                </div>
+                </div><!-- /paramsChips -->
+                </div><!-- /params-chips-row -->
                 </div><!-- /recipeSheet -->
                 <div id="animeWhisperPresetTip" class="feature-tip-bubble hidden" role="dialog" aria-labelledby="animeWhisperPresetTipTitle" aria-describedby="animeWhisperPresetTipText">
                     <div class="feature-tip-bubble-arrow" aria-hidden="true"></div>
@@ -670,7 +695,7 @@
 
             <div id="taskWorkspace" class="factory-task-workspace flex flex-1 min-h-0 min-w-0">
             <div id="dropZone" class="flex-1 min-h-0 min-w-0 relative overflow-hidden transition-colors factory-drop-zone">
-                <div id="emptyState" class="absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 px-6 text-center factory-empty-state">
+                <div id="emptyState" class="z-[5] flex flex-col items-center justify-center gap-3 px-6 text-center factory-empty-state">
                     <div class="factory-empty-icon" aria-hidden="true">
                         <i class="fa fa-film"></i>
                     </div>
@@ -688,7 +713,7 @@
                             <i class="fa fa-search mr-1"></i>自动添加
                         </button>
                     </div>
-                    <p class="text-[11px] text-gray-400">快捷键 A 新增 · Enter 开始执行 · ? 帮助</p>
+                    <p class="factory-empty-hint">快捷键 A 新增 · Enter 开始执行 · ? 帮助</p>
                     <p id="emptyStateEnvHint" class="hidden text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 max-w-md leading-relaxed">
                         尚未完成环境配置。建议先运行
                         <button type="button" id="emptyStateWizardBtn" class="settings-guide-link text-xs">设置向导</button>
@@ -899,6 +924,10 @@
             <i class="fa fa-magic w-3 text-center text-xs text-violet-500" aria-hidden="true"></i>
             <span>智能修复 QC ◆ Pro</span>
         </button>
+        <button type="button" class="post-task-menu-item" data-task-ctx="ellipsis-backfill" role="menuitem">
+            <i class="fa fa-ellipsis-h w-3 text-center text-xs text-sky-600" aria-hidden="true"></i>
+            <span>补译省略号</span>
+        </button>
         <div class="post-task-menu-sep" role="separator"></div>
         <button type="button" class="post-task-menu-item" data-task-ctx="retry" role="menuitem">
             <i class="fa fa-repeat w-3 text-center text-xs text-amber-600" aria-hidden="true"></i>
@@ -967,7 +996,12 @@
     <script src="js/mt-cast-link-core.js"></script>
     <script src="js/mt-concept-core.js"></script>
     <script src="js/quality-pipeline-policy-core.js"></script>
+    <script src="js/sensevoice-rich-tags-core.js"></script>
+    <script src="js/sensevoice-emotion-mt-style-core.js"></script>
     <script src="js/settings-options-normalize-core.js"></script>
+    <script src="js/jev-decision-core.js"></script>
+    <script src="js/jev-laya-pipeline-core.js"></script>
+    <script src="js/jev-laya-install-prompt-core.js"></script>
     <script src="js/translate-mode-byok-policy-core.js"></script>
     <script src="js/translate-external-pick-core.js"></script>
     <script src="js/translate-mode-form-core.js"></script>
@@ -984,6 +1018,7 @@
     <script src="js/translategemma-profile-core.js"></script>
     <script src="js/smart-translate-recycle-guard-core.js"></script>
     <script src="js/smart-translate-align-core.js"></script>
+    <script src="js/cue-duration-cap-core.js"></script>
     <script src="js/smart-translate-delivery-finalize-core.js"></script>
     <script src="js/engine-download-format-core.js"></script>
     <script src="js/engine-models-ui-core.js"></script>
@@ -1006,6 +1041,7 @@
     <script src="js/selection-toolbar-core.js"></script>
     <script src="js/live-batch-queue-core.js"></script>
     <script src="js/live-batch-rehydrate-core.js"></script>
+    <script src="js/settings-persist-keys-core.js"></script>
     <script src="js/settings-saved-options-core.js"></script>
     <script src="js/ui-fragment-load-core.js"></script>
     <script src="js/settings-dom-load-core.js"></script>
@@ -1018,6 +1054,8 @@
     <script src="js/bilingual-task-ui-core.js"></script>
     <script src="js/factory-status-chips-core.js"></script>
     <script src="js/scene-presets-core.js"></script>
+    <script src="js/preset-film-audio-gate-core.js"></script>
+    <script src="js/preset-yue-transcribe-core.js"></script>
     <script src="js/scene-presets-ui.js"></script>
     <script src="js/combo-plans-core.js"></script>
     <script src="js/combo-plans-ui-core.js"></script>
@@ -1050,10 +1088,12 @@
     <script src="js/main-ui-extras-core.js"></script>
     <script src="js/av-makers-embed.js"></script>
     <script src="js/content-profile-core.js"></script>
+    <script src="js/acoustic-band-core.js"></script>
     <script src="js/sakura-mt-catalog-core.js"></script>
     <script src="js/advanced-managed-llm-catalog-core.js"></script>
     <script src="js/managed-llm-pick-core.js"></script>
     <script src="js/app-dom-ids-core.js"></script>
+    <script src="js/app-update-badge-core.js"></script>
     <script src="js/app-api-bind-core.js"></script>
     <script src="js/transwithai-model-core.js"></script>
     <script src="js/twai-model-select-ui-core.js"></script>
@@ -1104,11 +1144,16 @@
     <script src="js/app.js"></script>
     <script src="js/settings-editor-prefs.js"></script>
     <script src="js/manual-whl-link-export-core.js"></script>
+    <script src="js/manual-whl-pip-panel-core.js"></script>
+    <script src="js/numpy-whl-heal-core.js"></script>
     <script src="js/manual-whl-install.js"></script>
     <script src="js/env-fix-progress-core.js"></script>
     <script src="js/env-fix-start-core.js"></script>
     <script src="js/pip-mirror-ui-core.js"></script>
+    <script src="js/env-doctor-guide-core.js"></script>
+    <script src="js/env-check-locale-core.js"></script>
     <script src="js/env-check.js"></script>
+    <script src="js/env-doctor-core.js"></script>
     <script src="js/setup-wizard-steps-core.js"></script>
     <script src="js/setup-wizard-appearance-core.js"></script>
     <script src="js/setup-wizard-goals-core.js"></script>

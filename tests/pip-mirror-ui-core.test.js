@@ -27,8 +27,8 @@ describe('pip-mirror-ui-core', () => {
         assert.match(line, /mirrors\.aliyun\.com/);
     });
 
-    it('lists prepare + system-check select ids', () => {
+    it('lists wizard prepare select id only', () => {
         assert.ok(api.SELECT_IDS.includes('setupWizardPipMirrorSelect'));
-        assert.ok(api.SELECT_IDS.includes('envCheckPipMirrorSelect'));
+        assert.ok(!api.SELECT_IDS.includes('envCheckPipMirrorSelect'));
     });
 });

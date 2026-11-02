@@ -605,6 +605,7 @@
                 setMoreMenuOpen: late(h, 'setMoreMenuOpen'),
                 setTranslateModeMenuOpen: late(h, 'setTranslateModeMenuOpen'),
                 setPostBatchQcFixMenuOpen: late(h, 'setPostBatchQcFixMenuOpen'),
+                appendLog: late(h, 'appendLog'),
             }),
         );
 

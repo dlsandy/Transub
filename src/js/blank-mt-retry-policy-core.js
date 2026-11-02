@@ -81,6 +81,13 @@
         return /[\u3040-\u30ff\u3400-\u9fff]/.test(s);
     }
 
+    /** Short JA call-outs (ねえ / おい) with 喂-class ZH are legitimate glosses, not stubs. */
+    function isShortVocativeCalloutJa(text) {
+        const s = String(text || '').replace(/[\s\u3000]+/g, '').trim();
+        if (!s || s.length > 6) return false;
+        return /^(?:ねえ+|ねー+|ねぇ+|おい+|ほら+|ちょっと)$/u.test(s);
+    }
+
     /**
      * Classify whether a blank/underfill cue should hit the LLM.
      * @returns {'llm'|'det_only'|'skip'}
@@ -101,6 +108,15 @@
         // (pipeline used to skip moan/discourse "delete" slots; editor still translated them).
         if (options.recoverAllEllipsis === true && (!zh || /^(?:\.\.\.|……|…)+$/.test(zh))) {
             return 'llm';
+        }
+
+        // Legitimate short call-out gloss (ねえ→喂) — never burn LLM; det fill/keep only.
+        if (
+            isShortVocativeCalloutJa(ja)
+            && zh
+            && !/^(?:\.\.\.|……|…)+$/.test(zh)
+        ) {
+            return 'det_only';
         }
 
         // Underfill (bare 哈 / vocative stub / …) before ellipsis-delete so lexical
@@ -127,8 +143,16 @@
             const plan = ellipsis.planEllipsisSlotAction(ja, zh, {
                 prevJa: options.prevJa,
                 nextJa: options.nextJa,
+                prevEndMs: options.prevEndMs,
+                nextStartMs: options.nextStartMs,
+                cueStartMs: options.cueStartMs,
+                cueEndMs: options.cueEndMs,
             });
             if (plan?.action === 'delete') return 'skip';
+            // Timed / bridge うん→嗯 · はい→是的 is deterministic — skip LLM burn.
+            if (plan?.reason === 'dialogue_ack_timed' || (plan?.fill && plan?.reason === 'discourse_bridge')) {
+                return 'det_only';
+            }
             if (plan?.action === 'recover') return 'llm';
         } else if (ellipsis?.shouldSkipRecoverForDelete?.(ja, zh, {})) {
             return 'skip';

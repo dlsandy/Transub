@@ -63,4 +63,26 @@ describe('engine-gpu-torch-core', () => {
             torchRocm: false,
         }, 'qwen3-asr-1.7b-ja-anime-galgame'), true);
     });
+
+    it('blocks batch when Intel Arc needs XPU torch', () => {
+        assert.equal(api.isTorchCudaMismatch({
+            hasXpu: true,
+            hasCuda: false,
+            torchCudaMismatch: true,
+        }), false);
+        assert.equal(api.needsTorchXpuForAsr({
+            hasXpu: true,
+            hasCuda: false,
+            torchXpu: false,
+        }, 'qwen3-asr-1.7b-ja-anime-galgame'), true);
+        assert.equal(api.shouldBlockBatchOnTorchMismatch({
+            vendor: 'intel',
+            hasXpu: true,
+            torchXpu: false,
+        }, 'sensevoice-small'), true);
+        assert.match(
+            api.buildTorchXpuMessage({ gpuName: 'Intel Arc A770' }, 'qwen3-asr-0.6b'),
+            /XPU PyTorch/,
+        );
+    });
 });

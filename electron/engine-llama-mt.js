@@ -19,8 +19,9 @@ function canUseEngineLlamaMt(modelId) {
     if (!id) return false;
     if (sakuraCatalog.isSakuraMtModel?.(id)) {
         const family = sakuraCatalog.resolvePromptFamily?.(id) || 'sakura';
-        // Hy-MT / TranslateGemma need desktop adapter for specialized prompts.
-        return family !== 'hymt' && family !== 'translategemma';
+        // Hy-MT / Index / TranslateGemma need desktop adapter for specialized prompts
+        // (and GPU-aware ngl / n-cpu-moe — engine ensure omits VRAM hints).
+        return family !== 'hymt' && family !== 'translategemma' && family !== 'index';
     }
     if (managedCatalog.findCatalogEntry?.(id) && !managedCatalog.isProScaleModel?.(managedCatalog.findCatalogEntry(id))) {
         return true;
@@ -31,7 +32,38 @@ function canUseEngineLlamaMt(modelId) {
 }
 
 /**
- * Build llama-server ensure payload (first-choice ngl; engine owns process).
+ * Prefer caller GPU hints; else last system-resources sample (sync peek).
+ * @param {object} opts
+ * @returns {{ gpuFreeMiB?: number, gpuTotalMiB?: number }}
+ */
+function resolveEnsureGpuHints(opts = {}) {
+    const free = Number(opts.gpuFreeMiB);
+    const total = Number(opts.gpuTotalMiB);
+    if (Number.isFinite(free) && free > 0) {
+        return {
+            gpuFreeMiB: Math.round(free),
+            gpuTotalMiB: Number.isFinite(total) && total > 0 ? Math.round(total) : undefined,
+        };
+    }
+    try {
+        const peek = require('./system-resources').peekCachedGpuSample?.();
+        const peekTotal = Number(peek?.memTotalMiB);
+        if (Number.isFinite(peekTotal) && peekTotal > 0) {
+            const used = Number(peek?.memUsedMiB);
+            return {
+                gpuTotalMiB: Math.round(peekTotal),
+                gpuFreeMiB: Math.max(
+                    0,
+                    Math.round(peekTotal - (Number.isFinite(used) ? used : 0)),
+                ),
+            };
+        }
+    } catch { /* optional */ }
+    return {};
+}
+
+/**
+ * Build llama-server ensure payload (VRAM-aware ngl / n-cpu-moe; engine owns process).
  * @param {object} options
  */
 function buildLlamaEnsureBody(options = {}) {
@@ -58,13 +90,18 @@ function buildLlamaEnsureBody(options = {}) {
         sakuraCatalog.isSakuraMtModel?.(entry.id) ? portBase + 1 : portBase
     );
     const modelPath = llmFs.getModelPath(entry);
+    const gpuHints = resolveEnsureGpuHints(opts);
+    const entryServerOpts = llamaTuning.resolveLlamaServerOptsFromEntry(entry, gpuHints);
     const contextSize = Number.isFinite(Number(opts.contextSize))
         ? Number(opts.contextSize)
-        : (Number.isFinite(Number(entry.contextSize)) ? Number(entry.contextSize) : 4096);
+        : (Number.isFinite(Number(entryServerOpts.contextSize))
+            ? Number(entryServerOpts.contextSize)
+            : (Number.isFinite(Number(entry.contextSize)) ? Number(entry.contextSize) : 4096));
     const nGpuLayers = Number.isFinite(Number(opts.nGpuLayers))
         ? Math.max(0, Math.round(Number(opts.nGpuLayers)))
-        : 99;
-    const entryServerOpts = llamaTuning.resolveLlamaServerOptsFromEntry(entry);
+        : (Number.isFinite(Number(entryServerOpts.nGpuLayers))
+            ? Math.max(0, Math.round(Number(entryServerOpts.nGpuLayers)))
+            : 99);
     const args = llamaTuning.buildLlamaServerSpawnArgs({
         modelPath,
         host: '127.0.0.1',
@@ -75,6 +112,9 @@ function buildLlamaEnsureBody(options = {}) {
         parallelSlots: 1,
         llamaJinja: entry.llamaJinja === true,
         ...entryServerOpts,
+        ...gpuHints,
+        contextSize,
+        nGpuLayers,
     });
     return {
         ok: true,

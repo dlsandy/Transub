@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('assert');
+const path = require('path');
 const {
     createEngineEnsureRunning,
     REQUIRED_HOST_KEYS,
@@ -137,5 +138,48 @@ describe('engine-ensure-running', () => {
         assert.strictEqual(b.ok, true);
         assert.strictEqual(c.ok, true);
         assert.strictEqual(maxConcurrent, 1);
+    });
+});
+
+describe('pendingTorchCudaMarkerPath', () => {
+    const {
+        pendingTorchCudaMarkerPath,
+        hasPendingTorchCudaInstall,
+        PENDING_TORCH_CUDA_MARKER,
+    } = require('../electron/engine-ensure-running');
+
+    it('exports marker helpers', () => {
+        assert.strictEqual(typeof pendingTorchCudaMarkerPath, 'function');
+        assert.strictEqual(typeof hasPendingTorchCudaInstall, 'function');
+        assert.ok(String(PENDING_TORCH_CUDA_MARKER).includes('pending-torch'));
+    });
+
+    it('resolves under TransubEngine/wheel-cache by default', () => {
+        const prev = process.env.TRANSUB_ENGINE_DATA;
+        delete process.env.TRANSUB_ENGINE_DATA;
+        try {
+            const p = pendingTorchCudaMarkerPath();
+            assert.ok(/TransubEngine[/\\]wheel-cache[/\\]pending-torch-cuda-install\.json$/i.test(p));
+        } finally {
+            if (prev == null) delete process.env.TRANSUB_ENGINE_DATA;
+            else process.env.TRANSUB_ENGINE_DATA = prev;
+        }
+    });
+
+    it('respects TRANSUB_ENGINE_DATA override', () => {
+        const prev = process.env.TRANSUB_ENGINE_DATA;
+        const root = path.join(require('os').tmpdir(), `transub-engine-data-${Date.now()}`);
+        process.env.TRANSUB_ENGINE_DATA = root;
+        try {
+            const p = pendingTorchCudaMarkerPath();
+            assert.strictEqual(
+                p,
+                path.join(root, 'wheel-cache', PENDING_TORCH_CUDA_MARKER),
+            );
+            assert.strictEqual(hasPendingTorchCudaInstall(), false);
+        } finally {
+            if (prev == null) delete process.env.TRANSUB_ENGINE_DATA;
+            else process.env.TRANSUB_ENGINE_DATA = prev;
+        }
     });
 });

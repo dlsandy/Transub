@@ -19,8 +19,9 @@
     function normalizeQwenAsrBatchMode(value) {
         const v = String(value ?? '').trim().toLowerCase();
         if (v === 'conservative' || v === 'safe' || v === 'low') return 'conservative';
+        if (v === 'auto') return 'auto';
         if (v === 'aggressive' || v === 'fast' || v === 'high') return 'aggressive';
-        return 'auto';
+        return 'aggressive';
     }
 
     function isQwen17bModel(asrModelId) {

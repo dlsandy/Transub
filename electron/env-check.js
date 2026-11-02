@@ -10,6 +10,7 @@ const { detectGpuEnvironment } = require('./gpu-detect');
 const { getInstallRoot, getBundledEnginePath, isValidEngineRoot } = require('./app-paths');
 const { resolveEngineInstallPath } = require('./engine-options');
 const { validateFfmpegSetup } = require('./ffmpeg-bridge');
+const numpyWhlHeal = require('../src/js/numpy-whl-heal-core');
 
 const VC_REDIST_URL = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
 const SUPPORT_URL = 'https://github.com/dlsandy/Transub';
@@ -251,18 +252,22 @@ function sanitizeEngineProbeStderr(stderr) {
         .trim();
 }
 
-/** Put bundled ffmpeg + nvidia CUDA wheel bins on PATH for engine Python probes. */
+/** Put bundled ffmpeg + nvidia/ROCm torch bins on PATH for engine Python probes. */
 function buildEngineProbeEnv(engineRoot) {
-    const env = {
+    let env = {
         ...process.env,
         PYTHONUTF8: '1',
         PYTHONIOENCODING: 'utf-8',
         PYTHONWARNINGS: 'ignore::RuntimeWarning',
     };
+    try {
+        env = require('./engine-runtime-env').injectOpenMpCompatEnv(env);
+    } catch { /* optional */ }
     const root = path.resolve(String(engineRoot || '').trim() || '.');
     try {
         const sep = path.delimiter;
         const prepend = [];
+        const hipDllNames = new Set(['c10_hip.dll', 'torch_hip.dll', 'amdhip64.dll']);
 
         // CUDA 12 wheels (cuBLAS etc.) must be visible before CTranslate2 loads.
         const sitePkgs = [
@@ -276,7 +281,41 @@ function buildEngineProbeEnv(engineRoot) {
             // torch\\lib must precede nvidia/* so probes match serve preload order
             // (otherwise WinError 1114 / partial _C map can poison the process).
             const torchLib = path.join(sp, 'torch', 'lib');
+            const hasRocmTorch = fs.existsSync(path.join(torchLib, 'c10_hip.dll'))
+                || fs.existsSync(path.join(torchLib, 'torch_hip.dll'));
+            const hasCudaTorch = fs.existsSync(path.join(torchLib, 'c10_cuda.dll'));
             if (fs.existsSync(torchLib)) prepend.push(torchLib);
+            // ROCm: also prepend sibling packages that ship HIP DLLs (mirror serve).
+            if (hasRocmTorch) {
+                let children = [];
+                try {
+                    children = fs.readdirSync(sp, { withFileTypes: true })
+                        .filter((d) => d.isDirectory())
+                        .map((d) => d.name);
+                } catch { /* ignore */ }
+                for (const name of children) {
+                    for (const sub of [
+                        path.join(sp, name),
+                        path.join(sp, name, 'bin'),
+                        path.join(sp, name, 'lib'),
+                        path.join(sp, name, 'lib', 'x64'),
+                    ]) {
+                        if (!fs.existsSync(sub)) continue;
+                        let hit = false;
+                        try {
+                            for (const dll of hipDllNames) {
+                                if (fs.existsSync(path.join(sub, dll))) {
+                                    hit = true;
+                                    break;
+                                }
+                            }
+                        } catch { /* ignore */ }
+                        if (hit) prepend.push(sub);
+                    }
+                }
+            }
+            // Skip nvidia PATH on AMD-only ROCm engines (stray wheels poison HIP).
+            if (hasRocmTorch && !hasCudaTorch) continue;
             const nvidiaRoot = path.join(sp, 'nvidia');
             if (fs.existsSync(nvidiaRoot)) {
                 let pkgs = [];
@@ -467,8 +506,17 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
     let detail;
     if (/winerror 4551|智能应用控制|应用程序控制策略|smart.?app/i.test(err)) {
         detail = 'Windows 智能应用控制/应用程序控制策略拦截了 torch DLL，请关闭该策略或将引擎目录加入排除项';
-    } else if (/winerror 126|找不到指定的模块|dll load failed/i.test(err) || low.includes('torch_python')) {
-        detail = '无法加载 torch DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试';
+    } else if (/winerror 126|winerror 127|找不到指定的模块|找不到指定的程序|dll load failed/i.test(err) || low.includes('torch_python')) {
+        const hipDll = (() => {
+            try {
+                return fs.existsSync(path.join(engineRoot, 'runtime', 'Lib', 'site-packages', 'torch', 'lib', 'c10_hip.dll'));
+            } catch {
+                return false;
+            }
+        })();
+        detail = hipDll
+            ? '无法加载 torch / torchaudio DLL。请点「补齐 ROCm PyTorch」（含 device-gfx 内核包），不要装 CUDA 版'
+            : '无法加载 torch / torchaudio DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试，或点「补齐 CUDA PyTorch」成对重装';
     } else if (modelInstalled && missingLabel) {
         detail = `模型权重已安装，但缺少运行库 ${missingLabel}（与「已安装」不是同一项）。在「模型」页对 SenseVoice Small 点重新下载可补齐`;
     } else if (missingLabel) {
@@ -522,10 +570,18 @@ async function checkQwen3Runtime(engineRoot, engineAsrModel = '') {
     const hasRocm = !!data?.hasRocm;
     const torchCudaLibs = !!data?.torchCuda;
     const torchRocmLibs = !!data?.torchRocm;
-    const needCudaTorch = hasCuda && versions.torch && !torchCudaLibs;
-    // AMD：只要没有 ROCm torch，就算完全没装 torch 也要走 ROCm 修复（不要卡在 versions.torch）。
-    const needRocmTorch = hasRocm && !torchRocmLibs;
     const errJoined = errors.join('；');
+    const torchaudioHybrid = /libtorchaudio|torchaudio/i.test(errJoined)
+        && (/winerror\s*127|找不到指定的程序|与 CUDA PyTorch 不匹配|cpu 版覆盖/i.test(errJoined)
+            || missingList.includes('torchaudio'));
+    // Prefer engine probe flag (covers torchaudio hybrid even when c10_cuda.dll exists).
+    const needCudaTorch = !!data?.needsTorchCuda
+        || (hasCuda && versions.torch && !torchCudaLibs)
+        || (hasCuda && torchaudioHybrid);
+    // AMD：只要没有 ROCm torch，就算完全没装 torch 也要走 ROCm 修复（不要卡在 versions.torch）。
+    const needRocmTorch = !!data?.needsTorchRocm
+        || (hasRocm && !torchRocmLibs)
+        || (hasRocm && data?.rocmDeviceKernels === false);
     const tokenizersMismatch = missingList.includes('tokenizers')
         && (/tokenizers.*不兼容|tokenizers.*required|tokenizers==0\.22\.2/i.test(errJoined)
             || (versions.tokenizers && String(versions.tokenizers) !== '0.22.2'));
@@ -555,21 +611,38 @@ async function checkQwen3Runtime(engineRoot, engineAsrModel = '') {
 
     let detail;
     const numpyMetaBroken = missingList.includes('numpy')
-        || /found=none|numpy.*元数据|numpy.*numba|Unable to compare versions for numpy/i.test(errJoined || err);
+        || !!numpyWhlHeal.isNumpyPinOrDllError(errJoined || err)
+        || /found=none|numpy.*元数据|numpy.*numba|Unable to compare versions for numpy|_multiarray_umath|不是有效的\s*Win32/i.test(errJoined || err);
+    const mpmathBroken = missingList.includes('mpmath')
+        || /bitcount|mpmath\.libmp/i.test(errJoined || err);
     if (numpyMetaBroken) {
-        detail = errors.find((e) => /numpy/i.test(e))
-            || 'numpy 元数据损坏或版本超出 Numba 上限（需要 <2.5）；点「一键修复」会先停引擎再重装兼容 numpy / tokenizers';
+        const npErr = errors.find((e) => /numpy/i.test(e)) || errJoined || err;
+        detail = numpyWhlHeal.numpyBrokenEnvDetail(npErr)
+            || errors.find((e) => /numpy/i.test(e))
+            || 'numpy 元数据损坏或版本超出 Numba 上限（需要 <2.5）；点「一键修复」会先停引擎再重装兼容 numpy / tokenizers；失败请「手动修复」安装 numpy-2.4.6-cp312-cp312-win_amd64.whl';
     } else if (tokenizersMismatch) {
         detail = errors.find((e) => /tokenizers/i.test(e))
             || `tokenizers ${versions.tokenizers || '?'} 与 transformers 不兼容（需要 tokenizers==0.22.2）；点「一键修复」会自动降级`;
+    } else if (needRocmTorch && torchRocmLibs) {
+        detail = 'ROCm torch 已在磁盘，但缺少本卡 HIP 内核包（amd-torch-device-gfx*）。裸装 torch==x+rocm 会 hipErrorInvalidImage。一键修复会补齐 device extra，不要装 CUDA 版';
     } else if (needRocmTorch) {
         detail = '引擎运行时缺少 ROCm 版 PyTorch。系统 pip 无效，请点「自动修复」装进引擎。';
+    } else if (needCudaTorch && torchaudioHybrid && torchCudaLibs) {
+        detail = 'CUDA PyTorch 已在磁盘，但 torchaudio 无法加载或不匹配（WinError 127）。一键修复会成对重装 CUDA 版 torch+torchaudio，不会再覆盖成 CPU 版';
     } else if (needCudaTorch) {
         detail = '已装 CPU 版 PyTorch，但检测到 NVIDIA GPU。下载 Qwen 模型或一键修复时会自动改装 CUDA 版（约 2.5GB，10–30 分钟）';
+    } else if (mpmathBroken) {
+        detail = 'mpmath / sympy 损坏（cannot import bitcount，常见于镜像装上了 mpmath 1.5.0a1）。一键修复会重装 CUDA torch 硬依赖（含 mpmath≥1.3,<1.5），请先停止引擎';
     } else if (/winerror 4551|智能应用控制|应用程序控制策略|smart.?app/i.test(err)) {
         detail = 'Windows 智能应用控制/应用程序控制策略拦截了 torch DLL，请关闭该策略或将引擎目录加入排除项';
-    } else if (/winerror 126|找不到指定的模块|dll load failed/i.test(err)) {
-        detail = '无法加载 torch DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试';
+    } else if (/hiperrorinvalidimage|device kernel image is invalid/i.test(errJoined || err)) {
+        detail = 'ROCm 已装 torch 但缺少本卡架构内核（amd-torch-device-gfx*）。请点「一键修复」补齐 device extra；不要只装 torch==x+rocm，不要用 HSA_OVERRIDE 当主修复，不要装 CUDA 版';
+    } else if (/winerror 126|winerror 127|找不到指定的模块|找不到指定的程序|dll load failed/i.test(err)) {
+        detail = hasRocm
+            ? '无法加载 torch / torchaudio DLL。请点「补齐 ROCm PyTorch」成对重装（含 device-gfx 内核包），不要装 CUDA 版；可同时安装 Visual C++ 运行库'
+            : '无法加载 torch / torchaudio DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试，或点「补齐 CUDA PyTorch」成对重装';
+    } else if (/torchvision::nms|operator torchvision::nms|autoprocessor.*requirements defined correctly/i.test(errJoined || err)) {
+        detail = 'Qwen3-ASR 运行库中 torchvision 与 ROCm PyTorch 不匹配（表面报错 AutoProcessor）。请在环境检测点「一键修复」，完全退出 Transub 后重试';
     } else if (missingLabel) {
         detail = `缺少运行库 ${missingLabel}（transformers≥5.13 / torch / numba 等）；下载 Qwen 模型时会自动安装`;
         if (hasRocm) {
@@ -610,8 +683,11 @@ async function checkQwen3Runtime(engineRoot, engineAsrModel = '') {
  * Serve-order Torch probe (preload torch\\lib → inject nvidia → optional CT2).
  * Catches WinError 1114 / docstring poison that package-metadata / plain import miss.
  */
-async function checkTorchEngineStartup(engineRoot, engineAsrModel = '') {
-    const needTorch = prefersQwenAsr(engineAsrModel) || prefersSensevoice(engineAsrModel);
+async function checkTorchEngineStartup(engineRoot, engineAsrModel = '', opts = {}) {
+    const forceProbe = !!opts.forceProbe;
+    const needTorch = forceProbe
+        || prefersQwenAsr(engineAsrModel)
+        || prefersSensevoice(engineAsrModel);
     if (!needTorch) {
         return {
             id: 'torchEngineStartup',
@@ -656,49 +732,87 @@ async function checkTorchEngineStartup(engineRoot, engineAsrModel = '') {
         };
     }
 
+    const intelHint = !!data?.hasXpu
+        || /XPU|Intel\s*Arc|NEED_TORCH_XPU/i.test(`${code} ${msg}`);
     let detail;
-    if (code === 'NEED_TORCH_ROCM' || /ROCm|引擎运行时.*PyTorch/i.test(msg)) {
+    if (code === 'NEED_TORCH_XPU' || (/XPU/i.test(msg) && /PyTorch|torch/i.test(msg))) {
+        detail = msg || '引擎运行时缺少 XPU 版 PyTorch；请点「自动修复」装进引擎（系统 pip 无效）';
+    } else if (code === 'NEED_TORCH_ROCM' || /ROCm|引擎运行时.*PyTorch/i.test(msg)) {
         detail = msg || '引擎运行时缺少 ROCm 版 PyTorch；请点「自动修复」装进引擎（系统 pip 无效）';
     } else if (code === 'NEED_TORCH_CUDA' || /CPU 版 PyTorch|补齐 CUDA PyTorch/i.test(msg)) {
         detail = msg || '已装 CPU 版 PyTorch，需要改装 CUDA 版（约 2.5GB）';
     } else if (code === 'TORCH_MISSING' || /未安装 PyTorch|no module named ['"]?torch/i.test(msg)) {
         detail = msg || (
-            /ROCm|AMD|Radeon/i.test(msg)
-                ? '未安装 ROCm 版 PyTorch；请点「自动修复」装进引擎运行时'
-                : '未安装 PyTorch；请下载 Qwen/SenseVoice 模型或补齐 CUDA PyTorch'
+            /XPU|Intel\s*Arc/i.test(msg) || intelHint
+                ? '未安装 XPU 版 PyTorch；请点「自动修复」装进引擎运行时'
+                : (/ROCm|AMD|Radeon/i.test(msg)
+                    ? '未安装 ROCm 版 PyTorch；请点「自动修复」装进引擎运行时'
+                    : '未安装 PyTorch；请下载 Qwen/SenseVoice 模型或补齐 CUDA PyTorch')
         );
     } else if (
         code === 'TORCH_REIMPORT_POISON'
         || /already has a docstring|Torch 已在本引擎进程中损坏/i.test(msg)
     ) {
+        // Env-check runs a *fresh* Python subprocess — docstring here means the
+        // on-disk torch install is hybrid/broken, not merely a live-process poison.
         detail = (
             msg
-            || 'Torch 在「先 torch\\lib 再 nvidia」加载顺序下损坏（与真实引擎启动一致）。'
+            || 'Torch 安装损坏（首次加载即出现 docstring 错误，与真实引擎启动一致）。'
         ) + (
-            /ROCm/i.test(msg)
-                ? ' 请点「自动修复」补齐 ROCm PyTorch 后完全退出并重开 Transub。'
-                : ' 请点「补齐 CUDA PyTorch」后完全退出并重开 Transub。'
+            /XPU|Intel\s*Arc/i.test(msg) || intelHint
+                ? ' 请完全退出 Transub（含托盘）后点「自动修复」补齐 XPU PyTorch；卡在约 92% 时是在冷安装/重启，请耐心等待，勿反复点修复。'
+                : (/ROCm/i.test(msg)
+                    ? ' 请完全退出 Transub（含托盘）后点「自动修复」补齐 ROCm PyTorch；卡在约 92% 时是在冷安装/重启，请耐心等待，勿反复点修复。'
+                    : ' 请完全退出 Transub（含托盘）后在设置中「补齐 CUDA PyTorch」；进度停在约 92% 表示正在冷安装/重启引擎（约 2.5GB，常需 10–30 分钟），请勿反复点手动修复。')
         );
     } else if (
         code === 'TORCH_CUDA_LOAD'
         || /winerror 1114|winerror 999|cublas/i.test(low)
     ) {
+        const xpuLoad = intelHint || /XPU|Intel\s*Arc/i.test(msg);
+        const amdLoad = !xpuLoad && (
+            !!data?.hasRocm
+            || /ROCm|AMD|Radeon|HIP/i.test(msg)
+        );
         detail = (
             msg
-            || 'Torch CUDA 库加载失败（常见 WinError 1114 · cublas）。'
-        ) + ' 请点「补齐 CUDA PyTorch」；若仍失败请先装 Visual C++ 运行库并关闭智能应用控制。';
+            || (xpuLoad
+                ? 'Torch XPU 库加载失败。'
+                : (amdLoad
+                    ? 'Torch HIP/ROCm 库加载失败。'
+                    : 'Torch CUDA 库加载失败（常见 WinError 1114 · cublas）。'))
+        ) + (
+            xpuLoad
+                ? ' 请点「自动修复」补齐 XPU PyTorch（不要装 CUDA / ROCm 版）；若仍失败请先装 Visual C++ 运行库并关闭智能应用控制。'
+                : (amdLoad
+                    ? ' 请点「自动修复」补齐 ROCm PyTorch（不要装 CUDA 版）；若仍失败请先装 Visual C++ 运行库并关闭智能应用控制。'
+                    : ' 请点「补齐 CUDA PyTorch」；若仍失败请先装 Visual C++ 运行库并关闭智能应用控制。')
+        );
     } else if (/winerror 4551|智能应用控制|应用程序控制策略|smart.?app/i.test(msg)) {
         detail = 'Windows 智能应用控制/应用程序控制策略拦截了 torch DLL，请关闭该策略或将引擎目录加入排除项';
-    } else if (/winerror 126|找不到指定的模块|dll load failed/i.test(msg)) {
-        detail = '无法加载 torch DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试';
+    } else if (/winerror 126|winerror 127|找不到指定的模块|找不到指定的程序|dll load failed/i.test(msg)) {
+        detail = (
+            intelHint || /XPU|Intel\s*Arc/i.test(`${code} ${msg}`)
+        )
+            ? '无法加载 torch / torchaudio DLL。请点「补齐 XPU PyTorch」，不要装 CUDA / ROCm 版'
+            : (
+                !!data?.hasRocm || /ROCm|AMD|Radeon|HIP/i.test(`${code} ${msg}`)
+                    ? '无法加载 torch / torchaudio DLL。请点「补齐 ROCm PyTorch」（含 device-gfx 内核包），不要装 CUDA 版'
+                    : '无法加载 torch / torchaudio DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试，或点「补齐 CUDA PyTorch」成对重装'
+            );
     } else {
         detail = msg || 'PyTorch 引擎启动探测失败（与设置向导包检测通过不矛盾：此处模拟真实 serve 加载顺序）';
     }
 
-    const needsTorchRocm = code === 'NEED_TORCH_ROCM'
+    const needsTorchXpu = code === 'NEED_TORCH_XPU'
+        || !!data?.hasXpu
+        || /XPU|NEED_TORCH_XPU|Intel\s*Arc/i.test(`${code} ${detail}`);
+    const needsTorchRocm = !needsTorchXpu && (
+        code === 'NEED_TORCH_ROCM'
         || !!data?.hasRocm
-        || /ROCm|NEED_TORCH_ROCM/i.test(`${code} ${detail}`);
-    const needsTorchCuda = !needsTorchRocm && (
+        || /ROCm|NEED_TORCH_ROCM/i.test(`${code} ${detail}`)
+    );
+    const needsTorchCuda = !needsTorchXpu && !needsTorchRocm && (
         code === 'NEED_TORCH_CUDA'
         || code === 'TORCH_CUDA_LOAD'
         || code === 'TORCH_REIMPORT_POISON'
@@ -714,39 +828,21 @@ async function checkTorchEngineStartup(engineRoot, engineAsrModel = '') {
         code,
         needsTorchCuda,
         needsTorchRocm,
+        needsTorchXpu,
         hasRocm: !!data?.hasRocm,
+        hasXpu: !!data?.hasXpu || needsTorchXpu,
     };
 }
 
 async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
     const needWhisper = prefersWhisper(engineAsrModel) || !prefersSensevoice(engineAsrModel);
-    // Metadata-only: do not import av/ctranslate2/onnxruntime. Loading those under
-    // Smart App Control freezes the probe (and can wedge the engine thread pool).
+    // Engine probe: metadata for av/ct2/ort (SAC-safe) + numpy pin/import check.
     const probeCode = [
         'import json,sys',
-        'from importlib.metadata import PackageNotFoundError, version',
-        'out={"numpy":"","fw":"","av":"","ct2":"","ort":"","missing":[],"errors":[],"policy":False,"dll":False}',
-        'def _ver(name, key, alt=None):',
-        ' try:',
-        '  out[key]=str(version(name) or "ok")',
-        ' except PackageNotFoundError as e:',
-        '  if alt:',
-        '   try:',
-        '    out[key]=str(version(alt) or "ok"); return',
-        '   except PackageNotFoundError:',
-        '    pass',
-        '   except Exception as e2:',
-        '    out["missing"].append(key); out["errors"].append(str(e2)); return',
-        '  out["missing"].append(key); out["errors"].append(str(e))',
-        ' except Exception as e:',
-        '  out["missing"].append(key); out["errors"].append(str(e))',
-        '_ver("numpy","numpy")',
-        '_ver("av","av")',
-        '_ver("ctranslate2","ct2")',
-        '_ver("onnxruntime","ort","onnxruntime-gpu")',
-        '_ver("faster-whisper","fw")',
-        'print(json.dumps(out,ensure_ascii=False))',
-        'sys.exit(0 if not out["missing"] else 1)',
+        'from transub_engine.runtime_extras import probe_asr_whisper',
+        'out = probe_asr_whisper()',
+        'print(json.dumps(out, ensure_ascii=False))',
+        'sys.exit(0 if out.get("ready") else 1)',
     ].join('\n');
     // Fresh wheel install + Windows AV can make first import exceed 15s; retry once.
     let probe = await runEnginePython(engineRoot, probeCode, 20000);
@@ -764,14 +860,28 @@ async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
     } catch {
         data = null;
     }
-    const missing = Array.isArray(data?.missing) ? data.missing : [];
-    if (probe.ok && !missing.length) {
+    const missing = Array.isArray(data?.missing) ? data.missing.map(String) : [];
+    const errors = Array.isArray(data?.errors) ? data.errors.map(String) : [];
+    const errJoined = errors.join('；');
+    const numpyBroken = missing.includes('numpy')
+        || !!numpyWhlHeal.isNumpyPinOrDllError(errJoined)
+        || /numpy/i.test(errJoined);
+    const policyBlocked = !!(data?.policyBlocked || data?.policy);
+    const dllBlocked = !!(data?.dllBlocked || data?.dll)
+        || (!policyBlocked && /dll load failed|_multiarray_umath|不是有效的\s*Win32|winerror\s*193/i.test(errJoined));
+
+    if (probe.ok && data?.ready && !missing.length) {
         const bits = [];
-        if (data?.numpy) bits.push(`numpy ${data.numpy}`);
-        if (data?.ct2) bits.push(`ctranslate2 ${data.ct2}`);
-        if (data?.ort) bits.push(`onnxruntime ${data.ort}`);
-        if (data?.fw) bits.push(`faster-whisper ${data.fw}`);
-        if (data?.av) bits.push(`av ${data.av}`);
+        const numpyVer = data?.numpyVersion || data?.numpy || '';
+        const ct2 = data?.ctranslate2Version || data?.ct2 || '';
+        const ort = data?.onnxruntimeVersion || data?.ort || '';
+        const fw = data?.fasterWhisperVersion || data?.fw || '';
+        const av = data?.avVersion || data?.av || '';
+        if (numpyVer) bits.push(`numpy ${numpyVer}`);
+        if (ct2) bits.push(`ctranslate2 ${ct2}`);
+        if (ort) bits.push(`onnxruntime ${ort}`);
+        if (fw) bits.push(`faster-whisper ${fw}`);
+        if (av) bits.push(`av ${av}`);
         return {
             id: 'whisperRuntime',
             label: 'Whisper 运行库',
@@ -792,10 +902,14 @@ async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
     }
     const missLabel = missing.length ? missing.join(' / ') : 'numpy / ctranslate2 / onnxruntime / faster-whisper / av';
     let detail;
-    if (data?.policy) {
+    if (policyBlocked) {
         detail = 'Windows 应用程序控制策略/智能应用控制拦截了 Whisper 依赖 DLL（多为 av）。请关闭该策略或将引擎目录加入排除；仅重装 pip 无法修复';
-    } else if (data?.dll) {
-        detail = '无法加载 Whisper 原生 DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试';
+    } else if (numpyBroken) {
+        const npErr = errors.find((e) => /numpy/i.test(e)) || errJoined;
+        detail = numpyWhlHeal.numpyBrokenEnvDetail(npErr)
+            || 'numpy 损坏或 ≥2.5；一键修复会强制重装 2.4.6；失败请「手动修复」安装 numpy-2.4.6-cp312-cp312-win_amd64.whl';
+    } else if (dllBlocked) {
+        detail = '无法加载 Whisper 原生 DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试，或改用「手动修复」安装 .whl';
     } else {
         detail = `缺 ${missLabel}：Whisper ASR / 自动语种探测需要；一键修复或下载 Whisper 模型时会自动安装`;
     }
@@ -806,8 +920,9 @@ async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
             status: 'fail',
             detail,
             blocking: true,
-            policyBlocked: !!data?.policy,
-            dllBlocked: !!data?.dll,
+            policyBlocked,
+            dllBlocked,
+            numpyBroken,
         };
     }
     return {
@@ -816,8 +931,9 @@ async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
         status: 'warn',
         detail,
         blocking: false,
-        policyBlocked: !!data?.policy,
-        dllBlocked: !!data?.dll,
+        policyBlocked,
+        dllBlocked,
+        numpyBroken,
     };
 }
 
@@ -958,6 +1074,7 @@ async function checkGpu() {
 
     const nvidia = info?.vendor === 'nvidia' && info?.detected;
     const amd = info?.vendor === 'amd' && info?.detected;
+    const intel = info?.vendor === 'intel' && info?.detected;
     const gpuItem = nvidia
         ? {
             id: 'gpu',
@@ -966,6 +1083,7 @@ async function checkGpu() {
             detail: info.gpuName || 'NVIDIA GPU',
             blocking: false,
             vendor: 'nvidia',
+            cudaVersion: String(info.cudaVersion || ''),
         }
         : amd
             ? {
@@ -976,15 +1094,24 @@ async function checkGpu() {
                 blocking: false,
                 vendor: 'amd',
             }
-            : {
-                id: 'gpu',
-                label: 'GPU',
-                status: 'warn',
-                detail: info?.gpuName
-                    ? `检测到 ${info.gpuName}（无 NVIDIA CUDA，Engine 将使用 CPU）`
-                    : '未检测到独立 NVIDIA 显卡，Engine 将使用 CPU',
-                blocking: false,
-            };
+            : intel
+                ? {
+                    id: 'gpu',
+                    label: 'GPU',
+                    status: 'ok',
+                    detail: `${info.gpuName || 'Intel Arc'}（Qwen3 / SenseVoice / Demucs 用引擎内 XPU PyTorch；系统 pip 无效）`,
+                    blocking: false,
+                    vendor: 'intel',
+                }
+                : {
+                    id: 'gpu',
+                    label: 'GPU',
+                    status: 'warn',
+                    detail: info?.gpuName
+                        ? `检测到 ${info.gpuName}（无 NVIDIA / AMD / Intel Arc，Engine 将使用 CPU）`
+                        : '未检测到独立 NVIDIA / AMD / Intel Arc 显卡，Engine 将使用 CPU',
+                    blocking: false,
+                };
 
     const driverItem = nvidia
         ? {
@@ -1006,13 +1133,22 @@ async function checkGpu() {
                 blocking: false,
                 vendor: 'amd',
             }
-            : {
-                id: 'gpuDriver',
-                label: 'GPU 驱动版本',
-                status: 'ok',
-                detail: '无需（CPU 模式）',
-                blocking: false,
-            };
+            : intel
+                ? {
+                    id: 'gpuDriver',
+                    label: 'GPU 驱动版本',
+                    status: 'ok',
+                    detail: 'Intel Arc · Engine 用 XPU PyTorch；llama-server 推荐 SYCL（也可 Vulkan）',
+                    blocking: false,
+                    vendor: 'intel',
+                }
+                : {
+                    id: 'gpuDriver',
+                    label: 'GPU 驱动版本',
+                    status: 'ok',
+                    detail: '无需（CPU 模式）',
+                    blocking: false,
+                };
 
     return { gpu: gpuItem, driver: driverItem, info };
 }
@@ -1046,9 +1182,11 @@ function gpuRuntimeShowsReady(probe, bothOk) {
     return bothOk || probe.status === 'ready';
 }
 
-async function checkGpuRuntime(gpuInfo, engineRoot) {
+async function checkGpuRuntime(gpuInfo, engineRoot, opts = {}) {
+    const requireDiscreteGpu = !!opts.requireDiscreteGpu;
     const nvidia = gpuInfo?.vendor === 'nvidia' && gpuInfo?.detected;
     const amd = gpuInfo?.vendor === 'amd' && gpuInfo?.detected;
+    const intel = gpuInfo?.vendor === 'intel' && gpuInfo?.detected;
     if (!nvidia) {
         if (amd) {
             let probe = null;
@@ -1079,6 +1217,7 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
             }
             const torchRocm = !!probe?.torchRocm;
             const name = String(probe?.gpuName || gpuInfo?.gpuName || 'AMD GPU').trim();
+            const rocmGfx = String(probe?.rocmGfx || '').trim();
             if (torchRocm) {
                 return {
                     id: 'gpuRuntime',
@@ -1091,6 +1230,8 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
                     torchRocm: true,
                     asrGpuReady: true,
                     engineDevice: 'cuda',
+                    gpuName: name,
+                    rocmGfx: rocmGfx || undefined,
                 };
             }
             return {
@@ -1107,6 +1248,83 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
                 torchRocm: false,
                 asrGpuReady: false,
                 engineDevice: 'cpu',
+                gpuName: name,
+                rocmGfx: rocmGfx || undefined,
+            };
+        }
+        if (intel) {
+            let probe = null;
+            try {
+                const res = await runEnginePython(
+                    engineRoot,
+                    [
+                        'import json',
+                        'from transub_engine.runtime_gpu import probe_gpu_runtime',
+                        'p = probe_gpu_runtime()',
+                        'print(json.dumps({',
+                        ' "status": p.get("status") or "",',
+                        ' "hint": p.get("hint") or "",',
+                        ' "hasXpu": bool(p.get("hasXpu")),',
+                        ' "torchXpu": bool(p.get("torchXpu")),',
+                        ' "gpuName": p.get("gpuName") or "",',
+                        ' "asrGpuReady": bool(p.get("asrGpuReady")),',
+                        '}, ensure_ascii=False))',
+                    ].join('\n'),
+                    25000,
+                );
+                if (res.ok) {
+                    probe = JSON.parse(String(res.stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
+                }
+            } catch {
+                probe = null;
+            }
+            const torchXpu = !!probe?.torchXpu;
+            const name = String(probe?.gpuName || gpuInfo?.gpuName || 'Intel Arc').trim();
+            if (torchXpu) {
+                return {
+                    id: 'gpuRuntime',
+                    label: 'GPU 运行时',
+                    status: 'ok',
+                    detail: `${name} · XPU PyTorch 已就绪（Qwen3 / SenseVoice / Demucs）。Whisper 仍走 CPU。本地 LLM 可用 SYCL。`,
+                    blocking: false,
+                    vendor: 'intel',
+                    hasXpu: true,
+                    hasSycl: true,
+                    torchXpu: true,
+                    asrGpuReady: true,
+                    engineDevice: 'xpu',
+                    gpuName: name,
+                };
+            }
+            return {
+                id: 'gpuRuntime',
+                label: 'GPU 运行时',
+                status: 'warn',
+                detail: (
+                    `${name}：引擎运行时缺少 XPU PyTorch。`
+                    + '系统 pip 无效，请点「自动修复」装进引擎。Whisper 仍走 CPU。'
+                ),
+                blocking: false,
+                vendor: 'intel',
+                hasXpu: true,
+                hasSycl: true,
+                torchXpu: false,
+                asrGpuReady: false,
+                engineDevice: 'cpu',
+                gpuName: name,
+            };
+        }
+        if (requireDiscreteGpu) {
+            return {
+                id: 'gpuRuntime',
+                label: 'GPU 运行时',
+                status: 'fail',
+                detail: (
+                    '未检测到可用独立 GPU（NVIDIA / AMD / Intel Arc）或驱动不可用。'
+                    + '本产品需要独立显卡，不能以 CPU 模式继续。请安装/更新显卡驱动后重新检测。'
+                ),
+                blocking: true,
+                requireDiscreteGpu: true,
             };
         }
         return {
@@ -1274,26 +1492,77 @@ function checkEngine(configuredRoot = '') {
 }
 
 /**
+ * Discrete GPU → llama-server package. Vulkan only when this probe saw no NVIDIA/AMD/Intel Arc.
+ * Saved win-vulkan-x64 must not win over a detected GPU.
+ * @param {object|null} [gpuInfo]
+ * @param {object} [cachedHints]
+ * @returns {string}
+ */
+function recommendLlamaRuntimeId(gpuInfo, cachedHints = {}) {
+    try {
+        return require('./advanced-runtime-prefer').runtimeIdFromGpuInfo(gpuInfo, cachedHints) || '';
+    } catch (_) {
+        return '';
+    }
+}
+
+/**
  * llama-server 运行时：以二进制 --version 为准，落后于目录目标时提示可更新。
  * 检测到 NVIDIA CUDA 12/13 或 AMD ROCm 时：未安装或后端不匹配 → warn，供向导一键修复安装匹配包。
+ * @param {object|null} [gpuInfo]
  */
-function checkLlamaServerRuntime() {
+function checkLlamaServerRuntime(gpuInfo = null) {
     try {
         let hints = {};
         try {
             hints = require('./advanced-runtime-prefer').getHints();
         } catch (_) { /* ignore */ }
+        const gpuRuntimeId = recommendLlamaRuntimeId(gpuInfo, hints);
+        if (gpuRuntimeId) {
+            if (gpuInfo?.vendor === 'amd') {
+                hints = {
+                    ...hints,
+                    preferCuda: false,
+                    preferRocm: true,
+                    preferSycl: false,
+                    ready: true,
+                    gpuName: String(gpuInfo.gpuName || hints.gpuName || ''),
+                };
+            } else if (gpuInfo?.vendor === 'intel') {
+                hints = {
+                    ...hints,
+                    preferCuda: false,
+                    preferRocm: false,
+                    preferSycl: true,
+                    ready: true,
+                    gpuName: String(gpuInfo.gpuName || hints.gpuName || ''),
+                };
+            } else {
+                hints = {
+                    ...hints,
+                    preferCuda: true,
+                    preferRocm: false,
+                    preferSycl: false,
+                    ready: true,
+                    cudaVersion: String(gpuInfo?.cudaVersion || hints.cudaVersion || ''),
+                    gpuName: String(gpuInfo?.gpuName || hints.gpuName || ''),
+                };
+            }
+        }
         const llamaServer = require('./advanced-llama-server');
         const catalog = require('../src/js/advanced-managed-llm-catalog-core');
-        const st = llamaServer.getRuntimeStatus();
+        const st = llamaServer.getRuntimeStatus(
+            gpuRuntimeId ? { runtimeId: gpuRuntimeId } : {},
+        );
         const catalogTag = String(st.tag || '').trim();
         const installedTag = String(st.installedTag || '').trim();
         const packageId = String(st.installedPackageId || '').trim();
         const preferredId = String(st.preferredPackageId || st.package?.id || '').trim();
-        const preferAccel = !!(hints.preferCuda || hints.preferRocm);
-        const recommendedId = preferAccel
-            ? (catalog.getDefaultRuntimeId(process.platform, process.arch, hints) || preferredId)
-            : preferredId;
+        const preferAccel = !!(hints.preferCuda || hints.preferRocm || hints.preferSycl);
+        const recommendedId = gpuRuntimeId
+            || (preferAccel
+                ? (catalog.getDefaultRuntimeId(process.platform, process.arch, hints) || preferredId)
+                : preferredId);
         const recommendedPkg = recommendedId
             ? catalog.getRuntimePackage(process.platform, process.arch, recommendedId, hints)
             : null;
@@ -1305,7 +1574,11 @@ function checkLlamaServerRuntime() {
                 ? (hints.gpuName
                     ? `AMD ${hints.gpuName}`
                     : (recommendedPkg?.label || recommendedId || 'AMD ROCm'))
-                : (recommendedPkg?.label || recommendedId || ''));
+                : (hints.preferSycl
+                    ? (hints.gpuName
+                        ? `Intel ${hints.gpuName}`
+                        : (recommendedPkg?.label || recommendedId || 'Intel SYCL'))
+                    : (recommendedPkg?.label || recommendedId || '')));
 
         if (!st.supported) {
             return {
@@ -1328,6 +1601,26 @@ function checkLlamaServerRuntime() {
                 ? `；可复用本机「${st.systemCompanion.label || 'CUDA 运行库'}」，安装时跳过 cudart 下载`
                 : '';
             const pkgLabel = defaultPkg?.label || defaultId || '匹配本机后端的运行时';
+            let localArchive = { archivePath: '', companionPath: '' };
+            try {
+                localArchive = llamaServer.findDownloadedRuntimeArchives(defaultPkg);
+            } catch (_) { /* ignore */ }
+            if (localArchive.archivePath) {
+                const zipName = path.basename(localArchive.archivePath);
+                return {
+                    id: 'llamaServerRuntime',
+                    label: 'llama-server 运行时',
+                    status: 'warn',
+                    detail: `已下载 ${zipName}，点修复即可解压安装（无需重新下载）`,
+                    blocking: false,
+                    catalogTag,
+                    preferredPackageId: defaultId || '',
+                    recommendInstall: true,
+                    recommendRuntimeId: defaultId || '',
+                    downloadedArchive: localArchive.archivePath,
+                    systemCompanion: st.systemCompanion || null,
+                };
+            }
             return {
                 id: 'llamaServerRuntime',
                 label: 'llama-server 运行时',
@@ -1348,21 +1641,14 @@ function checkLlamaServerRuntime() {
         const backendMismatch = !!(
             recommendedId
             && packageId
-            && recommendedId !== packageId
             && preferAccel
+            && !catalog.isInstalledRuntimeAcceptable(packageId, recommendedId)
         );
-        if (st.mismatch || st.outdated || backendMismatch) {
-            let detail = '';
-            if (st.outdated) {
-                detail = `已安装 ${installedTag || '旧版'}，可更新至 ${catalogTag}${packageId ? ` · ${packageId}` : ''}`;
-            } else {
-                detail = `${installedTag || catalogTag} 已就绪${packageId ? ` · ${packageId}` : ''}`;
-            }
-            if (st.mismatch || backendMismatch) {
-                const preferLabel = recommendedPkg?.label || st.package?.label || recommendedId || '偏好后端';
-                const installedLabel = st.meta?.label || packageId || '当前后端';
-                detail = `${detail} · 偏好「${preferLabel}」，当前为「${installedLabel}」，请重新安装运行时`;
-            }
+        if (st.mismatch || backendMismatch) {
+            let detail = `${installedTag || catalogTag} 已就绪${packageId ? ` · ${packageId}` : ''}`;
+            const preferLabel = recommendedPkg?.label || st.package?.label || recommendedId || '偏好后端';
+            const installedLabel = st.meta?.label || packageId || '当前后端';
+            detail = `${detail} · 偏好「${preferLabel}」，当前为「${installedLabel}」，请重新安装运行时`;
             return {
                 id: 'llamaServerRuntime',
                 label: 'llama-server 运行时',
@@ -1372,17 +1658,37 @@ function checkLlamaServerRuntime() {
                 installedTag,
                 catalogTag,
                 outdated: !!st.outdated,
-                mismatch: !!(st.mismatch || backendMismatch),
+                mismatch: true,
                 preferredPackageId: recommendedId || preferredId,
                 recommendRuntimeId: recommendedId || preferredId,
                 recommendInstall: true,
+            };
+        }
+        // Older than pin: soft tip only — do not block version gate / env doctor.
+        // Newer than pin is never outdated (getRuntimeStatus).
+        if (st.outdated) {
+            return {
+                id: 'llamaServerRuntime',
+                label: 'llama-server 运行时',
+                status: 'ok',
+                detail: `已安装 ${installedTag || '当前版'}（建议版 ${catalogTag}，可在设置中更新）${packageId ? ` · ${packageId}` : ''}`,
+                blocking: false,
+                installedTag,
+                catalogTag,
+                outdated: true,
+                preferredPackageId: preferredId,
+                updateAvailable: true,
             };
         }
         return {
             id: 'llamaServerRuntime',
             label: 'llama-server 运行时',
             status: 'ok',
-            detail: `${installedTag || catalogTag} 已就绪${packageId ? ` · ${packageId}` : ''}`,
+            detail: `${installedTag || catalogTag} 已就绪${packageId ? ` · ${packageId}` : ''}${
+                installedTag && catalogTag && installedTag !== catalogTag
+                    ? '（高于建议版，可用）'
+                    : ''
+            }`,
             blocking: false,
             installedTag,
             catalogTag,
@@ -1429,6 +1735,99 @@ function normalizeEnvCheckScope(scope) {
     return 'full';
 }
 
+/** Software deps that must be green for version / env-doctor gate (GPU hard-pass). */
+const VERSION_GATE_IDS = Object.freeze([
+    'installPath',
+    'ffmpeg',
+    'vcRedist',
+    'gpu',
+    'gpuRuntime',
+    'engine',
+    'llamaServerRuntime',
+    'torchEngineStartup',
+]);
+
+/**
+ * When requireDiscreteGpu: no discrete NVIDIA/AMD/Intel Arc → blocking fail (never CPU soft-ok).
+ * Mutates items in place and returns them.
+ * @param {Array<object>} items
+ * @param {{ requireDiscreteGpu?: boolean, gpuInfo?: object|null }} [opts]
+ */
+function applyRequireDiscreteGpuPolicy(items, opts = {}) {
+    if (!opts.requireDiscreteGpu) return items;
+    const list = Array.isArray(items) ? items : [];
+    const info = opts.gpuInfo || null;
+    const discrete = !!(info?.detected && (
+        info.vendor === 'nvidia' || info.vendor === 'amd' || info.vendor === 'intel'
+    ));
+    const gpuIdx = list.findIndex((it) => it && it.id === 'gpu');
+    if (!discrete) {
+        const detail = (
+            '未检测到可用独立 GPU（NVIDIA / AMD / Intel Arc）或驱动不可用。'
+            + '请安装/更新显卡驱动后重新检测；本产品不支持仅 CPU 运行。'
+        );
+        if (gpuIdx >= 0) {
+            list[gpuIdx] = {
+                ...list[gpuIdx],
+                status: 'fail',
+                detail,
+                blocking: true,
+                requireDiscreteGpu: true,
+            };
+        } else {
+            list.unshift({
+                id: 'gpu',
+                label: 'GPU',
+                status: 'fail',
+                detail,
+                blocking: true,
+                requireDiscreteGpu: true,
+            });
+        }
+        const rtIdx = list.findIndex((it) => it && it.id === 'gpuRuntime');
+        if (rtIdx >= 0) {
+            const rt = list[rtIdx];
+            if (rt.status === 'ok' && /CPU 模式/i.test(String(rt.detail || ''))) {
+                list[rtIdx] = {
+                    ...rt,
+                    status: 'fail',
+                    detail: (
+                        '未检测到可用独立 GPU（NVIDIA / AMD / Intel Arc）或驱动不可用。'
+                        + '本产品需要独立显卡，不能以 CPU 模式继续。'
+                    ),
+                    blocking: true,
+                    requireDiscreteGpu: true,
+                };
+            }
+        }
+    }
+    // Soft-warns block the version gate the same way prepare does (keep vendor flags).
+    for (let i = 0; i < list.length; i += 1) {
+        const it = list[i];
+        if (!it || it.id !== 'gpuRuntime') continue;
+        if (it.status === 'warn') {
+            list[i] = { ...it, status: 'fail', blocking: true };
+        }
+    }
+    return list;
+}
+
+/**
+ * True when version / env-doctor gate may stamp and open the main UI.
+ * @param {{ items?: Array<{id?: string, status?: string}>, fix?: { fixable?: boolean } }|null} result
+ */
+function isVersionGatePassed(result) {
+    if (!result) return false;
+    if (result.fix?.fixable) return false;
+    const items = Array.isArray(result.items) ? result.items : [];
+    const byId = new Set(VERSION_GATE_IDS);
+    for (const it of items) {
+        if (!it || !byId.has(it.id)) continue;
+        if (it.status === 'fail' || it.status === 'warn') return false;
+    }
+    return true;
+}
+
 /**
  * @param {{
  *   ffmpegPath?: string,
@@ -1436,25 +1835,63 @@ function normalizeEnvCheckScope(scope) {
  *   engineAsrModel?: string,
  *   syncLlamaBackend?: boolean,
  *   scope?: 'full'|'base'|'runtime',
+ *   requireDiscreteGpu?: boolean,
  * }} [options]
  */
 async function runEnvCheck(options = {}) {
     const scope = normalizeEnvCheckScope(options.scope);
     const wantBase = scope === 'full' || scope === 'base';
     const wantRuntime = scope === 'full' || scope === 'runtime';
+    const requireDiscreteGpu = !!options.requireDiscreteGpu;
     const items = [];
+    const startedAt = Date.now();
+
+    const emitProgress = (payload = {}) => {
+        if (typeof options.onProgress !== 'function') return;
+        try {
+            options.onProgress({
+                scope,
+                elapsedMs: Date.now() - startedAt,
+                items: items.map((it) => ({ ...it })),
+                ...payload,
+            });
+        } catch (_) { /* ignore */ }
+    };
+
+    const pushItem = (item, next = {}) => {
+        if (item) items.push(item);
+        emitProgress({
+            kind: 'item',
+            item: item || null,
+            currentId: next.id || '',
+            currentLabel: next.label || '',
+            slow: !!next.slow,
+        });
+    };
 
     const configuredRoot = resolveEngineInstallPath(options.engineInstallPath || '');
     const engineItem = checkEngine(configuredRoot);
     const engineRoot = engineItem.path || configuredRoot || getBundledEnginePath();
     const asrModel = String(options.engineAsrModel || '').trim();
+    let gpuInfo = null;
 
     if (wantBase) {
-        items.push(checkInstallPath());
-        items.push(await checkFfmpeg(options.ffmpegPath));
-        items.push(checkVcRedist());
+        emitProgress({
+            kind: 'phase',
+            currentId: 'installPath',
+            currentLabel: '安装位置',
+        });
+        pushItem(checkInstallPath(), { id: 'ffmpeg', label: '视频工具' });
+        pushItem(await checkFfmpeg(options.ffmpegPath), { id: 'vcRedist', label: '系统运行库' });
+        pushItem(checkVcRedist(), { id: 'gpu', label: '独立显卡' });
 
+        emitProgress({
+            kind: 'phase',
+            currentId: 'gpu',
+            currentLabel: '独立显卡与驱动',
+        });
         const { gpu, driver, info } = await checkGpu();
+        gpuInfo = info;
         // Keep llama backend preference aligned with detected CUDA 12 / 13 before status check.
         try {
             const prefer = require('./advanced-runtime-prefer');
@@ -1464,27 +1901,74 @@ async function runEnvCheck(options = {}) {
                 gpuInfo: info || undefined,
             });
         } catch (_) { /* ignore */ }
-        items.push(gpu);
-        items.push(driver);
-        items.push(await checkGpuRuntime(info, engineRoot));
-        items.push(engineItem);
-        items.push(checkLlamaServerRuntime());
-        // Prepare-step gate: catch serve-order Torch failures before first Qwen job.
-        if (engineItem.status === 'ok') {
-            items.push(await checkTorchEngineStartup(engineRoot, asrModel));
-        } else if (prefersQwenAsr(asrModel) || prefersSensevoice(asrModel)) {
-            items.push({
+        pushItem(gpu, { id: 'gpuDriver', label: '显卡驱动' });
+        pushItem(driver, { id: 'gpuRuntime', label: '显卡加速组件', slow: true });
+        emitProgress({
+            kind: 'phase',
+            currentId: 'gpuRuntime',
+            currentLabel: '显卡加速组件',
+            slow: true,
+        });
+        pushItem(
+            await checkGpuRuntime(info, engineRoot, { requireDiscreteGpu }),
+            { id: 'engine', label: '字幕引擎' },
+        );
+        pushItem(engineItem, { id: 'llamaServerRuntime', label: 'AI 运行时' });
+        pushItem(checkLlamaServerRuntime(gpuInfo), {
+            id: 'torchEngineStartup',
+            label: '显卡计算库（可能需要 30～90 秒）',
+            slow: true,
+        });
+        // Prepare / version gate: always probe Torch when discrete GPU is required.
+        const forceTorch = requireDiscreteGpu;
+        const gpuRtNow = items.find((it) => it && it.id === 'gpuRuntime') || null;
+        const skipTorchDeepProbe = !!(gpuRtNow && (gpuRtNow.status === 'fail' || gpuRtNow.status === 'warn') && (
+            gpuRtNow.requireDiscreteGpu
+            || /未检测到可用独立 GPU|不能以 CPU 模式|未找到 cublas|缺少 ROCm PyTorch|ROCm PyTorch|缺少 XPU PyTorch|XPU PyTorch/i.test(
+                String(gpuRtNow.detail || ''),
+            )
+        ));
+        if (skipTorchDeepProbe && (forceTorch || prefersQwenAsr(asrModel) || prefersSensevoice(asrModel))) {
+            // Avoid a 30–90s LoadLibrary hang when GPU runtime is already red.
+            pushItem({
+                id: 'torchEngineStartup',
+                label: 'PyTorch 引擎启动探测',
+                status: 'fail',
+                detail: '显卡加速组件尚未就绪，已跳过计算库深度探测。请先一键修复加速组件，完成后再自动重测。',
+                blocking: true,
+                skipped: true,
+            }, {
+                id: wantRuntime ? 'asrModel' : '',
+                label: wantRuntime ? '听写模型' : '',
+            });
+        } else if (engineItem.status === 'ok') {
+            emitProgress({
+                kind: 'phase',
+                currentId: 'torchEngineStartup',
+                currentLabel: '显卡计算库（可能需要 30～90 秒）',
+                slow: true,
+            });
+            pushItem(await checkTorchEngineStartup(engineRoot, asrModel, { forceProbe: forceTorch }), {
+                id: wantRuntime ? 'asrModel' : '',
+                label: wantRuntime ? '听写模型' : '',
+            });
+        } else if (forceTorch || prefersQwenAsr(asrModel) || prefersSensevoice(asrModel)) {
+            pushItem({
                 id: 'torchEngineStartup',
                 label: 'PyTorch 引擎启动探测',
                 status: 'fail',
                 detail: '引擎不可用，无法模拟 serve 加载 Torch',
                 blocking: true,
+            }, {
+                id: wantRuntime ? 'asrModel' : '',
+                label: wantRuntime ? '听写模型' : '',
             });
         }
     } else if (wantRuntime && options.syncLlamaBackend) {
         // Runtime-only recheck: still align llama backend if caller asks.
         try {
             const { info } = await checkGpu();
+            gpuInfo = info;
             const prefer = require('./advanced-runtime-prefer');
             if (info) prefer.applyGpuInfo(info);
             require('./advanced-llama-server').syncRuntimePreferenceToHardware({
@@ -1496,64 +1980,95 @@ async function runEnvCheck(options = {}) {
 
     if (wantRuntime) {
         if (engineItem.status === 'ok') {
-            items.push(checkAsrModel(engineRoot, asrModel));
-            items.push(checkVadModel(engineRoot, asrModel));
-            items.push(checkLidModel(engineRoot));
-            items.push(await checkSensevoiceRuntime(engineRoot, asrModel));
-            items.push(await checkQwen3Runtime(engineRoot, asrModel));
+            emitProgress({ kind: 'phase', currentId: 'asrModel', currentLabel: '听写模型' });
+            pushItem(checkAsrModel(engineRoot, asrModel), { id: 'vadModel', label: '语音切分模型' });
+            pushItem(checkVadModel(engineRoot, asrModel), { id: 'lidModel', label: '语种探测模型' });
+            pushItem(checkLidModel(engineRoot), { id: 'sensevoiceRuntime', label: '听写运行库', slow: true });
+            emitProgress({
+                kind: 'phase',
+                currentId: 'sensevoiceRuntime',
+                currentLabel: '听写运行库',
+                slow: true,
+            });
+            pushItem(await checkSensevoiceRuntime(engineRoot, asrModel), {
+                id: 'qwenRuntime',
+                label: '听写运行库（Qwen）',
+                slow: true,
+            });
+            pushItem(await checkQwen3Runtime(engineRoot, asrModel), {
+                id: items.some((it) => it.id === 'torchEngineStartup') ? 'whisperRuntime' : 'torchEngineStartup',
+                label: items.some((it) => it.id === 'torchEngineStartup')
+                    ? 'Whisper 运行库'
+                    : '显卡计算库',
+                slow: true,
+            });
             // base scope already ran serve-order Torch probe; avoid a second LoadLibrary.
             if (!items.some((it) => it.id === 'torchEngineStartup')) {
-                items.push(await checkTorchEngineStartup(engineRoot, asrModel));
+                emitProgress({
+                    kind: 'phase',
+                    currentId: 'torchEngineStartup',
+                    currentLabel: '显卡计算库（可能需要 30～90 秒）',
+                    slow: true,
+                });
+                pushItem(await checkTorchEngineStartup(engineRoot, asrModel, {
+                    forceProbe: requireDiscreteGpu,
+                }), { id: 'whisperRuntime', label: 'Whisper 运行库', slow: true });
             }
-            items.push(await checkWhisperRuntime(engineRoot, asrModel));
+            emitProgress({
+                kind: 'phase',
+                currentId: 'whisperRuntime',
+                currentLabel: 'Whisper 运行库',
+                slow: true,
+            });
+            pushItem(await checkWhisperRuntime(engineRoot, asrModel), {});
         } else {
             const needSv = prefersSensevoice(asrModel);
             const needQwen = prefersQwenAsr(asrModel);
             const needWhisper = prefersWhisper(asrModel) || !prefersSensevoice(asrModel);
-            const needTorchStartup = needSv || needQwen;
-            items.push({
+            const needTorchStartup = requireDiscreteGpu || needSv || needQwen;
+            pushItem({
                 id: 'asrModel',
                 label: 'ASR 模型',
                 status: 'fail',
                 detail: '引擎不可用，无法检测模型',
                 blocking: true,
             });
-            items.push({
+            pushItem({
                 id: 'vadModel',
                 label: 'VAD 模型（FSMN）',
                 status: 'fail',
                 detail: '引擎不可用，无法检测模型',
                 blocking: true,
             });
-            items.push({
+            pushItem({
                 id: 'lidModel',
                 label: '语种探测模型',
                 status: 'warn',
                 detail: '引擎不可用，跳过',
                 blocking: false,
             });
-            items.push({
+            pushItem({
                 id: 'sensevoiceRuntime',
                 label: 'SenseVoice 运行库',
                 status: needSv ? 'fail' : 'warn',
                 detail: '引擎不可用，无法检测 torch / funasr',
                 blocking: needSv,
             });
-            items.push({
+            pushItem({
                 id: 'qwenRuntime',
                 label: 'Qwen3-ASR 运行库',
                 status: needQwen ? 'fail' : 'warn',
                 detail: '引擎不可用，无法检测 transformers / torch（Qwen3 -hf）',
                 blocking: needQwen,
             });
-            items.push({
+            pushItem({
                 id: 'torchEngineStartup',
                 label: 'PyTorch 引擎启动探测',
                 status: needTorchStartup ? 'fail' : 'warn',
                 detail: '引擎不可用，无法模拟 serve 加载 Torch',
                 blocking: needTorchStartup,
             });
-            items.push({
+            pushItem({
                 id: 'whisperRuntime',
                 label: 'Whisper 运行库',
                 status: needWhisper ? 'fail' : 'warn',
@@ -1563,11 +2078,14 @@ async function runEnvCheck(options = {}) {
         }
     }
 
-    const blocking = items.filter((it) => it.blocking && it.status === 'fail');
+    applyRequireDiscreteGpuPolicy(items, { requireDiscreteGpu, gpuInfo });
+
     const gpuRtIdx = items.findIndex((it) => it.id === 'gpuRuntime');
     if (gpuRtIdx >= 0) {
         const gpuRt = items[gpuRtIdx];
-        const needsTorchAsr = prefersQwenAsr(asrModel) || prefersSensevoice(asrModel);
+        const needsTorchAsr = requireDiscreteGpu
+            || prefersQwenAsr(asrModel)
+            || prefersSensevoice(asrModel);
         if (gpuRt.torchCudaMismatch && needsTorchAsr) {
             const variant = String(gpuRt.torchCudaVariant || 'cu128/cu130').trim();
             const have = String(gpuRt.installedTorchCudaTag || 'cu126').trim();
@@ -1590,6 +2108,7 @@ async function runEnvCheck(options = {}) {
         failCount: items.filter((it) => it.status === 'fail').length,
         items,
         scope,
+        requireDiscreteGpu,
         urls: {
             vcRedist: VC_REDIST_URL,
             support: SUPPORT_URL,
@@ -1599,6 +2118,8 @@ async function runEnvCheck(options = {}) {
         engineAsrModel: asrModel,
     };
     result.fix = planEnvFixes(result.items, { engineAsrModel: asrModel });
+    result.versionGatePassed = isVersionGatePassed(result);
+    emitProgress({ kind: 'done', resultSummary: { ok: result.ok, failCount: result.failCount } });
     return result;
 }
 
@@ -1618,6 +2139,7 @@ function planEnvFixes(items, opts = {}) {
     let ensureGpu = false;
     let ensureTorchCuda = false;
     let ensureTorchRocm = false;
+    let ensureTorchXpu = false;
     let ensureLlamaRuntime = false;
 
     const statusOf = (id) => String(byId[id]?.status || '');
@@ -1660,15 +2182,47 @@ function planEnvFixes(items, opts = {}) {
         forceIds.add(qwenId);
         const qr = byId.qwenRuntime || {};
         const amdGpu = String(byId.gpu?.vendor || '').toLowerCase() === 'amd';
+        const intelGpu = String(byId.gpu?.vendor || '').toLowerCase() === 'intel';
+        const qwenDetail = String(qr.detail || '');
         const cudaNote = qr.needsTorchCuda
-            ? (amdGpu ? '（含 ROCm 版 PyTorch）' : '（含 CUDA 版 PyTorch，约 2.5GB）')
+            ? (amdGpu
+                ? '（含 ROCm 版 PyTorch）'
+                : (intelGpu ? '（含 XPU 版 PyTorch）' : '（含 CUDA 版 PyTorch，约 2.5GB）'))
             : '';
         const tokenizersNote = qr.tokenizersMismatch
             ? '（含 tokenizers 降级至 0.22.2）'
             : '';
-        const numpyNote = qr.numpyBroken || /numpy/i.test(String(qr.detail || ''))
+        const numpyNote = qr.numpyBroken || /numpy/i.test(qwenDetail)
             ? '（含 numpy 兼容修复）'
             : '';
+        // AMD: always queue ROCm (never CUDA) when Qwen / GPU stack is broken.
+        // Intel: queue XPU torch (never CUDA/ROCm).
+        // NVIDIA: torchaudio hybrid / WinError 127 queues CUDA cold install.
+        if (amdGpu && (qr.needsTorchRocm || qr.needsTorchCuda || /ROCm/i.test(qwenDetail))) {
+            ensureTorchRocm = true;
+            if (!steps.some((s) => s.id === 'torchRocm')) {
+                steps.push({
+                    id: 'torchRocm',
+                    label: '补齐 ROCm PyTorch（装进引擎运行时；RX 7900 等勿装 CUDA 版）',
+                });
+            }
+        } else if (intelGpu && (qr.needsTorchXpu || /XPU/i.test(qwenDetail))) {
+            ensureTorchXpu = true;
+            if (!steps.some((s) => s.id === 'torchXpu')) {
+                steps.push({
+                    id: 'torchXpu',
+                    label: '补齐 XPU PyTorch（装进引擎运行时；Arc 勿装 CUDA / ROCm 版）',
+                });
+            }
+        } else if (qr.needsTorchCuda && !amdGpu && !intelGpu) {
+            ensureTorchCuda = true;
+            if (!steps.some((s) => s.id === 'audioSeparate')) {
+                steps.push({
+                    id: 'audioSeparate',
+                    label: '补齐 CUDA PyTorch（约 2.5GB；成对重装 torch+torchaudio）',
+                });
+            }
+        }
         steps.push({
             id: 'qwenRuntime',
             label: `补齐 Qwen3-ASR 运行库（transformers≥5.13 / torch）${cudaNote}${tokenizersNote}${numpyNote}`,
@@ -1682,8 +2236,10 @@ function planEnvFixes(items, opts = {}) {
         if (!wr.probeTimedOut) {
             const policyBlocked = !!wr.policyBlocked
                 || /应用程序控制策略|智能应用控制|smart.?app|4551/i.test(wrDetail);
+            const numpyBroken = !!wr.numpyBroken
+                || !!numpyWhlHeal.isNumpyPinOrDllError(wrDetail);
             const dllBlocked = !!wr.dllBlocked
-                || (!policyBlocked && /dll load failed|找不到指定的模块|winerror 126/i.test(wrDetail));
+                || (!policyBlocked && /dll load failed|找不到指定的模块|找不到指定的程序|winerror 126|winerror 127|winerror 193|不是有效的\s*Win32|_multiarray_umath/i.test(wrDetail));
             if (policyBlocked) {
                 // Still offer one-click retry (user may have just disabled SAC) + manual download.
                 // Do not hide the fix button — otherwise a failing Whisper item looks "stuck".
@@ -1692,6 +2248,13 @@ function planEnvFixes(items, opts = {}) {
                 steps.push({
                     id: 'whisperRuntime',
                     label: '重试补齐 Whisper 运行库（若仍被策略拦截需先关闭智能应用控制）',
+                });
+            } else if (numpyBroken) {
+                modelIds.add('whisper-tiny');
+                forceIds.add('whisper-tiny');
+                steps.push({
+                    id: 'whisperRuntime',
+                    label: '强制重装兼容 NumPy 2.4.6（Whisper 运行库）',
                 });
             } else if (dllBlocked && statusOf('vcRedist') !== 'ok') {
                 openVcRedist = true;
@@ -1710,7 +2273,21 @@ function planEnvFixes(items, opts = {}) {
     }
 
     const gpuRtItem = byId.gpuRuntime || {};
-    if (gpuRtItem.hasRocm && !gpuRtItem.torchRocm && !gpuRtItem.hasCuda) {
+    const intelGpu = String(byId.gpu?.vendor || gpuRtItem.vendor || '').toLowerCase() === 'intel'
+        || !!gpuRtItem.hasXpu
+        || (!!gpuRtItem.hasSycl && !gpuRtItem.hasCuda && !gpuRtItem.hasRocm);
+    const amdGpu = String(byId.gpu?.vendor || gpuRtItem.vendor || '').toLowerCase() === 'amd'
+        || (!!gpuRtItem.hasRocm && !gpuRtItem.hasCuda && !intelGpu);
+
+    if (
+        gpuRtItem.hasRocm
+        && !gpuRtItem.hasCuda
+        && (
+            !gpuRtItem.torchRocm
+            || gpuRtItem.rocmDeviceKernels === false
+            || gpuRtItem.status === 'need_install'
+        )
+    ) {
         ensureTorchRocm = true;
         if (!steps.some((s) => s.id === 'torchRocm')) {
             steps.push({
@@ -1719,7 +2296,24 @@ function planEnvFixes(items, opts = {}) {
             });
         }
     }
-    if (gpuRtItem.torchCudaMismatch) {
+    if (
+        (gpuRtItem.hasXpu || intelGpu)
+        && !gpuRtItem.hasCuda
+        && !gpuRtItem.hasRocm
+        && (
+            !gpuRtItem.torchXpu
+            || gpuRtItem.status === 'need_install'
+        )
+    ) {
+        ensureTorchXpu = true;
+        if (!steps.some((s) => s.id === 'torchXpu')) {
+            steps.push({
+                id: 'torchXpu',
+                label: '补齐 XPU PyTorch（装进引擎运行时；不要装 CUDA / ROCm 版）',
+            });
+        }
+    }
+    if (gpuRtItem.torchCudaMismatch && !intelGpu && !amdGpu) {
         ensureTorchCuda = true;
         const variant = String(gpuRtItem.torchCudaVariant || 'cu128/cu130').trim();
         if (!steps.some((s) => s.id === 'audioSeparate')) {
@@ -1733,17 +2327,33 @@ function planEnvFixes(items, opts = {}) {
     if (statusOf('torchEngineStartup') === 'fail' || statusOf('torchEngineStartup') === 'warn') {
         const torchItem = byId.torchEngineStartup || {};
         const torchDetail = detailOf('torchEngineStartup');
-        const amdGpu = String(byId.gpu?.vendor || '').toLowerCase() === 'amd';
-        const needsRocm = amdGpu
+        // Do not queue multi-GB XPU reinstall solely because vendor=intel — require
+        // XPU-specific signals (same discipline as CUDA regex gates for NVIDIA).
+        const needsXpu = intelGpu && (
+            !!torchItem.needsTorchXpu
+            || (!!gpuRtItem.hasXpu && !gpuRtItem.torchXpu)
+            || /XPU|NEED_TORCH_XPU|补齐 XPU/i.test(`${torchItem.code || ''} ${torchDetail}`)
+        );
+        const needsRocm = !intelGpu && (
+            amdGpu
             || !!torchItem.needsTorchRocm
-            || /ROCm|NEED_TORCH_ROCM/i.test(`${torchItem.code || ''} ${torchDetail}`);
-        const needsCuda = !needsRocm && (
+            || /ROCm|NEED_TORCH_ROCM/i.test(`${torchItem.code || ''} ${torchDetail}`)
+        );
+        const needsCuda = !intelGpu && !needsRocm && (
             !!torchItem.needsTorchCuda
             || /补齐 CUDA|CUDA PyTorch|WinError 1114|docstring|引擎进程中损坏|NEED_TORCH_CUDA|TORCH_CUDA_LOAD|TORCH_REIMPORT/i.test(
                 `${torchItem.code || ''} ${torchDetail}`,
             )
         );
-        if (needsRocm) {
+        if (needsXpu) {
+            ensureTorchXpu = true;
+            if (!steps.some((s) => s.id === 'torchXpu')) {
+                steps.push({
+                    id: 'torchXpu',
+                    label: '补齐 XPU PyTorch（装进引擎运行时；不要装 CUDA / ROCm 版）',
+                });
+            }
+        } else if (needsRocm) {
             ensureTorchRocm = true;
             if (!steps.some((s) => s.id === 'torchRocm')) {
                 steps.push({
@@ -1763,63 +2373,125 @@ function planEnvFixes(items, opts = {}) {
         if (!steps.some((s) => s.id === 'torchEngineStartup')) {
             steps.push({
                 id: 'torchEngineStartup',
-                label: needsCuda
-                    ? '补齐后将重测 PyTorch 引擎启动（与真实转写同序）'
-                    : '修复 PyTorch 引擎启动探测失败',
+                label: needsXpu
+                    ? '补齐后将重测 PyTorch 引擎启动（XPU · 与真实转写同序）'
+                    : (needsRocm
+                        ? '补齐后将重测 PyTorch 引擎启动（ROCm · 与真实转写同序）'
+                        : (needsCuda
+                            ? '补齐后将重测 PyTorch 引擎启动（与真实转写同序）'
+                            : (intelGpu
+                                ? '修复 PyTorch 引擎启动探测失败（Intel · 先查策略/VC++，勿盲目重装 XPU）'
+                                : '修复 PyTorch 引擎启动探测失败'))),
             });
         }
     }
 
-    if (statusOf('gpuRuntime') === 'warn') {
+    if (statusOf('gpuRuntime') === 'warn' || statusOf('gpuRuntime') === 'fail') {
         const gpuItem = gpuRtItem;
         const gpuDetail = detailOf('gpuRuntime');
-        const ct2Missing = String(gpuItem.ctranslate2CudaReason || '') === 'ctranslate2_not_installed'
-            || /未安装 CTranslate2|ctranslate2_not_installed/i.test(gpuDetail);
-        if (ct2Missing) {
-            // faster-whisper is often installed --no-deps; GPU cuBLAS alone cannot fix CT2.
-            modelIds.add('whisper-tiny');
-            forceIds.add('whisper-tiny');
-            steps.push({
-                id: 'whisperRuntime',
-                label: '补齐 Whisper 运行库（ctranslate2 / faster-whisper / av）',
-            });
-        }
-        // Any GPU runtime「注意」must be one-click fixable (cuBLAS / ORT / Toolkit reuse).
-        // Soft copy like「驱动支持 CUDA 12+」previously matched the regex but CT2-only
-        // paths and some probe.hint strings did not — leaving the prepare gate stuck.
-        ensureGpu = true;
-        if (!steps.some((s) => s.id === 'gpuRuntime')) {
-            const ortOnly = /WhisperSeg|onnxruntime/i.test(gpuDetail)
-                && !/cublas64_12|缺少 cublas|未找到 cublas/i.test(gpuDetail)
-                && !ct2Missing;
-            steps.push({
-                id: 'gpuRuntime',
-                label: ortOnly
-                    ? '下载 GPU 支持（WhisperSeg / onnxruntime-gpu）'
-                    : '下载 GPU 支持（cuBLAS / CUDA 组件）',
-            });
+        // Hardware / no-discrete-GPU fails are not auto-fixable (manualHints cover gpu).
+        const noDiscrete = !!gpuItem.requireDiscreteGpu
+            && /未检测到可用独立 GPU|不能以 CPU 模式/i.test(gpuDetail);
+        // AMD: fix via ROCm torch — never pull NVIDIA cuBLAS / onnxruntime-gpu wheels.
+        // Intel: fix via XPU torch；LLM SYCL 另走 ensureLlamaRuntime。
+        if (amdGpu && !noDiscrete) {
+            if (!gpuRtItem.torchRocm) {
+                ensureTorchRocm = true;
+                if (!steps.some((s) => s.id === 'torchRocm')) {
+                    steps.push({
+                        id: 'torchRocm',
+                        label: '补齐 ROCm PyTorch（装进引擎运行时；不要装 CUDA 版）',
+                    });
+                }
+            }
+            if (!steps.some((s) => s.id === 'gpuRuntime')) {
+                steps.push({
+                    id: 'gpuRuntime',
+                    label: '补齐 AMD GPU 运行时（引擎内 ROCm PyTorch；Whisper 仍走 CPU）',
+                });
+            }
+        } else if (intelGpu && !noDiscrete) {
+            if (!gpuRtItem.torchXpu) {
+                ensureTorchXpu = true;
+                if (!steps.some((s) => s.id === 'torchXpu')) {
+                    steps.push({
+                        id: 'torchXpu',
+                        label: '补齐 XPU PyTorch（装进引擎运行时；不要装 CUDA / ROCm 版）',
+                    });
+                }
+            }
+            if (!steps.some((s) => s.id === 'gpuRuntime')) {
+                steps.push({
+                    id: 'gpuRuntime',
+                    label: '补齐 Intel Arc 运行时（引擎内 XPU PyTorch；Whisper 仍走 CPU）',
+                });
+            }
+        } else if (!noDiscrete) {
+            const ct2Missing = String(gpuItem.ctranslate2CudaReason || '') === 'ctranslate2_not_installed'
+                || /未安装 CTranslate2|ctranslate2_not_installed/i.test(gpuDetail);
+            if (ct2Missing) {
+                // faster-whisper is often installed --no-deps; GPU cuBLAS alone cannot fix CT2.
+                modelIds.add('whisper-tiny');
+                forceIds.add('whisper-tiny');
+                steps.push({
+                    id: 'whisperRuntime',
+                    label: '补齐 Whisper 运行库（ctranslate2 / faster-whisper / av）',
+                });
+            }
+            // NVIDIA GPU runtime「注意」/ fail → one-click CUDA support (cuBLAS / ORT / Toolkit).
+            ensureGpu = true;
+            if (!steps.some((s) => s.id === 'gpuRuntime')) {
+                const ortOnly = /WhisperSeg|onnxruntime/i.test(gpuDetail)
+                    && !/cublas64_12|缺少 cublas|未找到 cublas/i.test(gpuDetail)
+                    && !ct2Missing;
+                steps.push({
+                    id: 'gpuRuntime',
+                    label: ortOnly
+                        ? '下载 GPU 支持（WhisperSeg / onnxruntime-gpu）'
+                        : '下载 GPU 支持（cuBLAS / CUDA 组件）',
+                });
+            }
         }
     }
 
     const llamaItem = byId.llamaServerRuntime || {};
-    const recommendRuntimeId = String(
-        llamaItem.recommendRuntimeId || llamaItem.preferredPackageId || '',
-    ).trim();
+    const gpuItemForLlama = byId.gpu || {};
+    const gpuInfoForLlama = gpuItemForLlama.vendor
+        ? {
+            vendor: gpuItemForLlama.vendor,
+            detected: (
+                gpuItemForLlama.vendor === 'nvidia'
+                || gpuItemForLlama.vendor === 'amd'
+                || gpuItemForLlama.vendor === 'intel'
+            ),
+            cudaVersion: gpuItemForLlama.cudaVersion || '',
+            gpuName: gpuItemForLlama.detail || '',
+        }
+        : null;
+    const recommendRuntimeId = recommendLlamaRuntimeId(gpuInfoForLlama)
+        || String(llamaItem.recommendRuntimeId || llamaItem.preferredPackageId || '').trim();
+    let recommendRuntimeLabel = recommendRuntimeId;
+    try {
+        const catalog = require('../src/js/advanced-managed-llm-catalog-core');
+        const pkg = recommendRuntimeId
+            ? catalog.getRuntimePackage(process.platform, process.arch, recommendRuntimeId)
+            : null;
+        recommendRuntimeLabel = pkg?.label || recommendRuntimeId;
+    } catch (_) { /* ignore */ }
     if (statusOf('llamaServerRuntime') === 'warn'
-        && (llamaItem.outdated || llamaItem.mismatch || llamaItem.recommendInstall
-            || /未安装|可更新至|后端不一致|请重新安装|建议安装/i.test(detailOf('llamaServerRuntime')))) {
+        && (llamaItem.mismatch || llamaItem.recommendInstall
+            || /未安装|后端不一致|请重新安装|建议安装/i.test(detailOf('llamaServerRuntime')))) {
+        // Optional version bumps (outdated alone → status ok) do not auto-fix / block.
         ensureLlamaRuntime = true;
-        let stepLabel = '更新 llama-server 运行时';
+        let stepLabel = '更新 AI 运行时';
         if (llamaItem.recommendInstall && !llamaItem.installedTag && !llamaItem.outdated) {
-            stepLabel = recommendRuntimeId
-                ? `安装 llama-server 运行时（${recommendRuntimeId}）`
-                : '安装 llama-server 运行时（匹配本机 CUDA）';
+            stepLabel = recommendRuntimeLabel
+                ? `安装 AI 运行时（${recommendRuntimeLabel}）`
+                : '安装 AI 运行时（按本机显卡匹配）';
         } else if (llamaItem.mismatch) {
-            stepLabel = recommendRuntimeId
-                ? `重新安装 llama-server 运行时（切换至 ${recommendRuntimeId}）`
-                : '重新安装 llama-server 运行时（后端不一致）';
-        } else if (llamaItem.outdated) {
-            stepLabel = `更新 llama-server 运行时至 ${llamaItem.catalogTag || '最新'}`;
+            stepLabel = recommendRuntimeLabel
+                ? `重新安装 AI 运行时（切换至 ${recommendRuntimeLabel}）`
+                : '重新安装 AI 运行时（后端不一致）';
         }
         steps.push({
             id: 'llamaServerRuntime',
@@ -1831,7 +2503,7 @@ function planEnvFixes(items, opts = {}) {
     // installPath / ffmpeg / engine / gpu hardware: not auto-fixable here
     const models = [...modelIds];
     const force = forceIds.size > 0;
-    const fixable = openVcRedist || ensureGpu || ensureTorchCuda || ensureTorchRocm || ensureLlamaRuntime || models.length > 0;
+    const fixable = openVcRedist || ensureGpu || ensureTorchCuda || ensureTorchRocm || ensureTorchXpu || ensureLlamaRuntime || models.length > 0;
     const manualHints = list
         .filter((it) => {
             if (it.status !== 'fail' && it.status !== 'warn') return false;
@@ -1840,15 +2512,26 @@ function planEnvFixes(items, opts = {}) {
                 || /应用程序控制策略|智能应用控制|smart.?app|4551/i.test(String(it.detail || '')))) {
                 return true;
             }
+            if ((it.id === 'whisperRuntime' || it.id === 'qwenRuntime' || it.id === 'sensevoiceRuntime')
+                && (it.numpyBroken
+                    || numpyWhlHeal.isNumpyPinOrDllError(String(it.detail || '')))) {
+                return true;
+            }
             return false;
         })
-        .map((it) => ({ id: it.id, label: it.label, detail: it.detail }));
+        .map((it) => {
+            const detail = (it.numpyBroken || numpyWhlHeal.isNumpyPinOrDllError(String(it.detail || '')))
+                ? (numpyWhlHeal.formatNumpyManualHealHint(String(it.detail || '')) || it.detail)
+                : it.detail;
+            return { id: it.id, label: it.label, detail };
+        });
     return {
         fixable,
         openVcRedist,
         ensureGpu,
         ensureTorchCuda,
         ensureTorchRocm,
+        ensureTorchXpu,
         ensureLlamaRuntime,
         llamaRuntimeId: recommendRuntimeId || '',
         modelIds: models,
@@ -1863,8 +2546,11 @@ module.exports = {
     runEnvCheck,
     planEnvFixes,
     normalizeEnvCheckScope,
+    applyRequireDiscreteGpuPolicy,
+    isVersionGatePassed,
     ENV_CHECK_BASE_IDS,
     ENV_CHECK_RUNTIME_IDS,
+    VERSION_GATE_IDS,
     checkInstallPath,
     checkVcRedist,
     checkEngine,
@@ -1874,6 +2560,7 @@ module.exports = {
     checkVadModel,
     checkLidModel,
     checkLlamaServerRuntime,
+    recommendLlamaRuntimeId,
     checkTorchEngineStartup,
     checkModelInstalled,
     listInstalledAsrIds,
@@ -1884,6 +2571,7 @@ module.exports = {
     hasNonAscii,
     resolveEnginePython,
     sanitizeEngineProbeStderr,
+    buildEngineProbeEnv,
     ASR_MODEL_MARKERS,
     VC_REDIST_URL,
     SUPPORT_URL,

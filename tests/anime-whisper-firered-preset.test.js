@@ -23,17 +23,19 @@ describe('anime-whisper firered presets', () => {
         assert.strictEqual(soft.options.engineVadModel, 'firered-vad');
         assert.strictEqual(soft.options.timingAlignModel, 'firered');
         assert.strictEqual(soft.options.timingAlign, true);
-        assert.strictEqual(soft.options.vadThreshold, 0.45);
-        assert.strictEqual(soft.options.vadMaxSingleSegmentMs, 5000);
-        assert.strictEqual(soft.options.vadSpeechPadMs, 80);
-        assert.strictEqual(soft.options.vadMinSilenceDurationMs, 500);
-        assert.strictEqual(soft.options.vadMinSpeechDurationMs, 220);
+        assert.strictEqual(soft.options.vadThreshold, 0.30);
+        assert.strictEqual(soft.options.vadMaxSingleSegmentMs, 4000);
+        assert.strictEqual(soft.options.vadSpeechPadMs, 120);
+        assert.strictEqual(soft.options.vadMinSilenceDurationMs, 280);
+        assert.strictEqual(soft.options.vadMinSpeechDurationMs, 120);
+        assert.strictEqual(soft.options.filmAudioEnhance, undefined);
+        assert.strictEqual(soft.options.enhanceForVadOnly, undefined);
         assert.strictEqual(soft.options.beamSize, 1);
         assert.strictEqual(ANIME_FIRERED_VAD.timingAlignModel, 'firered');
         assert.strictEqual(ANIME_WHISPER_FIRERED_OPTIONS.engineVadModel, 'firered-vad');
     });
 
-    it('registers Qwen Galgame + TEN in ja', () => {
+    it('registers Qwen Galgame + TEN islands in ja', () => {
         const p = BUILTIN_PRESETS.find((x) => x.id === 'ja-av-qwen3-galgame-ten');
         assert.ok(p, 'qwen galgame preset missing');
         assert.strictEqual(p.group, 'ja');
@@ -42,10 +44,60 @@ describe('anime-whisper firered presets', () => {
         assert.strictEqual(p.options.timingAlign, true);
         assert.strictEqual(p.options.contentProfile, 'av_soft');
         assert.strictEqual(p.options.language, 'ja');
-        assert.strictEqual(p.options.engineVadModel, 'silero-vad');
-        assert.strictEqual(p.options.vadThreshold, 0.45);
-        assert.strictEqual(p.options.vadMaxSingleSegmentMs, 5000);
+        assert.strictEqual(p.options.engineVadModel, 'ten-vad');
+        assert.strictEqual(p.options.vadThreshold, 0.35);
+        assert.strictEqual(p.options.vadMaxSingleSegmentMs, 4000);
+        assert.strictEqual(p.options.vadMinSpeechDurationMs, 120);
+        assert.strictEqual(p.options.vadSpeechPadMs, 120);
         assert.strictEqual(p.options.vadSensitive, false);
+        assert.strictEqual(p.options.asrSecondOpinion, 'auto');
+        assert.strictEqual(p.options.filmAudioEnhance, undefined);
+        assert.strictEqual(p.options.enhanceForVadOnly, undefined);
+        assert.ok(String(p.description || '').includes('TEN'));
+    });
+
+    it('registers Qwen Galgame TEN + ForcedAligner in ja', () => {
+        const {
+            QWEN_GALGAME_FIRERED_ALIGN_OPTIONS,
+        } = require('../electron/presets-data');
+        const p = BUILTIN_PRESETS.find((x) => x.id === 'ja-av-qwen3-galgame-firered-align');
+        assert.ok(p, 'qwen galgame firered-align preset missing');
+        assert.strictEqual(p.group, 'ja');
+        assert.strictEqual(p.options.engineAsrModel, 'qwen3-asr-1.7b-ja-anime-galgame');
+        // ForcedAligner preset shares FireRed islands with the main Galgame preset.
+        assert.strictEqual(p.options.engineVadModel, 'firered-vad');
+        assert.strictEqual(p.options.timingAlignModel, 'qwen3-forced-aligner-0.6b');
+        assert.strictEqual(p.options.timingAlign, true);
+        assert.strictEqual(p.options.contentProfile, 'av_soft');
+        assert.strictEqual(p.options.language, 'ja');
+        assert.strictEqual(p.options.vadThreshold, 0.30);
+        assert.strictEqual(p.options.vadMaxSingleSegmentMs, 4000);
+        assert.strictEqual(p.options.vadMinSpeechDurationMs, 120);
+        assert.strictEqual(p.options.vadSpeechPadMs, 120);
+        assert.strictEqual(p.options.asrSecondOpinion, 'auto');
+        assert.strictEqual(p.options.filmAudioEnhance, undefined);
+        assert.strictEqual(p.options.enhanceForVadOnly, undefined);
+        assert.strictEqual(
+            QWEN_GALGAME_FIRERED_ALIGN_OPTIONS.timingAlignModel,
+            'qwen3-forced-aligner-0.6b',
+        );
+        assert.strictEqual(QWEN_GALGAME_FIRERED_ALIGN_OPTIONS.engineVadModel, 'firered-vad');
+        assert.ok(String(p.description || '').includes('FireRed'));
+    });
+
+    it('registers Whisper JA soft-translate with FireRed islands', () => {
+        const p = BUILTIN_PRESETS.find((x) => x.id === 'ja-av-soft-translate');
+        assert.ok(p, 'soft-translate preset missing');
+        assert.strictEqual(p.group, 'ja');
+        assert.strictEqual(p.options.engineAsrModel, 'whisper-ja-1.5b');
+        assert.strictEqual(p.options.engineVadModel, 'firered-vad');
+        assert.strictEqual(p.options.timingAlignModel, 'firered');
+        assert.strictEqual(p.options.timingAlign, true);
+        assert.strictEqual(p.options.vadThreshold, 0.30);
+        assert.strictEqual(p.options.vadSpeechPadMs, 120);
+        assert.strictEqual(p.options.vadMaxSingleSegmentMs, 4000);
+        assert.strictEqual(p.options.beamSize, 5);
+        assert.ok(String(p.description || '').includes('FireRed'));
     });
 
     it('registers regional drama groups', () => {
@@ -58,5 +110,40 @@ describe('anime-whisper firered presets', () => {
         assert.strictEqual(zh.options.language, 'zh');
         assert.strictEqual(west.group, 'western');
         assert.strictEqual(west.options.language, 'en');
+    });
+
+    it('registers Cantonese Qwen3-ASR preset under 华语片', () => {
+        const p = BUILTIN_PRESETS.find((x) => x.id === 'zh-yue-qwen3');
+        assert.ok(p);
+        assert.strictEqual(p.group, 'zh');
+        assert.strictEqual(p.options.language, 'yue');
+        assert.strictEqual(p.options.engineAsrModel, 'qwen3-asr-1.7b');
+        assert.strictEqual(p.options.contentProfile, 'film');
+        assert.strictEqual(p.options.engineVadModel, 'firered-vad');
+        assert.strictEqual(p.options.timingAlign, true);
+        assert.strictEqual(p.options.timingAlignModel, 'qwen3-forced-aligner-0.6b');
+        assert.strictEqual(p.options.audioLightDenoise, true);
+        assert.ok(String(p.name || '').includes('粤语'));
+    });
+
+    it('registers Cantonese song Qwen3-ASR preset under 华语片', () => {
+        const p = BUILTIN_PRESETS.find((x) => x.id === 'zh-yue-qwen3-song');
+        assert.ok(p);
+        assert.strictEqual(p.group, 'zh');
+        assert.strictEqual(p.options.language, 'yue');
+        assert.strictEqual(p.options.engineAsrModel, 'qwen3-asr-1.7b');
+        assert.strictEqual(p.options.engineVadModel, 'firered-vad');
+        // Songs use ForcedAligner + singing merge/stretch (wider gap_break).
+        assert.strictEqual(p.options.timingAlignModel, 'qwen3-forced-aligner-0.6b');
+        assert.strictEqual(p.options.engineVadModel, 'firered-vad');
+        assert.strictEqual(p.options.singingKaraoke, true);
+        assert.strictEqual(p.options.vadThreshold, 0.45);
+        assert.strictEqual(p.options.audioLightDenoise, false);
+        assert.strictEqual(p.options.filmAudioEnhance, undefined);
+        assert.ok(String(p.name || '').includes('歌曲'));
+        assert.ok(
+            String(p.description || '').includes('ForcedAligner')
+            || String(p.description || '').includes('卡拉OK'),
+        );
     });
 });

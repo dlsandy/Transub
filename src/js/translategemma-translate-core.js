@@ -155,6 +155,8 @@
         zh: 'Chinese',
         'zh-Hans': 'Chinese',
         'zh-Hant': 'Chinese',
+        yue: 'Cantonese',
+        cantonese: 'Cantonese',
         zu: 'Zulu',
     });
 
@@ -217,6 +219,7 @@
             return 'zh-Hant';
         }
         if (lower === 'zh') return role === 'target' ? 'zh-Hans' : 'zh';
+        if (lower === 'yue' || lower === 'zh-yue' || lower === 'cantonese') return 'yue';
         if (lower === 'en' || lower === 'eng' || lower === 'english') return 'en';
         if (lower === 'ja' || lower === 'jp' || lower === 'jpn' || lower === 'japanese') return 'ja';
         if (lower === 'ko' || lower === 'kr' || lower === 'kor' || lower === 'korean') return 'ko';
@@ -350,10 +353,12 @@
         let zh = String(zhText || '').trim();
         if (!zh || isPureEllipsisZh(zh)) return zh;
         if (!/(?:…|\.{2,}|･･･|……)\s*$/u.test(src)) return zh;
-        // Normalize single … / ... tails to …… for ZH subtitles.
+        // ZH subtitles prefer ……; Hangul / Latin keep a single … for natural intl delivery.
+        const hangulOrLatin = /[\uac00-\ud7a3A-Za-z]/.test(zh) && !/[\u4e00-\u9fff]/.test(zh);
+        const ellip = hangulOrLatin ? '…' : '……';
         zh = zh.replace(/(?:\.{2,}|…|……)+\s*$/u, '');
-        if (!zh.trim()) return '……';
-        return `${zh.trim()}……`;
+        if (!zh.trim()) return ellip;
+        return `${zh.trim()}${ellip}`;
     }
 
     /**
@@ -371,6 +376,9 @@
         // Soft refusals disguised as name-card + "translator"
         if (/^(?:[\u4e00-\u9fffA-Za-zー]{1,12}\s*)?我是你们的翻译/u.test(zh)) return true;
         if (/我是你的好朋友/u.test(zh) && [...zh].length <= 20) return true;
+        // Hangul self-ID / name-card bleed (JA→KO PREVIOUS reuse)
+        if (/^(?:저는|나는|내\s*이름은|제\s*이름은)\s*[\uac00-\ud7a3A-Za-z]{1,12}(?:입니다|예요|이에요|야)?$/u.test(zh)) return true;
+        if (/^(?:안녕|야)\s*[\uac00-\ud7a3A-Za-z]{1,12}$/u.test(zh)) return true;
         // Greeting + name bleed (いきまーす → 你好 祐佳)
         if (/^你好\s*[\u4e00-\u9fffA-Za-zー]{1,12}$/u.test(zh)) return true;
         // Huihui/dialog name-card spam with explicit space:「哦 佑佳」「我 佑佳」
@@ -392,7 +400,18 @@
         const s = String(sourceText || '').replace(/\s+/g, '');
         if (!s || [...s].length > 18) return false;
         if (/でした|ですが|ですけど|ですので|ですし/.test(s)) return false;
-        return /^(?:[ぁ-んァ-ンおあうわっ、,.…・\-ー]{0,6})?[\u4e00-\u9fffぁ-んァ-ンー]{1,12}(?:です|だよ|だよん|ですよ|と申します|と言います)[。．.!！?？…]*$/u.test(s);
+        // Everyday 「〜だよ／です」dialogue is NOT a name-card self-intro.
+        if (/(?:んだよ|んです|なのです|なのよ|だよね|だよな|ですか|ですよ[ね]|ましょう)/.test(s)) return false;
+        if (/(?:買|見|行|来|思|言|聞|読|書|食|飲|作|待|持|取|出|入|戻|落|助|撃|乗|走|歩|寝|起|遊|働|勉強|会|舐|好|嫌|欲|モテ|クズ|どんだけ)/.test(s)) {
+            return false;
+        }
+        if (/(?:お姉ちゃん|お兄ちゃん|お姉さん|お兄さん|姉ちゃん|兄ちゃん|先生|美人|大丈夫|友達|綺麗|きれい|つもり|ダメ|だめ|デブ|馬鹿|バカ|したい|みたい|好き)/.test(s)) {
+            return false;
+        }
+        // Particles / clauses → dialogue, not 「Nameです」(strip the copula first).
+        const stem = s.replace(/(?:です|だよ|だよん|ですよ|と申します|と言います)[。．.!！?？…]*$/u, '');
+        if (/[がをにでもはへの]/u.test(stem)) return false;
+        return /^(?:[ぁ-んァ-ンおあうわっ、,.…・\-ー]{0,6})?[\u4e00-\u9fffぁ-んァ-ンー]{1,8}(?:です|だよ|だよん|ですよ|と申します|と言います)[。．.!！?？…]*$/u.test(s);
     }
 
     /**
@@ -407,6 +426,11 @@
         if (/^(?:啊?[，,]?\s*)?(?:我是|我叫)[\u4e00-\u9fffA-Za-zー]{1,12}$/u.test(zh)) return true;
         // Casual short intro (お、祐佳です → 哦 佑佳) — only OK on real self-intro JA.
         if (/^(?:哦|啊|嗯)[，,]?\s*[\u4e00-\u9fffA-Za-zー]{1,12}$/u.test(zh) && [...zh].length <= 8) {
+            return true;
+        }
+        // Hangul first-person self-ID (JA→KO)
+        if (/너|당신|너희/.test(zh)) return false;
+        if (/^(?:저는|나는|내\s*이름은|제\s*이름은)\s*[\uac00-\ud7a3A-Za-z]{1,12}(?:입니다|예요|이에요|야)?$/u.test(zh)) {
             return true;
         }
         return false;
@@ -464,6 +488,14 @@
      * @param {string} targetCode
      * @param {object} [options]
      */
+    function isYueToZhPair(sourceCode, targetCode) {
+        const src = String(sourceCode || '').trim().toLowerCase();
+        const tgt = String(targetCode || '').trim().toLowerCase();
+        const yue = src === 'yue' || src === 'cantonese' || src === 'zh-yue';
+        const zh = !tgt || tgt === 'zh' || tgt.startsWith('zh');
+        return yue && zh;
+    }
+
     function buildNaturalUserContent(text, sourceCode, targetCode, options = {}) {
         const srcName = languageDisplayName(sourceCode);
         const tgtName = languageDisplayName(targetCode);
@@ -472,19 +504,36 @@
             options.modelId || options.engineMtModel || options.promptFamily || 'translategemma',
             'official',
         ) || '';
-        const lines = [
-            `You are a professional ${srcName} (${sourceCode}) to ${tgtName} (${targetCode}) translator. `
-            + `Your goal is to accurately convey the meaning and nuances of the original ${srcName} text `
-            + `while adhering to ${tgtName} grammar, vocabulary, and cultural sensitivities.`,
-        ];
+        const yueZh = isYueToZhPair(sourceCode, targetCode);
+        const lines = yueZh
+            ? [
+                'You are a professional Cantonese (written) to Mandarin Simplified Chinese translator. '
+                + 'Rewrite Cantonese particles and colloquial forms into natural Mandarin; '
+                + 'do not copy Cantonese wording unchanged.',
+            ]
+            : [
+                `You are a professional ${srcName} (${sourceCode}) to ${tgtName} (${targetCode}) translator. `
+                + `Your goal is to accurately convey the meaning and nuances of the original ${srcName} text `
+                + `while adhering to ${tgtName} grammar, vocabulary, and cultural sensitivities.`,
+            ];
         if (addon) lines.push(addon);
-        lines.push(
-            `Produce only the ${tgtName} translation, without any additional explanations or commentary. `
-            + `Please translate the following ${srcName} text into ${tgtName}:`,
-            '',
-            String(text || ''),
-            '',
-        );
+        if (yueZh) {
+            lines.push(
+                'Produce only Mandarin Simplified Chinese, without additional explanations. '
+                + 'Please translate the following written Cantonese into Mandarin Simplified Chinese:',
+                '',
+                String(text || ''),
+                '',
+            );
+        } else {
+            lines.push(
+                `Produce only the ${tgtName} translation, without any additional explanations or commentary. `
+                + `Please translate the following ${srcName} text into ${tgtName}:`,
+                '',
+                String(text || ''),
+                '',
+            );
+        }
         return lines.join('\n');
     }
 
@@ -499,11 +548,25 @@
         }
         const list = normalizeCueList(chunkCuesList);
         const joined = list.map((c) => c.text || '').join('\n');
-        const sourceCode = resolveSourceLangCode(options);
+        let sourceCode = resolveSourceLangCode(options);
         const targetCode = resolveTargetLangCode(options);
-        const mode = String(options.translateGemmaPromptMode || options.tgPromptMode || 'structured')
+        // Cue heuristic when language collapsed to zh/auto.
+        try {
+            const tgt = loadTargetLangCore();
+            if (
+                (!sourceCode || sourceCode === 'zh' || sourceCode === 'ja')
+                && tgt?.shouldUseYueToMandarinPrompt?.(options, list)
+            ) {
+                sourceCode = 'yue';
+            }
+        } catch { /* optional */ }
+        let mode = String(options.translateGemmaPromptMode || options.tgPromptMode || 'structured')
             .trim()
             .toLowerCase();
+        // Structured JSON has no room for 粤→普 lock — use natural prompt.
+        if (isYueToZhPair(sourceCode, targetCode) && mode !== 'natural') {
+            mode = 'natural';
+        }
         const content = mode === 'natural'
             ? buildNaturalUserContent(joined, sourceCode, targetCode, options)
             : buildStructuredUserContent(joined, sourceCode, targetCode);

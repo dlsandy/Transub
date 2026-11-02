@@ -21,7 +21,6 @@
 
     const SELECT_IDS = Object.freeze([
         'setupWizardPipMirrorSelect',
-        'envCheckPipMirrorSelect',
     ]);
 
     let preferred = '';

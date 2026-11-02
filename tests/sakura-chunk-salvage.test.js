@@ -2,8 +2,9 @@ const assert = require('assert');
 
 /**
  * Mirrors sakura-translate chunk aggregation salvage policy.
+ * Always keep successful cues when any chunk succeeded; hard-fail only if none did.
  */
-function aggregateChunkResults(chunkResults, { failBudgetRatio = 0.05, minFailBudget = 2 } = {}) {
+function aggregateChunkResults(chunkResults) {
     const failedChunks = [];
     const updates = [];
     for (const res of chunkResults) {
@@ -21,16 +22,14 @@ function aggregateChunkResults(chunkResults, { failBudgetRatio = 0.05, minFailBu
     if (firstFail?.code === 'cancelled') {
         return { ok: false, error: '已取消', code: 'cancelled', updates, failedChunks };
     }
-    const failBudget = Math.max(minFailBudget, Math.ceil(chunkResults.length * failBudgetRatio));
-    const salvageOk = successChunks > 0 && failedChunks.length <= failBudget;
-    if (!salvageOk) {
+    if (successChunks < 1) {
         return {
             ok: false,
             error: firstFail?.error || '分块失败',
             code: firstFail?.code || 'chunk_failed',
             updates,
             failedChunks,
-            successChunks,
+            successChunks: 0,
         };
     }
     return {
@@ -58,7 +57,7 @@ describe('sakura chunk salvage policy', () => {
         assert.strictEqual(agg.failedChunks.length, 8);
     });
 
-    it('hard-fails when too many chunks fail', () => {
+    it('salvages when many chunks fail but some succeeded (editor Murasaki batch)', () => {
         const results = [
             { ok: true, chunkUpdates: [{ index: 0, text: 'a' }] },
             { ok: false, error: 'boom' },
@@ -66,8 +65,20 @@ describe('sakura chunk salvage policy', () => {
             { ok: false, error: 'boom' },
         ];
         const agg = aggregateChunkResults(results);
+        assert.strictEqual(agg.ok, true);
+        assert.strictEqual(agg.salvaged, true);
+        assert.strictEqual(agg.updates.length, 1);
+        assert.strictEqual(agg.failedChunks.length, 3);
+    });
+
+    it('hard-fails only when every chunk failed', () => {
+        const agg = aggregateChunkResults([
+            { ok: false, error: 'boom' },
+            { ok: false, error: 'timeout', code: 'timeout' },
+        ]);
         assert.strictEqual(agg.ok, false);
-        assert.ok(agg.updates.length === 1);
+        assert.strictEqual(agg.code, 'chunk_failed');
+        assert.strictEqual(agg.successChunks, 0);
     });
 
     it('propagates cancel', () => {

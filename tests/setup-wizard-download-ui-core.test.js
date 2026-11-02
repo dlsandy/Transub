@@ -21,6 +21,14 @@ describe('setup-wizard-download-ui progress attribution', () => {
             modelId: 'qwen3-asr-1.7b-ja-anime-galgame',
             message: 'Downloading weights…',
         }), false);
+        assert.strictEqual(dl.isSharedRuntimeProgressEvent({
+            stage: 'install',
+            message: '正在本地安装（离线，1 个包：av.whl）…',
+        }), true);
+        assert.strictEqual(dl.isSharedRuntimeProgressEvent({
+            stage: 'download',
+            message: '正在下载（mirrors.aliyun.com · 8 线程）· av-14.0.1-cp312-cp312-win_amd64.whl',
+        }), true);
     });
 
     it('applyProgressEvent does not stamp pip progress onto HF model rows', () => {

@@ -380,7 +380,7 @@ function resolveGenerationConfigPath(installPath, options = {}, getUserDataPath)
         delete merged.hallucination_silence_threshold;
     }
 
-    if (normalized.glossaryPromptEnabled !== false) {
+    if (normalized.glossaryPromptEnabled) {
         try {
             const { readGlossary } = require('./glossary-data');
             const {
@@ -1565,90 +1565,11 @@ function setupTransWithAiBridge(api, deps) {
             if (payload.installPath != null) {
                 patch.installPath = normalizeInstallPath(payload.installPath);
             }
-            [
-                'engineBackend', 'engineInstallPath', 'engineUrl', 'engineHfEndpoint', 'engineHfToken',
-                'engineProfile', 'engineAsrModel', 'engineMtModel',
-                'engineOpusMtModel', 'engineLlmMtModel', 'engineVadModel',
-                'engineAutoStart',
-                'translateMode',
-                'proxyEnabled', 'proxyUrl', 'proxyBypass', 'githubMirrorUrls',
-                'transubStationEnabled', 'transubStationUrl', 'transubStationModel',
-                'device', 'task', 'overwrite',
-                'subFormats', 'modelPath', 'transcribeModelPath', 'translateModelPath',
-                'logLevel', 'mergeSegments',
-                'mergeMaxGapMs', 'mergeMaxDurationMs', 'maxBatchSize',
-                'beamSize', 'language', 'vadThreshold',
-                'vadMinSpeechDurationMs', 'vadMinSilenceDurationMs', 'vadSpeechPadMs',
-                'maxInitialTimestamp', 'repetitionPenalty',
-                'noSpeechThreshold', 'logProbThreshold', 'compressionRatioThreshold',
-                'hallucinationSilenceThreshold', 'glossaryPromptEnabled', 'glossaryMtEnabled',
-                'chineseSubtitleVariant',
-                'subtitleTargetLang',
-                'lastMtByTarget',
-                'dualTargetSuffix', 'dualPrimaryTrack', 'dualDisplayMode', 'dualLineOrder',
-                'mergeBilingualSubtitles', 'deleteSourcesAfterMergeBilingual',
-                'outputWriteTarget', 'outputWriteSource', 'targetSubtitleNaming',
-                'insertSoftwareCredit',
-                'includeWords', 'karaokeVtt', 'releaseGpuAfter', 'autoCpuOnGpuBusy',
-                'postBatchCpsSplit', 'postBatchRemoveNoise', 'postBatchCompressRepetition',
-                'postBatchViewingPunctMode', 'postBatchInterjectionMode', 'postBatchOnomatopoeiaMode',
-                'postBatchTextPresetGroupId',
-                'postBatchSimplifyViewingPunctuation',
-                'postBatchCompactPureInterjections',
-                'postBatchContextReconstruct',
-                'smartTranslate',
-                'smartTranslateFaithfulTone',
-                'translateStyleEnabled',
-                'translateStylePreset',
-                'translateStyleCustomNote',
-                'smartTranslateHybridMt',
-                'smartTranslatePlotPolish',
-                'smartTranslateFaithfulVerify',
-                'smartTranslateAddressConsistency',
-                'asrSecondOpinion',
-                'qualityPipelineMode',
-                'postQcLoopMaxPasses',
-                'asrBadPoolDrafts',
-                'asrSemanticRepair',
-                'filmBriefSampleMode',
-                'smartTranslatePolishSampleLimit',
-                'sakuraNsfwPrompt',
-                'filmAudioEnhance', 'filmVadPreset',
-                'filmVadThreshold', 'filmVadMinSpeechDurationMs',
-                'filmVadMinSilenceDurationMs', 'filmHallucinationSilenceThreshold',
-                'neuralDiarize',
-                'qcSmartLlmSplit', 'qcSmartRetranscribe', 'qcSmartSemanticReview',
-                'qcSmartIntensity', 'qcSmartMaxRetranscribeRanges',
-                'vadEnabled', 'vadSensitive', 'vadAggressive', 'audioLightDenoise',
-                'autoSuggestSpeakers', 'speakerCount', 'perfProfile', 'qwenAsrBatchMode',
-                'vadMaxSingleSegmentMs',
-                'smartSplitWithVad', 'targetChunkDurationS',
-                'retranscribeWarmLight', 'subtitleBakMode',
-                'keepTranscript', 'transcriptKeepDir', 'transcriptKeepLimit', 'transcriptKeepDays',
-                'shelfOpenAfterBatch',
-                'trayProgressEnabled', 'showTaskResourceUsage', 'minimizeToTrayEnabled', 'minimizeToTrayOnStart', 'trayNotifyEnabled', 'startupWindow',
-                'subtitleEditorBackend', 'subtitleEditorPath',
-                'uiLocale',
-                'rememberLastOpenDir',
-                'autoScanFolders', 'autoScanRecursive',
-                'wizardContentTypes', 'wizardPresetIds', 'wizardTargetLangs',
-                'autoUpdateCheckInterval', 'lastAutoUpdateCheckAt',
-                'postBatchQc',
-                'postBatchQcFixMode',
-                'qcSilenceSplitChars',
-                'externalImportAction',
-                'activePresetId',
-                'activeComboPlanId',
-                'mtUseForm',
-                'outputDir', 'outputMode', 'audioSuffixes', 'ffmpegPath', 'settingsUiMode',
-                'burnContainer', 'burnEncoderId', 'burnAudioMode', 'burnCrf',
-                'burnResolutionId', 'burnFpsId', 'burnEncodeSpeedId',
-                'burnOutputSuffix', 'burnOutputDir',
-            ]
-                .forEach((key) => {
-                    // Allow empty string (e.g. engineHfEndpoint = official hub)
-                    if (payload[key] !== undefined && payload[key] !== null) patch[key] = payload[key];
-                });
+            const { PARTIAL_SAVE_OPTION_KEYS } = require('./settings-partial-save-keys');
+            PARTIAL_SAVE_OPTION_KEYS.forEach((key) => {
+                // Allow empty string (e.g. engineHfEndpoint = official hub)
+                if (payload[key] !== undefined && payload[key] !== null) patch[key] = payload[key];
+            });
             if (!Object.keys(patch).length) {
                 return { ok: false, error: '无有效参数' };
             }
@@ -1741,6 +1662,23 @@ function setupTransWithAiBridge(api, deps) {
             return await pickBestHfEndpoint(payload || {});
         } catch (err) {
             return { ok: false, error: err.message || String(err), fallback: true, hfEndpoint: 'https://hf-mirror.com' };
+        }
+    });
+
+    register('transub-ensure-first-run-hf-endpoint', async (_event, payload = {}) => {
+        try {
+            const { ensureFirstRunHfEndpoint } = require('./hf-endpoint-first-run');
+            return await ensureFirstRunHfEndpoint({
+                ...(payload && typeof payload === 'object' ? payload : {}),
+                getAppRoot: () => getAppRoot(),
+            });
+        } catch (err) {
+            return {
+                ok: false,
+                error: err?.message || String(err),
+                fallback: true,
+                hfEndpoint: 'https://hf-mirror.com',
+            };
         }
     });
 

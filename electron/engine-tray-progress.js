@@ -52,6 +52,7 @@ function beginBatchTrayProgress(windowManager, opts = {}) {
     activeBatchTrayCtx = {
         items: buildTrayItems(opts.list),
         rate: resolveHistoryRate(merged),
+        mtModelId: String(merged.engineMtModel || merged.sakuraMtModel || '').trim(),
         trayProgressEnabled: enabled,
         windowManager: windowManager || null,
     };
@@ -95,6 +96,10 @@ function updateBatchTrayFromProgress(progress = {}) {
             videoCurrentSec: progress.videoCurrentSec,
             videoTotalSec: progress.videoTotalSec,
             itemStage: progress.itemStage,
+            itemProgress: itemProgress,
+            itemDetail: progress.itemDetail || progress.detail || '',
+            mtModelId: ctx.mtModelId,
+            engineMtModel: ctx.mtModelId,
             rate: ctx.rate,
         });
         ctx.windowManager.setTrayProgressEnabled?.(true);

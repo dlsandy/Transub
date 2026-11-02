@@ -84,7 +84,21 @@
         return AUDIO_EXT_SET.has(normalizeExt(value));
     }
 
+    /**
+     * Engine QC mix PCM and nested cache files. Never treat as a user job.
+     * Running ASR/MT on `{stem}.timing-16k.wav` writes ZH next to the cache
+     * (and can stamp 00:00:00 / shift the whole track).
+     */
+    function isInternalTimingCachePath(value) {
+        const norm = String(value || '').replace(/\\/g, '/').toLowerCase();
+        if (!norm) return false;
+        if (norm.includes('/.transub-cache/')) return true;
+        if (/\.timing-16k\.wav$/i.test(norm)) return true;
+        return false;
+    }
+
     function isMediaExt(value) {
+        if (isInternalTimingCachePath(value)) return false;
         return MEDIA_EXT_SET.has(normalizeExt(value));
     }
 
@@ -119,6 +133,7 @@
         isVideoExt,
         isAudioExt,
         isMediaExt,
+        isInternalTimingCachePath,
         getMediaMime,
         isMediaMimeType,
     };

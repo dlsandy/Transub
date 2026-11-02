@@ -78,4 +78,30 @@ describe('tone-adapt-lexicon-core', () => {
         assert.ok(prompt.includes('メンエス') || prompt.includes('免税'));
         assert.ok(lex.getSmartFaithfulPromptLines().some((l) => /メンエス|免税|オイル/.test(l)));
     });
+
+    it('does not treat leave-verb 出ていく as climax いく→去了', () => {
+        const leave = [
+            '出ていくよ',
+            'じゃあ出ていくね',
+            'ついていく',
+            'はぐしていく',
+        ];
+        for (const s of leave) {
+            const hits = lex.pickTermsForText(s, { limit: 20 });
+            assert.ok(
+                !hits.some((h) => /いく|イク/.test(h.term) && /去了/.test(h.translation)),
+                `poisoned leave: ${s} → ${JSON.stringify(hits)}`,
+            );
+            const applied = lex.applyNsfwLexiconToText(s, s);
+            assert.ok(!/去了/.test(applied.text), `leftover replace on ${s}: ${applied.text}`);
+        }
+        // Bare climax いく must still hit
+        const climax = lex.pickTermsForText('あ〜いく', { limit: 10 });
+        assert.ok(
+            climax.some((h) => /いく|イク/.test(h.term) && /去了/.test(h.translation)),
+            JSON.stringify(climax),
+        );
+        const examples = lex.formatPromptExamples();
+        assert.ok(!/(?:^|\/)いく→去了/.test(examples), `bare いく still in prompt examples: ${examples}`);
+    });
 });

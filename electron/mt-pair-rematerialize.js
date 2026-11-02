@@ -23,18 +23,40 @@ function rematerializeCuesOntoSource(sourceCues, translatedCues, options = {}) {
     if (!preferPositional) {
         try {
             const keep = require('./transcript-keep');
-            preferPositional = keep.cuesHaveBrokenTimeline(zh)
-                && !keep.cuesHaveBrokenTimeline(src);
+            // Dead ZH → 1:1 zip onto source times (avoids blanking / mega-join).
+            preferPositional = !!keep.cuesHaveBrokenTimeline?.(zh);
         } catch { /* optional */ }
     }
 
     if (preferPositional) {
         const blankText = options.blankText != null ? String(options.blankText) : '…';
+        const isEllipsisOnly = (text) => {
+            const t = String(text ?? '').trim();
+            return !t || t === blankText || /^(?:…|\.{3}|⋯)+$/.test(t);
+        };
+        const isLexicalJa = (text) => {
+            const t = String(text ?? '').trim();
+            if (!t || isEllipsisOnly(t)) return false;
+            return /[\u3040-\u30ff\u4e00-\u9fffA-Za-z]/.test(t);
+        };
+        // Dead-timeline zip is 1:1 by index. Leading ZH「…」from MT/credit would
+        // slide every later line onto the previous JA cue (SAN-494).
+        let zhSkip = 0;
+        while (
+            zhSkip < 3
+            && zhSkip < zh.length
+            && zhSkip < src.length
+            && isEllipsisOnly(zh[zhSkip]?.text)
+            && isLexicalJa(src[zhSkip]?.text)
+        ) {
+            zhSkip += 1;
+        }
+        const zhUse = zhSkip > 0 ? zh.slice(zhSkip) : zh;
         let changed = 0;
         const cues = src.map((s, i) => {
             const idx = Number.isInteger(Number(s?.index)) ? Number(s.index) : i;
-            const text = i < zh.length
-                ? String(zh[i]?.text ?? '').trim()
+            const text = i < zhUse.length
+                ? String(zhUse[i]?.text ?? '').trim()
                 : blankText;
             if (!text || text === blankText) changed += 1;
             return {
@@ -49,6 +71,7 @@ function rematerializeCuesOntoSource(sourceCues, translatedCues, options = {}) {
             cues,
             changed,
             mode: 'positional-dead-timeline',
+            zhSkip,
         };
     }
 
@@ -88,7 +111,10 @@ function rematerializeSubtitlePairFiles(targetPath, sourcePath, options = {}) {
     let preferPositional = options.preferPositional === true;
     try {
         const keep = require('./transcript-keep');
-        if (!force && keep.cuesHaveBrokenTimeline(zhCues) && !keep.cuesHaveBrokenTimeline(jaCues)) {
+        const zhBroken = !!keep.cuesHaveBrokenTimeline?.(zhCues);
+        const jaBroken = !!keep.cuesHaveBrokenTimeline?.(jaCues);
+        // Only auto-rewrite when ZH is dead and JA is healthy.
+        if (!force && zhBroken && !jaBroken) {
             force = true;
             preferPositional = true;
         }
@@ -171,7 +197,10 @@ function rematerializeCuesIfNeeded(zhCues, jaCues, options = {}) {
     let preferPositional = options.preferPositional === true;
     try {
         const keep = require('./transcript-keep');
-        if (!force && keep.cuesHaveBrokenTimeline(zh) && !keep.cuesHaveBrokenTimeline(ja)) {
+        const zhBroken = !!keep.cuesHaveBrokenTimeline?.(zh);
+        const jaBroken = !!keep.cuesHaveBrokenTimeline?.(ja);
+        // Rescue dead ZH onto healthy JA only. Never stamp a dead JA axis onto ZH.
+        if (!force && zhBroken && !jaBroken) {
             force = true;
             preferPositional = true;
         }

@@ -48,6 +48,71 @@ describe('smart-translate-hybrid-core', () => {
         assert.strictEqual(core.shouldUseHybridChunkMt({
             enabled: true, language: 'ja', cues: [{ text: 'ありがとう' }], modelId: 'hy-mt2-7b',
         }).ok, true);
+        // Yue source: Hy-MT2 / TG / Hunyuan may run hybrid (not Sakura JA packs).
+        assert.strictEqual(core.shouldUseHybridChunkMt({
+            enabled: true,
+            language: 'yue',
+            cues: [{ text: '拥有呢个世界一切嘅' }],
+            modelId: 'hy-mt2-7b',
+            subtitleTargetLang: 'zh-Hans',
+        }).ok, true);
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: '',
+            language: 'yue',
+            installedIds: ['hy-mt2-7b', 'sakura-1.5b', 'translategemma-4b'],
+            subtitleTargetLang: 'zh-Hans',
+        }), 'hy-mt2-7b');
+        // 30B flagship is opt-in only — never auto-prefer over 7B even when installed.
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: '',
+            language: 'yue',
+            installedIds: [
+                'hy-mt2-30b-a3b-heretic',
+                'hy-mt2-30b-a3b-heretic-mini',
+                'hy-mt2-7b',
+            ],
+            subtitleTargetLang: 'zh-Hans',
+            vramGb: 24,
+        }), 'hy-mt2-7b');
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: 'hy-mt2-30b-a3b-heretic-mini',
+            language: 'yue',
+            installedIds: ['hy-mt2-30b-a3b-heretic-mini', 'hy-mt2-7b'],
+            subtitleTargetLang: 'zh-Hans',
+        }), 'hy-mt2-30b-a3b-heretic-mini');
+    });
+
+    it('honors an explicit installed Murasaki quant instead of VRAM-downgrading', () => {
+        const installed = [
+            'murasaki-4b-v03-q8',
+            'murasaki-4b-v03-q6k',
+            'murasaki-4b-v03',
+        ];
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: 'murasaki-4b-v03-q8',
+            installedIds: installed,
+            vramGb: 6,
+        }), 'murasaki-4b-v03-q8');
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: 'murasaki-4b-v03-q8',
+            installedIds: installed,
+        }), 'murasaki-4b-v03-q8');
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: 'murasaki-4b-v03-q8',
+            installedIds: ['murasaki-4b-v03-q6k', 'murasaki-4b-v03'],
+            vramGb: 6,
+        }), 'murasaki-4b-v03-q6k');
+        // Retired F16 preference remaps to Q8 when installed.
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: 'murasaki-4b-v03-f16',
+            installedIds: ['murasaki-4b-v03-q8', 'murasaki-4b-v03-q6k'],
+            vramGb: 10,
+        }), 'murasaki-4b-v03-q8');
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: 'murasaki-4b-v03-f16',
+            installedIds: ['murasaki-4b-v03-f16', 'murasaki-4b-v03-q8'],
+            vramGb: 12,
+        }), 'murasaki-4b-v03-q8');
     });
 
     it('picks preferred installed translate-only model, else GalTransl/Sakura order', () => {
@@ -230,5 +295,25 @@ describe('smart-translate-hybrid-core', () => {
             modelId: 'translategemma-4-sub-e4b',
             subtitleTargetLang: 'zh-Hans',
         }).ok, true);
+    });
+
+    it('resolveHybridWindowLines uses Murasaki profile (not serial 1)', () => {
+        assert.strictEqual(core.resolveHybridWindowLines({
+            modelId: 'murasaki-4b-v03-q6k',
+        }), 3);
+        assert.strictEqual(core.resolveHybridWindowLines({
+            modelId: 'murasaki-4b-v03-q6k',
+            windowLines: 1,
+        }), 1, 'explicit override kept');
+        assert.strictEqual(core.resolveHybridWindowLines({
+            modelId: 'murasaki-4b-v03-q6k',
+            _blankRetry: true,
+        }), 1);
+        assert.strictEqual(core.resolveHybridWindowLines({
+            modelId: 'hy-mt2-7b',
+        }), 1);
+        assert.strictEqual(core.resolveHybridWindowLines({
+            modelId: 'sakura-galtransl-7b-q6k',
+        }), 8);
     });
 });

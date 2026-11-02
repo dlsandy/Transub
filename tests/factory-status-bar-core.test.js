@@ -30,6 +30,19 @@ describe('factory-status-bar-core', () => {
         assert.strictEqual(chips[0].value, '28%');
     });
 
+    it('buildResourceChips shows AMD total VRAM without used', () => {
+        const chips = bar.buildResourceChips({
+            cpuPct: 10,
+            memory: { usedBytes: 4 * (1024 ** 3), totalBytes: 16 * (1024 ** 3), usedPct: 25 },
+            gpu: { vendor: 'amd', utilPct: null, memUsedMiB: null, memTotalMiB: 16384 },
+        });
+        const gpu = chips.find((c) => c.id === 'gpu');
+        const vram = chips.find((c) => c.id === 'vram');
+        assert.strictEqual(gpu.value, 'AMD');
+        assert.strictEqual(vram.value, '—/16.0G');
+        assert.strictEqual(vram.pct, null);
+    });
+
     it('buildResourceChips always placeholders GPU/VRAM when undetected', () => {
         const chips = bar.buildResourceChips({
             cpuPct: 5,

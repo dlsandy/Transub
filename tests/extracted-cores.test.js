@@ -41,10 +41,25 @@ describe('extracted cores (first-pass monolith split)', () => {
     });
 
     it('engine-download-urls builds hub links', () => {
+        const { resolveHfEndpointForDownload } = require('../electron/engine-download-urls');
         assert.strictEqual(normalizeHfEndpoint('https://hf-mirror.com/'), 'https://hf-mirror.com');
         const urls = buildHubUrls('org/model', 'https://hf-mirror.com');
         assert.ok(urls.officialUrl.includes('huggingface.co/org/model'));
         assert.ok(urls.mirrorUrl.includes('hf-mirror.com/org/model'));
+        // Empty Models-form value must keep the saved mirror (not wipe to official Hub).
+        assert.strictEqual(
+            resolveHfEndpointForDownload('', 'https://hf-mirror.com'),
+            'https://hf-mirror.com',
+        );
+        assert.strictEqual(
+            resolveHfEndpointForDownload(null, 'https://hf-mirror.com'),
+            'https://hf-mirror.com',
+        );
+        assert.strictEqual(
+            resolveHfEndpointForDownload('https://huggingface.co', 'https://hf-mirror.com'),
+            'https://huggingface.co',
+        );
+        assert.strictEqual(resolveHfEndpointForDownload('', ''), 'https://hf-mirror.com');
     });
 
     it('buildUpdateFailure / formatUpdateFailureMeta expose diagnostics', () => {

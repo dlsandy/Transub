@@ -414,22 +414,30 @@ function cuesLackValidTiming(cues) {
     }
     let valid = 0;
     let zeroShort = 0;
+    let earlyStart = 0;
     const starts = new Set();
+    let maxStart = 0;
     for (const c of list) {
         const { startMs, endMs, valid: ok } = readCueTimingMs(c);
         if (ok) valid += 1;
         if (startMs <= 50 && (endMs - startMs) <= 600) zeroShort += 1;
+        if (startMs <= 50) earlyStart += 1;
         starts.add(startMs);
+        if (startMs > maxStart) maxStart = startMs;
     }
     if (zeroShort >= list.length) return true;
+    // Mass pile at t≈0 with padded 1s stubs still reads as "valid" per-cue
+    // (span>600ms) — catch before the valid early-out (SAN-494 timing-16k).
+    if (list.length >= 8 && earlyStart >= Math.ceil(list.length * 0.8) && maxStart < 1500) {
+        return true;
+    }
+    if (starts.size <= 2 && list.length >= 10 && maxStart < 1500) {
+        return true;
+    }
     if (list.length < 4) return false;
     if (valid >= Math.max(4, Math.ceil(list.length * 0.25))) return false;
     if (zeroShort >= Math.ceil(list.length * 0.8)) return true;
     if (starts.size <= 2 && list.length >= 10) return true;
-    const maxStart = list.reduce((m, c) => {
-        const { startMs } = readCueTimingMs(c);
-        return Math.max(m, startMs);
-    }, 0);
     return maxStart < 1500 && list.length >= 10;
 }
 
@@ -801,7 +809,48 @@ function keepTranscriptFromSourceCues(sourceCues, mediaPath, options = {}) {
         outputDir: options.outputDir || dir,
         mediaPath,
     });
-    const cues = engineCuesToKeepCues(enriched);
+    let cues = engineCuesToKeepCues(enriched);
+    // Text-only JA domain remap at keep time so shelf 转录/原文 pick up D01 fixes
+    // even when the early ASR keep path skips prepareSourceCuesBeforePreMt.
+    if (options.jaAsrDomainFix !== false && cues.length) {
+        try {
+            const mtSanitize = require('../src/js/mt-sanitize-core');
+            if (typeof mtSanitize.correctJaAsrDomainMishearsInCues === 'function') {
+                const domain = mtSanitize.correctJaAsrDomainMishearsInCues(cues);
+                if (Array.isArray(domain?.cues) && domain.cues.length) {
+                    cues = domain.cues;
+                }
+            }
+        } catch { /* optional */ }
+    }
+    // Structure cleanup parity with prepareSourceCuesBeforePreMt (bleed / echo / incomplete merge).
+    if (options.asrStructureCleanup !== false && cues.length) {
+        try {
+            const { cleanupAsrCues } = require('./asr-cue-cleanup');
+            const cleaned = cleanupAsrCues(cues, {
+                nameLoop: options.asrCleanupNameLoop !== false,
+                jaAsrDomainFix: false,
+                dedupeAsrEchoes: options.dedupeAsrEchoes !== false,
+                stitchJaFragments: options.stitchJaFragments !== false,
+                stripPrevPrefixBleed: options.stripPrevPrefixBleed !== false,
+                mergeIncompleteJa: options.mergeIncompleteJa !== false,
+                stripAsrTrailingEllipsis: options.stripAsrTrailingEllipsis !== false,
+                asrEchoMaxGapMs: options.asrEchoMaxGapMs,
+                asrEchoShortReactiveMaxGapMs: options.asrEchoShortReactiveMaxGapMs,
+            });
+            if (Array.isArray(cleaned?.cues) && cleaned.cues.length) {
+                cues = cleaned.cues.map((c, i) => ({
+                    index: i + 1,
+                    startMs: Number(c.startMs) || 0,
+                    endMs: Math.max(
+                        (Number(c.startMs) || 0) + 1,
+                        Number(c.endMs) || (Number(c.startMs) || 0) + 1000,
+                    ),
+                    text: String(c.text || '').trim(),
+                })).filter((c) => c.text);
+            }
+        } catch { /* optional */ }
+    }
     if (!cues.length) {
         return { ok: true, kept: [], skipped: true };
     }
@@ -875,6 +924,103 @@ function keepTranscriptFromJobResult({
 /**
  * Re-write a kept transcript after ZH subtitle is on disk (post-batch timing refresh).
  */
+/**
+ * Re-write a kept transcript after ZH subtitle is on disk (post-batch timing refresh).
+ * Always attempt when the keep file itself is collapsed, even if ZH texts diverge from JA.
+ */
+function shouldAttemptKeptTranscriptTimingRefresh(keptCues, { zhCues, engineJa } = {}) {
+    if (cuesLackValidTiming(keptCues) || cuesHaveBrokenTimeline(keptCues)) return true;
+    const zh = Array.isArray(zhCues) ? zhCues : [];
+    const ja = Array.isArray(engineJa) ? engineJa : [];
+    if (ja.length >= 8 && zh.length >= 8 && cuesHeadDivergesFromSnapshot(zh, ja)) return false;
+    return true;
+}
+
+/**
+ * Keep `{mediaDir}/{stem}.transcribe.srt` in sync with the authoritative JA track
+ * (usually the library keep). Stale beside-media sidecars from a crashed/partial
+ * posttask otherwise load in the player/editor and look like severe A/V offset
+ * (START-655: 948-cue diagnostic JA vs 905-cue delivery ZH).
+ *
+ * By default this never *creates* a new film-adjacent `.transcribe.srt` — transcripts
+ * live in the keep library (`subtitles/`). Settings「原文」writes engine `.src.*` (or
+ * language-tagged) sidecars via outputWriteSource; pointing「转录保留位置」at a folder
+ * writes `.transcribe.srt` there via keep. Pass `createBesideMedia: true` only for an
+ * explicit opt-in copy. Existing beside-media leftovers are still refreshed when stale
+ * (START-655).
+ *
+ * @returns {{ ok: boolean, synced?: boolean, skipped?: boolean, reason?: string, path?: string, error?: string }}
+ */
+function syncMediaAdjacentTranscript(mediaPath, authoritativePath, options = {}) {
+    const media = String(mediaPath || '').trim();
+    const auth = String(authoritativePath || '').trim();
+    if (!media || !auth || !fs.existsSync(auth)) {
+        return { ok: true, skipped: true, reason: 'missing_auth' };
+    }
+    let mediaDir = '';
+    try {
+        mediaDir = fs.statSync(media).isDirectory() ? media : path.dirname(media);
+    } catch {
+        return { ok: true, skipped: true, reason: 'bad_media' };
+    }
+    const destName = buildTranscribeKeepBasename(
+        `${path.basename(media, path.extname(media))}.srt`,
+        media,
+    );
+    const dest = path.join(mediaDir, destName);
+    let authResolved = '';
+    let destResolved = '';
+    try {
+        authResolved = path.resolve(auth);
+        destResolved = path.resolve(dest);
+    } catch {
+        return { ok: true, skipped: true, reason: 'resolve_failed' };
+    }
+    if (authResolved === destResolved) {
+        return { ok: true, skipped: true, reason: 'same_path', path: dest };
+    }
+
+    const destExists = fs.existsSync(dest);
+    if (!destExists && options.createBesideMedia !== true) {
+        return { ok: true, skipped: true, reason: 'no_create', path: dest };
+    }
+
+    // Skip when adjacent already matches (size + mtime + cue count / head times).
+    if (destExists) {
+        try {
+            const a = fs.statSync(auth);
+            const b = fs.statSync(dest);
+            if (a.size === b.size && Math.abs(a.mtimeMs - b.mtimeMs) < 2000) {
+                return { ok: true, skipped: true, reason: 'already_fresh', path: dest };
+            }
+            const authCues = loadSubtitleAsEngineCues(auth);
+            const destCues = loadSubtitleAsEngineCues(dest);
+            if (
+                authCues.length >= 8
+                && destCues.length === authCues.length
+                && !cuesHeadDivergesFromSnapshot(
+                    engineCuesToKeepCues(destCues),
+                    engineCuesToKeepCues(authCues),
+                )
+                && !cuesLackValidTiming(destCues)
+            ) {
+                return { ok: true, skipped: true, reason: 'content_match', path: dest };
+            }
+        } catch { /* fall through to copy */ }
+    }
+
+    try {
+        fs.copyFileSync(auth, dest);
+        try {
+            const now = new Date();
+            fs.utimesSync(dest, now, now);
+        } catch { /* ignore */ }
+        return { ok: true, synced: true, path: dest };
+    } catch (err) {
+        return { ok: false, error: err.message || String(err), path: dest };
+    }
+}
+
 function refreshKeptTranscriptTimings(keptPath, refs = {}, options = {}) {
     const kept = String(keptPath || '').trim();
     if (!kept || !fs.existsSync(kept)) {
@@ -1128,7 +1274,9 @@ module.exports = {
     engineCuesToKeepCues,
     keepTranscriptFromSourceCues,
     keepTranscriptFromJobResult,
+    syncMediaAdjacentTranscript,
     refreshKeptTranscriptTimings,
+    shouldAttemptKeptTranscriptTimingRefresh,
     resolveZhTimingCandidatePaths,
     loadSubtitleAsEngineCues,
     findKeptTranscript,

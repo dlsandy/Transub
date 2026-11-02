@@ -133,17 +133,66 @@ describe('app-updater', () => {
         }
     });
 
-    it('buildUpdateFailure attaches structured diagnostic fields', () => {
-        const err = Object.assign(new Error('增量包校验失败: a.zip'), {
-            code: 'checksum',
-            expectedSha: 'deadbeef',
-            gotSha: 'cafebabe',
+    it('buildDualHostReleaseState prefers a version that has a full zip', () => {
+        const {
+            buildDualHostReleaseState,
+            buildUpdateAvailableMessage,
+        } = require('../electron/app-updater');
+
+        const withZip = {
+            tag_name: 'v3.2.1',
+            html_url: 'https://github.com/dlsandy/Transub/releases/tag/v3.2.1',
+            body: 'notes-321',
+            assets: [{
+                name: 'Transub-3.2.1-win.zip',
+                browser_download_url: 'https://github.com/dlsandy/Transub/releases/download/v3.2.1/Transub-3.2.1-win.zip',
+            }],
+        };
+        const emptyNewer = {
+            tag_name: 'v3.2.2',
+            html_url: 'https://gitcode.com/AndyDai/Transub/releases/v3.2.2',
+            body: 'notes-322',
+            assets: [
+                {
+                    name: 'v3.2.2.zip',
+                    browser_download_url: 'https://raw.gitcode.com/AndyDai/Transub/archive/refs/heads/v3.2.2.zip',
+                    type: 'source',
+                },
+            ],
+        };
+
+        const skew = buildDualHostReleaseState(withZip, emptyNewer);
+        assert.strictEqual(skew.announcedVersion, '3.2.2');
+        assert.strictEqual(skew.latestVersion, '3.2.1');
+        assert.strictEqual(skew.assetsPending, true);
+        assert.strictEqual(skew.zipUrls.length, 1);
+        assert.ok(skew.zipUrls[0].includes('3.2.1-win.zip'));
+
+        const emptyOnly = buildDualHostReleaseState(null, emptyNewer);
+        assert.strictEqual(emptyOnly.latestVersion, '3.2.2');
+        assert.strictEqual(emptyOnly.assetsPending, true);
+        assert.strictEqual(emptyOnly.zipUrls.length, 0);
+
+        const ok = buildDualHostReleaseState(withZip, {
+            ...withZip,
+            html_url: 'https://gitcode.com/AndyDai/Transub/releases/v3.2.1',
+            assets: [{
+                name: 'Transub-3.2.1-win.zip',
+                browser_download_url: 'https://gitcode.com/AndyDai/Transub/releases/download/v3.2.1/Transub-3.2.1-win.zip',
+            }],
         });
-        const fail = buildUpdateFailure(err, { preferredSource: 'GitCode', triedSources: ['GitHub', 'GitCode'] });
-        assert.strictEqual(fail.ok, false);
-        assert.strictEqual(fail.code, 'checksum');
-        assert.strictEqual(fail.expectedSha, 'deadbeef');
-        assert.ok(formatUpdateFailureMeta(fail).includes('GitCode'));
-        assert.ok(formatUpdateFailureMeta(fail).includes('校验失败'));
+        assert.strictEqual(ok.assetsPending, false);
+        assert.strictEqual(ok.zipUrls.length, 2);
+
+        assert.ok(buildUpdateAvailableMessage({
+            updateAvailable: true,
+            zipAuto: false,
+            assetsPending: true,
+            hasZip: false,
+            announcedVersion: '3.2.2',
+            latestVersion: '3.2.2',
+            currentVersion: '3.2.0',
+            installKind: 'zip',
+        }).includes('暂无可下载的安装包'));
     });
 });

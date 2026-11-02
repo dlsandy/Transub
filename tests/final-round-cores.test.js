@@ -29,7 +29,7 @@ describe('final-round cores', () => {
         }).shouldCompact, true);
     });
 
-    it('av_soft / 番号 still honor clear settings', () => {
+    it('av_soft pins clear for viewing (SFX off-screen)', () => {
         const flags = post.resolveInterjectionDropFlags({
             postBatchInterjectionMode: 'clear',
             postBatchOnomatopoeiaMode: 'clear',
@@ -43,11 +43,15 @@ describe('final-round cores', () => {
         assert.strictEqual(flags.dropOnomatopoeia, true);
         assert.strictEqual(flags.shouldCompact, true);
         assert.strictEqual(flags.softAvSkipped, false);
-        assert.strictEqual(post.resolveInterjectionDropFlags({
-            postBatchInterjectionMode: 'clear',
+        // Soft overrides light/off → clear so pure moans never ship.
+        const softForced = post.resolveInterjectionDropFlags({
+            postBatchInterjectionMode: 'off',
             postBatchOnomatopoeiaMode: 'off',
             contentProfile: 'av_soft',
-        }).shouldCompact, true);
+        });
+        assert.strictEqual(softForced.dropDiscourse, true);
+        assert.strictEqual(softForced.dropOnomatopoeia, true);
+        assert.strictEqual(softForced.shouldCompact, true);
         assert.strictEqual(post.resolveInterjectionDropFlags({
             postBatchInterjectionMode: 'clear',
             postBatchOnomatopoeiaMode: 'clear',

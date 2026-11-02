@@ -94,6 +94,8 @@
         const updateParamsSummary = d.updateParamsSummary || (() => {});
         const syncParamsMoreChipUi = d.syncParamsMoreChipUi || (() => {});
         const toQuickTargetLang = d.toQuickTargetLang || ((v) => String(v || 'simplified'));
+        const applyQuickTargetChipValue = d.applyQuickTargetChipValue || null;
+        const updateRecipeCapsule = d.updateRecipeCapsule || (() => {});
         const readTranslateModeFromForm = d.readTranslateModeFromForm || (() => '');
         const getIsStandaloneSettings = d.getIsStandaloneSettings || (() => false);
         const setAddMenuOpen = d.setAddMenuOpen || (() => {});
@@ -457,8 +459,23 @@
                 }
             });
             els.quickLanguageSelect?.addEventListener('change', () => {
-                if (els.languageSelect) {
-                    els.languageSelect.value = els.quickLanguageSelect.value;
+                const liveQuick = (typeof document !== 'undefined'
+                    ? document.getElementById('quickLanguageSelect')
+                    : null)
+                    || els.quickLanguageSelect
+                    || null;
+                if (liveQuick) els.quickLanguageSelect = liveQuick;
+                const liveLang = (typeof document !== 'undefined'
+                    ? document.getElementById('languageSelect')
+                    : null)
+                    || els.languageSelect
+                    || null;
+                if (liveLang) {
+                    els.languageSelect = liveLang;
+                    const qLang = String(liveQuick?.value || '').trim();
+                    if (qLang && [...(liveLang.options || [])].some((o) => o.value === qLang)) {
+                        liveLang.value = qLang;
+                    }
                 }
                 applyMtTargetCapabilityToForm({ toast: true, refreshSelect: true });
                 updateParamsSummary();
@@ -467,29 +484,34 @@
                 void persistFormOptionsQuiet();
             });
             els.quickTargetLangSelect?.addEventListener('change', () => {
-                if (els.chineseSubtitleVariantSelect) {
-                    const raw = els.quickTargetLangSelect.value || 'simplified';
+                const raw = els.quickTargetLangSelect.value || 'simplified';
+                if (typeof applyQuickTargetChipValue === 'function') {
+                    applyQuickTargetChipValue(raw);
+                } else if (els.chineseSubtitleVariantSelect && raw !== 'source') {
                     els.chineseSubtitleVariantSelect.value = toQuickTargetLang(raw);
                 }
                 applyMtTargetCapabilityToForm({ toast: true, refreshSelect: true });
                 syncParamsMoreChipUi();
                 updateParamsSummary();
                 syncMtModelChipUi();
+                updateRecipeCapsule();
                 try {
                     applyTranslateModeToForm(readTranslateModeFromForm(), { fromUser: false });
                 } catch { /* ignore */ }
                 void persistFormOptionsQuiet();
             });
             els.chineseSubtitleVariantSelect?.addEventListener('change', () => {
-                if (els.quickTargetLangSelect) {
-                    els.quickTargetLangSelect.value = toQuickTargetLang(
-                        els.chineseSubtitleVariantSelect.value || 'simplified',
-                    );
+                const raw = els.chineseSubtitleVariantSelect.value || 'simplified';
+                if (typeof applyQuickTargetChipValue === 'function') {
+                    applyQuickTargetChipValue(raw);
+                } else if (els.quickTargetLangSelect) {
+                    els.quickTargetLangSelect.value = toQuickTargetLang(raw);
                 }
                 applyMtTargetCapabilityToForm({ toast: true, refreshSelect: true });
                 syncParamsMoreChipUi();
                 updateParamsSummary();
                 syncMtModelChipUi();
+                updateRecipeCapsule();
                 try {
                     applyTranslateModeToForm(readTranslateModeFromForm(), { fromUser: false });
                 } catch { /* ignore */ }

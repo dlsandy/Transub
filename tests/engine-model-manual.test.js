@@ -67,15 +67,31 @@ describe('engine Hub model manual install helpers', () => {
     });
 
     it('hub fallback catalog has no retired non-hf Qwen3 JA', () => {
-        const { ENGINE_MODEL_HUB_FALLBACK } = require('../electron/engine-download-info');
+        const {
+            BUNDLED_ALWAYS_READY_MODEL_IDS,
+            ENGINE_MODEL_HUB_FALLBACK,
+        } = require('../electron/engine-download-info');
         assert.ok(!ENGINE_MODEL_HUB_FALLBACK['qwen3-asr-1.7b-ja']);
+        assert.ok(!ENGINE_MODEL_HUB_FALLBACK['qwen3-asr-1.7b-ja-anime-lora-v3']);
         assert.ok(ENGINE_MODEL_HUB_FALLBACK['qwen3-asr-1.7b']);
         assert.ok(String(ENGINE_MODEL_HUB_FALLBACK['qwen3-asr-1.7b'].hubId).endsWith('-hf'));
+        assert.ok(ENGINE_MODEL_HUB_FALLBACK['ten-vad']);
+        assert.strictEqual(ENGINE_MODEL_HUB_FALLBACK['ten-vad'].kind, 'vad');
+        assert.strictEqual(ENGINE_MODEL_HUB_FALLBACK['ten-vad'].hubId, '');
+        assert.ok(BUNDLED_ALWAYS_READY_MODEL_IDS.has('ten-vad'));
+        assert.ok(BUNDLED_ALWAYS_READY_MODEL_IDS.has('silero-vad'));
         const { canonicalizeEngineAsrModelId } = require('../electron/engine-asr-aliases');
         assert.strictEqual(canonicalizeEngineAsrModelId('qwen3-asr-1.7b-ja'), 'qwen3-asr-1.7b');
+        assert.strictEqual(
+            canonicalizeEngineAsrModelId('qwen3-asr-1.7b-ja-anime-lora-v3'),
+            'qwen3-asr-1.7b-ja-anime-galgame',
+        );
         const ids = resolveDownloadModelIds({ modelIds: ['qwen3-asr-1.7b-ja'] });
         assert.ok(ids.includes('qwen3-asr-1.7b'));
         assert.ok(!ids.includes('qwen3-asr-1.7b-ja'));
+        const loraIds = resolveDownloadModelIds({ modelIds: ['qwen3-asr-1.7b-ja-anime-lora-v3'] });
+        assert.ok(loraIds.includes('qwen3-asr-1.7b-ja-anime-galgame'));
+        assert.ok(!loraIds.includes('qwen3-asr-1.7b-ja-anime-lora-v3'));
     });
 
     it('resolveOrtGpuManualPackage honors requirement pin', () => {

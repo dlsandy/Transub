@@ -114,6 +114,60 @@ async function reclaimLocalLlmBeforeEngineJob(appendLog) {
     return res;
 }
 
+/**
+ * Before each batch item's ASR / Demucs: free desktop llama, engine-owned llama,
+ * and (when requested) engine ASR VRAM.
+ *
+ * Batch-start reclaim alone left llama warm after item-1 MT/QC, so item-2 Demucs
+ * often OOMs while a single-file run succeeds.
+ *
+ * @param {((line: string) => void)|null|undefined} appendLog
+ * @param {{
+ *   baseUrl?: string,
+ *   releaseEngineGpu?: boolean,
+ *   reason?: string,
+ *   timeoutMs?: number,
+ * }} [opts]
+ */
+async function reclaimComputeBeforeBatchItem(appendLog, opts = {}) {
+    const baseUrl = String(opts.baseUrl || '').trim();
+    const releaseEngineGpu = opts.releaseEngineGpu !== false;
+    const timeoutMs = Math.max(3000, Number(opts.timeoutMs) || 15000);
+    const reason = String(opts.reason || 'pre_batch_item').trim() || 'pre_batch_item';
+
+    const desktop = await reclaimLocalLlmBeforeEngineJob(appendLog);
+
+    let engineLlmStopped = false;
+    if (baseUrl) {
+        try {
+            const { stopLlm } = require('./engine-llm-client');
+            const stopped = await stopLlm(baseUrl, { reason, timeoutMs });
+            engineLlmStopped = !!(stopped?.ok && stopped.data?.stopped);
+            if (engineLlmStopped && typeof appendLog === 'function') {
+                try {
+                    appendLog('[engine] 已停止引擎内 LLM（腾出显存给识别/人声分离）');
+                } catch (_) { /* ignore */ }
+            }
+        } catch (_) { /* optional — older engines lack /v1/llm */ }
+    }
+
+    let gpuReleased = false;
+    if (baseUrl && releaseEngineGpu) {
+        try {
+            const { releaseGpuMemory } = require('./engine-client');
+            const released = await releaseGpuMemory(baseUrl, { timeoutMs });
+            gpuReleased = !!(released?.ok);
+        } catch (_) { /* optional */ }
+    }
+
+    return {
+        ok: true,
+        desktopStopped: !!desktop?.stopped,
+        engineLlmStopped,
+        gpuReleased,
+    };
+}
+
 module.exports = {
     EDITOR_OWNED_KINDS,
     stopLocalLlmQuiet,
@@ -121,4 +175,5 @@ module.exports = {
     reclaimLocalLlmWhenEditorsGone,
     reclaimLocalLlmWhenEditorsGoneAsync,
     reclaimLocalLlmBeforeEngineJob,
+    reclaimComputeBeforeBatchItem,
 };

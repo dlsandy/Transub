@@ -87,7 +87,9 @@ function isSourceSubtitleTrack(filePath) {
     const base = path.basename(String(filePath || ''));
     return /\.src\.|_src\.|\.source\./i.test(base)
         || /\.transcribe\./i.test(base)
+        || /_transcribe\./i.test(base)
         || /\.original\./i.test(base)
+        || /_original\./i.test(base)
         || /[.\\_-]ja(?:\.|$)/i.test(base);
 }
 

@@ -145,4 +145,26 @@ describe('shouldDegradeHybridChunkOnlyToChat', () => {
         });
         assert.strictEqual(polishOk.modelId, 'qwen25-7b');
     });
+});describe('formatMissingSmartTranslateFallbackMessage', () => {
+    const {
+        formatMissingSmartTranslateFallbackMessage,
+    } = require('../electron/advanced-smart-translate-job');
+
+    it('names both models and softens sibling-quant wording', () => {
+        const siblingMsg = formatMissingSmartTranslateFallbackMessage({
+            missingFallbackFrom: 'qwen35-9b-abliterated',
+            modelId: 'qwen35-9b-abliterated-q5',
+        });
+        assert.match(siblingMsg, /同系列/);
+        assert.match(siblingMsg, /Abliterated/);
+        assert.doesNotMatch(siblingMsg, /^智能翻译模型尚未下载/);
+
+        const otherMsg = formatMissingSmartTranslateFallbackMessage({
+            missingFallbackFrom: 'qwen25-14b',
+            modelId: 'qwen35-9b-abliterated-q5',
+        });
+        assert.match(otherMsg, /尚未下载/);
+        assert.match(otherMsg, /14B|14b|qwen25-14b/i);
+        assert.doesNotMatch(otherMsg, /同系列/);
+    });
 });

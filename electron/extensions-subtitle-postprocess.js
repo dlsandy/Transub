@@ -47,9 +47,13 @@ function createSubtitlePostprocess(host = {}) {
             spacePunct: null,
             cpsSplit: null,
             noise: null,
+            asrEcho: null,
             jaStitch: null,
+            trailingEllipsis: null,
             compressRep: null,
             viewingPunct: null,
+            trailingPeriod: null,
+            inlineFillerStrip: null,
             fillerSoften: null,
             bilingualFillerDrop: null,
             chinese: null,
@@ -138,17 +142,58 @@ function createSubtitlePostprocess(host = {}) {
                 return { ok: false, error: err.message || '无法加载通顺度模块' };
             }
             const cuesBeforeNoise = sourceTrack ? null : cues.map((c) => ({ ...c }));
+            // Drop leftover ASR echoes before stitch/noise (tail replay across two cues).
+            if (
+                doNoise
+                && sourceTrack
+                && options.dedupeAsrEchoes !== false
+                && typeof fluency.dedupeAsrEchoCues === 'function'
+            ) {
+                const deduped = fluency.dedupeAsrEchoCues(cues, {
+                    maxGapMs: options.asrEchoMaxGapMs,
+                });
+                if (deduped.removed > 0) {
+                    cues = deduped.cues;
+                    result.asrEcho = {
+                        summary: fluency.summarizeAsrEchoDedupe(deduped.stats),
+                        stats: deduped.stats,
+                    };
+                }
+            }
             // Stitch JA mid-phrase ASR splits before deleting leftover fragments.
             if (doNoise && stitchJaFragments && typeof fluency.stitchJaFragmentCues === 'function') {
                 const stitched = fluency.stitchJaFragmentCues(cues, {
                     maxGapMs: options.jaStitchMaxGapMs,
+                    wideGapMs: options.jaStitchWideGapMs,
+                    phraseGapMs: options.jaStitchPhraseGapMs,
                     maxMergedDurMs: options.jaStitchMaxMergedDurMs,
+                    phraseStitch: options.phraseStitch !== false,
                 });
                 if (stitched.mergedPairs > 0) {
                     cues = stitched.cues;
                     result.jaStitch = {
                         summary: fluency.summarizeJaStitch(stitched.stats),
                         stats: stitched.stats,
+                    };
+                }
+            }
+            // ZH prenominal「…的｜名词」on translation tracks (MARR: 爱喝酒的｜青豆腐).
+            if (
+                doNoise
+                && !sourceTrack
+                && options.zhPhraseStitch !== false
+                && typeof fluency.stitchZhPrenominalCues === 'function'
+            ) {
+                const zhStitched = fluency.stitchZhPrenominalCues(cues, {
+                    phraseGapMs: options.jaStitchPhraseGapMs,
+                    maxMergedDurMs: options.jaStitchMaxMergedDurMs,
+                    phraseStitch: options.phraseStitch !== false,
+                });
+                if (zhStitched.mergedPairs > 0) {
+                    cues = zhStitched.cues;
+                    result.zhStitch = {
+                        summary: `拼接中文半句 ${zhStitched.mergedPairs} 处（${zhStitched.stats.before}→${zhStitched.stats.after} 条）`,
+                        stats: zhStitched.stats,
                     };
                 }
             }
@@ -207,6 +252,22 @@ function createSubtitlePostprocess(host = {}) {
                     }
                 } catch { /* domain fix optional */ }
             }
+            // Decorative trailing … from JA ASR (keep mid-cue / pure placeholders).
+            if (
+                doNoise
+                && sourceTrack
+                && options.stripAsrTrailingEllipsis !== false
+                && typeof fluency.stripAsrDecorativeTrailingEllipsisInCues === 'function'
+            ) {
+                const stripped = fluency.stripAsrDecorativeTrailingEllipsisInCues(cues);
+                if (stripped.changed > 0) {
+                    cues = stripped.cues;
+                    result.trailingEllipsis = {
+                        changed: stripped.changed,
+                        summary: `去除句尾装饰省略号 ${stripped.changed} 条`,
+                    };
+                }
+            }
         }
 
         if (doCompressRep) {
@@ -238,6 +299,36 @@ function createSubtitlePostprocess(host = {}) {
                     summary: compressed.summary,
                     stats: compressed.stats,
                 };
+            }
+        }
+
+        // 行内清语气：唉，啊…手有点…，啊，要射了 → 手有点…，要射了（清除档；保留句末软语气「好棒啊」）
+        // Run before viewing-punct so 、，… separators still help tokenize breath stacks.
+        const doStripInlineFillers = options.stripInlineFillers === true
+            && !sourceTrack;
+        if (doStripInlineFillers) {
+            let fluency;
+            try {
+                fluency = require('../src/js/subtitle-fluency-core');
+            } catch (err) {
+                return { ok: false, error: err.message || '无法加载通顺度模块' };
+            }
+            if (typeof fluency.stripInlineFillersInCues === 'function') {
+                const stripped = fluency.stripInlineFillersInCues(cues, {
+                    checkDiscourse: options.stripInlineDiscourse !== false,
+                    checkOnomatopoeia: options.stripInlineOnomatopoeia !== false,
+                    targetLang: options.subtitleTargetLang || options.targetLang || 'zh',
+                    dropEmptied: options.stripInlineDropEmptied !== false,
+                });
+                cues = stripped.cues;
+                if (stripped.stats?.cueTouched || stripped.stats?.dropped) {
+                    result.inlineFillerStrip = {
+                        summary: stripped.summary,
+                        stats: stripped.stats,
+                        changedIndexes: stripped.changedIndexes,
+                        droppedIndexes: stripped.droppedIndexes,
+                    };
+                }
             }
         }
 
@@ -284,6 +375,26 @@ function createSubtitlePostprocess(host = {}) {
                 result.viewingPunct = {
                     summary: simplified.summary,
                     stats: simplified.stats,
+                };
+            }
+        }
+
+        // Always strip trailing 。／． on delivery ZH — even when viewing punct is off
+        // (Murasaki/GalTransl often add sentence-final periods). Also normalize ~~ → ….
+        const doStripTrailingPeriod = options.stripTrailingSentencePeriod !== false;
+        if (doStripTrailingPeriod && !sourceTrack) {
+            let fluency;
+            try {
+                fluency = require('../src/js/subtitle-fluency-core');
+            } catch (err) {
+                return { ok: false, error: err.message || '无法加载通顺度模块' };
+            }
+            if (typeof fluency.stripTrailingZhSentencePeriodInCues === 'function') {
+                const stripped = fluency.stripTrailingZhSentencePeriodInCues(cues, {});
+                cues = stripped.cues;
+                result.trailingPeriod = {
+                    summary: stripped.summary,
+                    stats: stripped.stats,
                 };
             }
         }
@@ -406,11 +517,18 @@ function createSubtitlePostprocess(host = {}) {
             || (result.spacePunct && Number(result.spacePunct.stats?.cueTouched) > 0)
             || (result.cpsSplit && Number(result.cpsSplit.stats?.affected) > 0)
             || noiseTouched
+            || (result.asrEcho && Number(result.asrEcho.stats?.removed) > 0)
             || (result.jaStitch && Number(result.jaStitch.stats?.mergedPairs) > 0)
             || (result.jaAsrDomain && Number(result.jaAsrDomain.changed) > 0)
+            || (result.trailingEllipsis && Number(result.trailingEllipsis.changed) > 0)
             || (result.compressRep && Number(result.compressRep.stats?.cueTouched) > 0)
             || (result.viewingPunct && Number(result.viewingPunct.stats?.cueTouched) > 0)
+            || (result.trailingPeriod && Number(result.trailingPeriod.stats?.cueTouched) > 0)
             || (result.fillerSoften && Number(result.fillerSoften.stats?.cueTouched) > 0)
+            || (result.inlineFillerStrip && (
+                Number(result.inlineFillerStrip.stats?.cueTouched) > 0
+                || Number(result.inlineFillerStrip.stats?.dropped) > 0
+            ))
             || (result.bilingualFillerDrop && Number(result.bilingualFillerDrop.dropped) > 0)
             || (result.chinese && Number(result.chinese.stats?.cueTouched) > 0);
 
@@ -434,6 +552,15 @@ function createSubtitlePostprocess(host = {}) {
             parts.push(result.spacePunct.summary);
         }
         if (result.cpsSplit?.summary) parts.push(result.cpsSplit.summary);
+        if (result.asrEcho?.summary && result.asrEcho.stats?.removed) {
+            parts.push(result.asrEcho.summary);
+        }
+        if (result.jaStitch?.summary && result.jaStitch.stats?.mergedPairs) {
+            parts.push(result.jaStitch.summary);
+        }
+        if (result.trailingEllipsis?.summary && result.trailingEllipsis.changed) {
+            parts.push(result.trailingEllipsis.summary);
+        }
         if (result.noise?.summary && (result.noise.stats?.removed || result.noise.stats?.blanked)) {
             parts.push(result.noise.summary);
         }
@@ -443,8 +570,15 @@ function createSubtitlePostprocess(host = {}) {
         if (result.viewingPunct?.summary && result.viewingPunct.stats?.cueTouched) {
             parts.push(result.viewingPunct.summary);
         }
+        if (result.trailingPeriod?.summary && result.trailingPeriod.stats?.cueTouched) {
+            parts.push(result.trailingPeriod.summary);
+        }
         if (result.fillerSoften?.summary && result.fillerSoften.stats?.cueTouched) {
             parts.push(result.fillerSoften.summary);
+        }
+        if (result.inlineFillerStrip?.summary
+            && (result.inlineFillerStrip.stats?.cueTouched || result.inlineFillerStrip.stats?.dropped)) {
+            parts.push(result.inlineFillerStrip.summary);
         }
         if (result.bilingualFillerDrop?.summary && result.bilingualFillerDrop.dropped) {
             parts.push(result.bilingualFillerDrop.summary);
@@ -501,14 +635,81 @@ function createSubtitlePostprocess(host = {}) {
             return { ok: false, error: '通顺度模块缺少成对清噪接口' };
         }
 
-        const before = target.cues.length;
+        // Phrase/mid-word JA stitch with lockstep ZH (before noise delete).
+        let workingZh = target.cues;
+        let stitchStats = null;
+        let echoStats = null;
+        // Echo dedupe on equal-length JA↔ZH: drop JA leftover + matching ZH index.
+        if (
+            options.dedupeAsrEchoes !== false
+            && workingZh.length === sourceCues.length
+            && typeof fluency.dedupeAsrEchoCues === 'function'
+            && typeof fluency.isAsrEchoPair === 'function'
+        ) {
+            const maxGapMs = Math.max(0, Math.min(12000, Number(options.asrEchoMaxGapMs) || 4000));
+            const nextZh = [];
+            const nextJa = [];
+            let removed = 0;
+            for (let i = 0; i < sourceCues.length; i += 1) {
+                const ja = sourceCues[i];
+                const zh = workingZh[i];
+                if (nextJa.length) {
+                    const prevJa = nextJa[nextJa.length - 1];
+                    const gap = (Number(ja?.startMs) || 0) - (Number(prevJa?.endMs) || 0);
+                    if (
+                        Number.isFinite(gap)
+                        && gap <= maxGapMs
+                        && fluency.isAsrEchoPair(prevJa?.text, ja?.text)
+                    ) {
+                        const prevBare = fluency.bareAsrEchoText(prevJa?.text);
+                        const curBare = fluency.bareAsrEchoText(ja?.text);
+                        if (curBare.length > prevBare.length) {
+                            nextJa[nextJa.length - 1] = ja;
+                            nextZh[nextZh.length - 1] = zh;
+                        }
+                        removed += 1;
+                        continue;
+                    }
+                }
+                nextJa.push(ja);
+                nextZh.push(zh);
+            }
+            if (removed > 0) {
+                workingZh = nextZh;
+                sourceCues = nextJa;
+                echoStats = {
+                    before: target.cues.length,
+                    after: nextJa.length,
+                    removed,
+                };
+            }
+        }
+        if (
+            options.stitchJaFragments !== false
+            && typeof fluency.stitchAlignedJaZhFragmentPairs === 'function'
+        ) {
+            const stitched = fluency.stitchAlignedJaZhFragmentPairs(workingZh, sourceCues, {
+                maxGapMs: options.jaStitchMaxGapMs,
+                wideGapMs: options.jaStitchWideGapMs,
+                phraseGapMs: options.jaStitchPhraseGapMs,
+                maxMergedDurMs: options.jaStitchMaxMergedDurMs,
+                phraseStitch: options.phraseStitch !== false,
+            });
+            if (!stitched.skipped && stitched.mergedPairs > 0) {
+                workingZh = stitched.zhCues;
+                sourceCues = stitched.jaCues;
+                stitchStats = stitched.stats;
+            }
+        }
+
+        const before = workingZh.length;
         let slotCore;
         try {
             slotCore = require('../src/js/mt-subtitle-slot-core');
         } catch (err) {
             return { ok: false, error: err.message || '无法加载译文字幕保护模块' };
         }
-        const cleaned = fluency.removeAlignedNoiseFromCuePairs(target.cues, sourceCues, {
+        const cleaned = fluency.removeAlignedNoiseFromCuePairs(workingZh, sourceCues, {
             removeEmpty: options.removeEmpty !== false,
             removeFragments: options.removeFragments !== false,
             removeSoundEffects: options.removeSoundEffects !== false,
@@ -519,6 +720,60 @@ function createSubtitlePostprocess(host = {}) {
             hallucinationMaxDurMs: options.hallucinationMaxDurMs,
         });
         if (cleaned.skipped) {
+            let skipJa = sourceCues;
+            let skipEllipsis = 0;
+            if (
+                options.stripAsrTrailingEllipsis !== false
+                && typeof fluency.stripAsrDecorativeTrailingEllipsisInCues === 'function'
+            ) {
+                const stripped = fluency.stripAsrDecorativeTrailingEllipsisInCues(skipJa);
+                if (stripped.changed > 0) {
+                    skipJa = stripped.cues;
+                    skipEllipsis = Number(stripped.changed) || 0;
+                }
+            }
+            // Persist echo/stitch/ellipsis progress when noise path skips.
+            if (stitchStats?.mergedPairs || echoStats?.removed || skipEllipsis) {
+                const writtenZh = writeSubtitleDocument(target.path, {
+                    cues: workingZh,
+                    format: target.format,
+                    header: target.header,
+                    backupMode: options.backupMode || 'off',
+                });
+                if (!writtenZh.ok) return writtenZh;
+                let sourceWritten = false;
+                if (
+                    options.writeSource !== false
+                    && sourceDoc?.ok
+                    && srcPath
+                    && fs.existsSync(path.resolve(srcPath))
+                ) {
+                    const srcWrite = writeSubtitleDocument(sourceDoc.path, {
+                        cues: skipJa,
+                        format: sourceDoc.format,
+                        header: sourceDoc.header,
+                        backupMode: options.backupMode || 'off',
+                    });
+                    sourceWritten = !!srcWrite.ok;
+                }
+                const parts = [];
+                if (echoStats?.removed) parts.push(fluency.summarizeAsrEchoDedupe(echoStats));
+                if (stitchStats?.mergedPairs) parts.push(fluency.summarizeJaStitch(stitchStats));
+                if (skipEllipsis) parts.push(`去除句尾装饰省略号 ${skipEllipsis} 条`);
+                return {
+                    ok: true,
+                    removed: Number(echoStats?.removed) || 0,
+                    stitched: stitchStats?.mergedPairs || 0,
+                    path: target.path,
+                    sourcePath: srcPath || undefined,
+                    sourceWritten,
+                    asrEcho: echoStats || undefined,
+                    jaStitch: stitchStats || undefined,
+                    trailingEllipsis: skipEllipsis ? { changed: skipEllipsis } : undefined,
+                    summary: parts.join('；'),
+                    written: true,
+                };
+            }
             return {
                 ok: true,
                 removed: 0,
@@ -528,7 +783,22 @@ function createSubtitlePostprocess(host = {}) {
                 sourcePath: srcPath || undefined,
             };
         }
-        if (!cleaned.stats?.removed) {
+        const noiseRemoved = Number(cleaned.stats?.removed) || 0;
+        let outZh = noiseRemoved ? cleaned.zhCues : workingZh;
+        let outJa = noiseRemoved ? cleaned.jaCues : sourceCues;
+        let trailingEllipsisChanged = 0;
+        if (
+            options.stripAsrTrailingEllipsis !== false
+            && typeof fluency.stripAsrDecorativeTrailingEllipsisInCues === 'function'
+        ) {
+            const stripped = fluency.stripAsrDecorativeTrailingEllipsisInCues(outJa);
+            if (stripped.changed > 0) {
+                outJa = stripped.cues;
+                trailingEllipsisChanged = Number(stripped.changed) || 0;
+            }
+        }
+        if (!noiseRemoved && !stitchStats?.mergedPairs && !echoStats?.removed
+            && !trailingEllipsisChanged) {
             return {
                 ok: true,
                 removed: 0,
@@ -537,18 +807,18 @@ function createSubtitlePostprocess(host = {}) {
                 summary: fluency.summarizeNoiseRemoval(cleaned.stats),
             };
         }
-        if (!cleaned.zhCues.length) {
+        if (!outZh.length) {
             return {
                 ok: false,
                 error: '清噪后无剩余字幕，已取消写入',
-                removed: cleaned.stats?.removed || 0,
+                removed: noiseRemoved,
                 path: target.path,
             };
         }
 
         const massLoss = slotCore.detectTranslationSlotMassDeletion({
             beforeCount: before,
-            afterCount: cleaned.zhCues.length,
+            afterCount: outZh.length,
             sourceCount: sourceCues.length,
             isTranslationTrack: true,
         });
@@ -557,14 +827,14 @@ function createSubtitlePostprocess(host = {}) {
                 ok: false,
                 error: '检测到译文字幕大规模丢失（可能误删空白占位），已取消写入',
                 guard: massLoss,
-                removed: cleaned.stats?.removed || 0,
+                removed: noiseRemoved,
                 path: target.path,
                 sourcePath: srcPath || undefined,
             };
         }
 
         const writtenZh = writeSubtitleDocument(target.path, {
-            cues: cleaned.zhCues,
+            cues: outZh,
             format: target.format,
             header: target.header,
             backupMode: options.backupMode || 'off',
@@ -579,7 +849,7 @@ function createSubtitlePostprocess(host = {}) {
             && fs.existsSync(path.resolve(srcPath))
         ) {
             const srcWrite = writeSubtitleDocument(sourceDoc.path, {
-                cues: cleaned.jaCues,
+                cues: outJa,
                 format: sourceDoc.format,
                 header: sourceDoc.header,
                 backupMode: options.backupMode || 'off',
@@ -587,16 +857,29 @@ function createSubtitlePostprocess(host = {}) {
             sourceWritten = !!srcWrite.ok;
         }
 
+        const parts = [];
+        if (echoStats?.removed) parts.push(fluency.summarizeAsrEchoDedupe(echoStats));
+        if (stitchStats?.mergedPairs) parts.push(fluency.summarizeJaStitch(stitchStats));
+        if (noiseRemoved) parts.push(fluency.summarizeNoiseRemoval(cleaned.stats));
+        if (trailingEllipsisChanged) {
+            parts.push(`去除句尾装饰省略号 ${trailingEllipsisChanged} 条`);
+        }
         return {
             ok: true,
-            removed: cleaned.stats?.removed || 0,
+            removed: noiseRemoved + (Number(echoStats?.removed) || 0),
+            stitched: stitchStats?.mergedPairs || 0,
             beforeCount: before,
-            afterCount: cleaned.zhCues.length,
+            afterCount: outZh.length,
             path: target.path,
             sourcePath: srcPath || undefined,
             sourceWritten,
             stats: cleaned.stats,
-            summary: fluency.summarizeNoiseRemoval(cleaned.stats),
+            asrEcho: echoStats || undefined,
+            jaStitch: stitchStats || undefined,
+            trailingEllipsis: trailingEllipsisChanged
+                ? { changed: trailingEllipsisChanged }
+                : undefined,
+            summary: parts.join('；') || fluency.summarizeNoiseRemoval(cleaned.stats),
             written: true,
         };
     }
@@ -1048,7 +1331,44 @@ function createSubtitlePostprocess(host = {}) {
             postBatchRemoveNoise: true,
         };
 
-        // Final delivery: hard-drop ASR debris; last-chance fill bare「…」; never ship unrecovered blanks.
+        /** Prefer shipping incomplete ZH over wiping real JA dialogue (IESP-763 加奈と申します).
+         * Never keep slots the ellipsis plan already classed as delete (asr_debris/moan) —
+         * isSubstantiveJa is too loose on katakana mash and would otherwise ship bare「…」. */
+        const shouldKeepSubstantiveEllipsisSlot = (jaText, jaCue) => {
+            const ja = String(jaText || '').trim();
+            if (!ja) return false;
+            try {
+                if (ellipsisPolicy?.isDeterministicAsrDebrisJa?.(ja)
+                    || ellipsisPolicy?.isPureMoanOrSfxJa?.(ja)) {
+                    return false;
+                }
+                const plan = ellipsisPolicy?.planEllipsisSlotAction?.(ja, '…', {});
+                if (plan?.action === 'delete') return false;
+            } catch { /* optional */ }
+            try {
+                const fluency = require('../src/js/subtitle-fluency-core');
+                if (fluency.shouldPreserveSubstantiveDialogueCue?.(jaCue || null, ja)) {
+                    return true;
+                }
+            } catch { /* optional */ }
+            try {
+                // Only keep bare「…」when JA is truly substantive dialogue.
+                // Do not keep merely because plan says lexical_blank (scraps used to fall through).
+                if (ellipsisPolicy?.isSubstantiveJa?.(ja)) return true;
+                const plan = ellipsisPolicy?.planEllipsisSlotAction?.(ja, '…', {});
+                if (
+                    plan?.action === 'recover'
+                    && plan?.reason === 'lexical_blank'
+                    && ellipsisPolicy?.isSubstantiveJa?.(ja)
+                ) {
+                    return true;
+                }
+            } catch { /* optional */ }
+            return false;
+        };
+
+        // Final delivery: hard-drop ASR debris/moan; last-chance fill bare「…」;
+        // substantive unrecovered lexical → keep slot (never pair-delete real dialogue).
         for (let i = 0; i < zhBefore.length; i += 1) {
             const text = String(zhBefore[i]?.text ?? '').trim();
             const jaText = paired ? String(sourceWorking[i]?.text ?? '') : '';
@@ -1056,7 +1376,10 @@ function createSubtitlePostprocess(host = {}) {
                 let hardDrop = false;
                 if (typeof mtSanitize.isDeterministicAsrDebrisJaForSanitize === 'function') {
                     hardDrop = !!mtSanitize.isDeterministicAsrDebrisJaForSanitize(jaText, text);
-                } else if (ellipsisPolicy?.planEllipsisSlotAction) {
+                }
+                // Also consult ellipsis plan — sanitize debris helper ignores filler ZH「嗯」
+                // on pure ん breath, which previously shipped dozens of「嗯」slots (YUJ-071).
+                if (!hardDrop && ellipsisPolicy?.planEllipsisSlotAction) {
                     const plan = ellipsisPolicy.planEllipsisSlotAction(jaText, text, {
                         prevJa: i > 0 ? sourceWorking[i - 1]?.text : '',
                         nextJa: i + 1 < sourceWorking.length ? sourceWorking[i + 1]?.text : '',
@@ -1065,13 +1388,38 @@ function createSubtitlePostprocess(host = {}) {
                         && (
                             plan.reason === 'asr_garbage'
                             || plan.reason === 'asr_debris'
+                            || plan.reason === 'asr_scrap'
+                            || plan.reason === 'asr_crumb'
+                            || plan.reason === 'non_substantive_blank'
                             || plan.reason === 'pure_moan'
                             || plan.reason === 'empty_ja'
                         );
                 }
+                // Never hard-drop substantive dialogue even if a debris heuristic misfires.
+                if (hardDrop && shouldKeepSubstantiveEllipsisSlot(jaText, sourceWorking[i])) {
+                    hardDrop = false;
+                }
                 if (hardDrop) {
                     dropped += 1;
                     continue;
+                }
+                // Filler ZH「嗯/哈」on short JA: prefer lexical det-fill (まあ→反正) over shipping 嗯.
+                const fillerOnlyZh = /^(?:嗯+|嗯嗯|哈+|啊+|哦+|诶)[…·.~～！!？?\s]*$/u.test(text);
+                if (fillerOnlyZh && ellipsisPolicy?.deterministicEllipsisFill) {
+                    try {
+                        const hit = String(
+                            ellipsisPolicy.deterministicEllipsisFill(jaText, recoverOpts) || '',
+                        ).trim();
+                        const hitCore = hit
+                            .replace(/[哈啊嗯哦诶呜呵唉哎喔呼嘻]+/gu, '')
+                            .replace(/[…·.•\-—_~～\s！!？?。．.、，,]+/gu, '');
+                        if (hit && Array.from(hitCore).length >= 1) {
+                            keptZh.push({ ...zhBefore[i], text: hit });
+                            if (paired) keptJa.push({ ...sourceWorking[i] });
+                            detFilled += 1;
+                            continue;
+                        }
+                    } catch { /* fall through */ }
                 }
             }
             if (!isEllipsisOnly(text)) {
@@ -1093,7 +1441,7 @@ function createSubtitlePostprocess(host = {}) {
                 const moan = !!mtSanitize.isMoanOrSfxHeavyJa?.(jaText);
                 forceDelete = !lexical || moan;
             }
-            if (forceDelete) {
+            if (forceDelete && !shouldKeepSubstantiveEllipsisSlot(jaText, sourceWorking[i])) {
                 dropped += 1;
                 continue;
             }
@@ -1122,7 +1470,13 @@ function createSubtitlePostprocess(host = {}) {
                 }
             }
 
-            // Unrecovered bare「…」— including former "kept lexical blanks" — must not ship.
+            // Unrecovered bare「…」: moan/debris still drop; substantive JA keep the slot.
+            if (shouldKeepSubstantiveEllipsisSlot(jaText, sourceWorking[i])) {
+                keptZh.push({ ...zhBefore[i], text: text || '…' });
+                if (paired) keptJa.push({ ...sourceWorking[i] });
+                keptLexicalBlank += 1;
+                continue;
+            }
             dropped += 1;
         }
 
@@ -1130,9 +1484,9 @@ function createSubtitlePostprocess(host = {}) {
             return {
                 ok: true,
                 dropped: 0,
-                keptLexicalBlank: 0,
+                keptLexicalBlank,
                 skipped: true,
-                reason: 'none',
+                reason: keptLexicalBlank ? 'kept_lexical_blanks' : 'none',
                 beforeCount: zhBefore.length,
                 afterCount: zhBefore.length,
                 path: target.path,
@@ -1183,13 +1537,19 @@ function createSubtitlePostprocess(host = {}) {
                 }
             } catch { /* optional */ }
         }
-        // Sweep any … that fillBlank could not resolve (paired JA rows drop with ZH).
+        // Sweep … that fillBlank could not resolve. Moan/debris pairs still drop;
+        // substantive JA keeps the slot so delivery never erases real dialogue.
         for (let i = keptZh.length - 1; i >= 0; i -= 1) {
-            if (isEllipsisOnly(String(keptZh[i]?.text ?? ''))) {
-                keptZh.splice(i, 1);
-                if (paired && keptJa[i]) keptJa.splice(i, 1);
-                dropped += 1;
+            if (!isEllipsisOnly(String(keptZh[i]?.text ?? ''))) continue;
+            const jaCue = paired ? keptJa[i] : null;
+            const jaText = jaCue ? String(jaCue.text ?? '') : '';
+            if (shouldKeepSubstantiveEllipsisSlot(jaText, jaCue)) {
+                keptLexicalBlank += 1;
+                continue;
             }
+            keptZh.splice(i, 1);
+            if (paired && keptJa[i]) keptJa.splice(i, 1);
+            dropped += 1;
         }
         keptZh.forEach((c, idx) => {
             c.index = idx + 1;
@@ -1237,7 +1597,9 @@ function createSubtitlePostprocess(host = {}) {
             path: target.path,
             sourcePath: srcPath || undefined,
             sourceWritten,
-            summary: `删除仅省略号条目 ${dropped} 条（${(target.cues || []).length}→${keptZh.length}）${detFilled ? ` · 确定性补全 ${detFilled}` : ''}`,
+            summary: `删除仅省略号条目 ${dropped} 条（${(target.cues || []).length}→${keptZh.length}）`
+                + (detFilled ? ` · 确定性补全 ${detFilled}` : '')
+                + (keptLexicalBlank ? ` · 保留实质对白空槽 ${keptLexicalBlank}` : ''),
             written: true,
         };
     }
@@ -1335,6 +1697,8 @@ function createSubtitlePostprocess(host = {}) {
                 scrubRecycle: true,
                 pruneDebris: options.dropAsrDebrisPairs !== false,
                 fillBlank: fillBlankAllowed,
+                postBatchRemoveNoise: options.postBatchRemoveNoise,
+                dropUselessEllipsis: options.dropUselessEllipsis,
             }) || null;
             if (deliveryFinalize?.changed && Array.isArray(deliveryFinalize.cues)) {
                 target.cues = deliveryFinalize.cues;
@@ -1347,10 +1711,37 @@ function createSubtitlePostprocess(host = {}) {
                     + Number(deliveryFinalize.realigned || 0)
                     + Number(deliveryFinalize.scrubbed || 0)
                     + Number(deliveryFinalize.pruned || 0)
-                    + Number(deliveryFinalize.filled || 0);
+                    + Number(deliveryFinalize.filled || 0)
+                    + Number(deliveryFinalize.durationCapped || 0);
                 startMsRealign = Number(deliveryFinalize.realigned || deliveryFinalize.rematerialized || 0);
             }
         } catch { /* optional — fall back to legacy realign below */ }
+
+        // GalTransl-style conditional post-replace (术语条件译后).
+        let glossaryPostReplaced = 0;
+        try {
+            if (options.glossaryConditionalPostReplace !== false && options.glossary) {
+                const glossCore = require('../src/js/subtitle-glossary-core');
+                if (typeof glossCore.applyConditionalPostReplace === 'function') {
+                    const paired = (Array.isArray(target.cues) ? target.cues : []).map((c, i) => {
+                        const src = sourceCues[i] || sourceCues.find((s) => Number(s?.index) === Number(c?.index));
+                        return {
+                            ...c,
+                            sourceText: String(src?.text || c?.sourceText || ''),
+                            audioEvent: c?.audioEvent || src?.audioEvent,
+                        };
+                    });
+                    const post = glossCore.applyConditionalPostReplace(paired, options.glossary, options);
+                    if (post.changed > 0) {
+                        target.cues = post.cues.map((c) => {
+                            const { sourceText, ...rest } = c;
+                            return rest;
+                        });
+                        glossaryPostReplaced = post.changed;
+                    }
+                }
+            }
+        } catch { /* optional */ }
 
         if (!deliveryFinalize) {
             // Legacy EBWH-363/365 realign + recycle when finalize core unavailable
@@ -1445,6 +1836,7 @@ function createSubtitlePostprocess(host = {}) {
             skipFakeGreeting: options.skipFakeGreeting,
             // Source already domain-corrected above; avoid double-counting flags only
             skipJaAsrDomain: sourceDomainCleaned > 0,
+            postBatchRemoveNoise: options.postBatchRemoveNoise,
             // DELETE moan/… slots only when「完成后清理杂音」allows (fill still runs above).
             dropUselessEllipsis: (() => {
                 try {
@@ -1515,6 +1907,28 @@ function createSubtitlePostprocess(host = {}) {
                 } else if (scrubN > 0) {
                     cleaned.flags = cleaned.flags || {};
                     cleaned.flags.recycle_scrub_skipped = scrubN;
+                }
+            }
+        } catch { /* optional */ }
+
+        // Soft-AV 好舒服 stub: apply deterministic hard expands (Laya soft-band is ST-only).
+        try {
+            const pipe = require('../src/js/jev-laya-pipeline-core');
+            if (typeof pipe.collectKimochiUnderfillCandidates === 'function') {
+                const collected = pipe.collectKimochiUnderfillCandidates(
+                    cleaned.cues,
+                    sourceCues,
+                );
+                if (collected.hardExpand?.length) {
+                    const applied = pipe.applyKimochiUnderfillDecisions(cleaned.cues, {
+                        hardExpand: collected.hardExpand,
+                    }, { blankText: '…' });
+                    if (applied.changed) {
+                        cleaned.cues = applied.cues;
+                        cleaned.changed = (Number(cleaned.changed) || 0) + applied.changed;
+                        cleaned.flags = cleaned.flags || {};
+                        cleaned.flags.kimochi_hard_expand = applied.changed;
+                    }
                 }
             }
         } catch { /* optional */ }
@@ -1642,6 +2056,8 @@ function createSubtitlePostprocess(host = {}) {
                 scrubRecycle: true,
                 pruneDebris: options.dropAsrDebrisPairs !== false,
                 fillBlank: fillBlankAllowed,
+                postBatchRemoveNoise: options.postBatchRemoveNoise,
+                dropUselessEllipsis: options.dropUselessEllipsis,
             });
             if (postFin?.changed && Array.isArray(postFin.cues)) {
                 cleaned.cues = postFin.cues;
@@ -1652,13 +2068,39 @@ function createSubtitlePostprocess(host = {}) {
                     + Number(postFin.realigned || 0)
                     + Number(postFin.scrubbed || 0)
                     + Number(postFin.pruned || 0)
-                    + Number(postFin.filled || 0);
+                    + Number(postFin.filled || 0)
+                    + Number(postFin.durationCapped || 0);
                 cleaned.changed = (Number(cleaned.changed) || 0) + Math.max(1, bump);
                 cleaned.flags = { ...(cleaned.flags || {}), ...(postFin.flags || {}), delivery_finalize: true };
                 if (postFin.rematerialized) alignRematerialized = postFin.rematerialized;
                 if (postFin.filled) alignFilled = (alignFilled || 0) + postFin.filled;
+                if (postFin.durationCapped) {
+                    cleaned.flags.duration_cap = postFin.durationCapped;
+                }
                 if (!postFin.gateOk) {
                     cleaned.flags.delivery_align_gate_warn = true;
+                }
+            }
+        } catch { /* optional */ }
+
+        // Last-mile filler/moan duration cap (rematerialize copies JA endMs and can re-inflate).
+        let durationCappedLast = 0;
+        try {
+            const durationCap = require('../src/js/cue-duration-cap-core');
+            if (typeof durationCap.capFillerMoanCueDurations === 'function') {
+                const capped = durationCap.capFillerMoanCueDurations(
+                    Array.isArray(cleaned.cues) ? cleaned.cues : [],
+                    sourceCues,
+                );
+                if (capped.changed) {
+                    cleaned.cues = capped.cues;
+                    if (Array.isArray(capped.sourceCues) && capped.sourceCues.length) {
+                        sourceCues = capped.sourceCues;
+                    }
+                    durationCappedLast = Number(capped.capped) || 0;
+                    cleaned.changed = (Number(cleaned.changed) || 0) + durationCappedLast;
+                    cleaned.flags = cleaned.flags || {};
+                    cleaned.flags.duration_cap = (Number(cleaned.flags.duration_cap) || 0) + durationCappedLast;
                 }
             }
         } catch { /* optional */ }
@@ -1669,9 +2111,12 @@ function createSubtitlePostprocess(host = {}) {
         const mustWrite = !!cleaned.changed
             || shiftRepaired > 0
             || deliveryTouched > 0
+            || glossaryPostReplaced > 0
             || startMsRealign > 0
             || alignRematerialized > 0
-            || !!cleaned.flags?.delivery_finalize;
+            || durationCappedLast > 0
+            || !!cleaned.flags?.delivery_finalize
+            || !!cleaned.flags?.duration_cap;
 
         if (!mustWrite) {
             return {
@@ -1701,12 +2146,16 @@ function createSubtitlePostprocess(host = {}) {
         });
         if (!written.ok) return written;
 
-        // When debris prune shrank JA, persist cleaned source beside ZH
+        // Persist capped JA timings even when cue count unchanged (filler duration shrink).
         if (
             options.cleanSource !== false
             && sourceDoc?.ok
             && Array.isArray(sourceCues)
-            && sourceCues.length !== (sourceDoc.cues || []).length
+            && (
+                sourceCues.length !== (sourceDoc.cues || []).length
+                || durationCappedLast > 0
+                || Number(cleaned.flags?.duration_cap) > 0
+            )
         ) {
             try {
                 writeSubtitleDocument(sourceDoc.path, {
@@ -1723,8 +2172,12 @@ function createSubtitlePostprocess(host = {}) {
         if (deliveryTouched && !alignRematerialized) bits.push(`成片对齐 ${deliveryTouched}`);
         if (alignRematerialized) bits.push('对位重铺');
         if (alignFilled) bits.push(`短句回填 ${alignFilled}`);
+        if (durationCappedLast || cleaned.flags?.duration_cap) {
+            bits.push(`时长钳制 ${durationCappedLast || cleaned.flags.duration_cap}`);
+        }
         if (sourceAsrCleaned) bits.push(`ASR叠名 ${sourceAsrCleaned}`);
         if (sourceDomainCleaned) bits.push(`ASR领域 ${sourceDomainCleaned}`);
+        if (glossaryPostReplaced) bits.push(`术语条件译后 ${glossaryPostReplaced}`);
         if (droppedEllipsis) bits.push(`清除无用省略号 ${droppedEllipsis}（${beforeCount}→${afterCount}）`);
         if (cleaned.flags?.delivery_align_gate_warn) bits.push('对齐门禁告警');
         return {

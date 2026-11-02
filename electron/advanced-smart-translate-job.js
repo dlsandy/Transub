@@ -59,6 +59,67 @@ function resolveChatCapableSmartChoice(managed = {}) {
     };
 }
 
+/**
+ * User-facing notice when the 润色/对话 model id is missing on disk.
+ * @param {{ missingFallbackFrom?: string, modelId?: string, toModelId?: string }} choice
+ * @returns {string}
+ */
+function formatMissingSmartTranslateFallbackMessage(choice = {}) {
+    const fromRaw = String(choice.missingFallbackFrom || '').trim();
+    if (fromRaw === 'byok') {
+        const toId = String(choice.modelId || choice.toModelId || '').trim();
+        const toLabel = managedCatalog.findCatalogEntry?.(toId)?.name || toId || '本机模型';
+        return `未配置云端 API Key，已改用本机「${toLabel}」`;
+    }
+    const toId = String(choice.modelId || choice.toModelId || '').trim();
+    const fromEntry = managedCatalog.findCatalogEntry?.(fromRaw) || null;
+    const toEntry = managedCatalog.findCatalogEntry?.(toId) || null;
+    const fromLabel = fromEntry?.name || fromRaw;
+    const toLabel = toEntry?.name || toId || '已安装模型';
+    const sibling = !!(fromRaw && toId
+        && typeof managedCatalog.isSmartTranslateQuantSibling === 'function'
+        && managedCatalog.isSmartTranslateQuantSibling(fromRaw, toId));
+    if (sibling) {
+        return `智能翻译润色位选用的「${fromLabel}」未下载，已改用同系列已安装的「${toLabel}」`;
+    }
+    if (fromLabel) {
+        return `智能翻译模型「${fromLabel}」尚未下载，已改用已安装的「${toLabel}」`;
+    }
+    return `智能翻译模型尚未下载，已改用已安装的「${toLabel}」`;
+}
+
+/**
+ * Persist sibling-quant heal so the scary missing-model notice does not repeat.
+ * Only rewrites when settings still point at the missing from-id.
+ */
+function healSmartTranslateModelIdIfSiblingMissing(fromId, toId) {
+    const from = String(fromId || '').trim();
+    const to = String(toId || '').trim();
+    if (!from || !to || from === to || from === 'byok') return false;
+    if (typeof managedCatalog.isSmartTranslateQuantSibling !== 'function') return false;
+    if (!managedCatalog.isSmartTranslateQuantSibling(from, to)) return false;
+    if (managedCatalog.isTranslateOnlyModel?.(to)) return false;
+    try {
+        const current = readAdvancedDoc();
+        const managed = current.doc?.managedLlm && typeof current.doc.managedLlm === 'object'
+            ? current.doc.managedLlm
+            : {};
+        const smart = String(managed.smartTranslateModelId || '').trim();
+        if (!smart || smart.toLowerCase() !== from.toLowerCase()) return false;
+        const { writeAdvancedDoc } = require('./advanced-license-data');
+        const saved = writeAdvancedDoc({
+            ...current.doc,
+            managedLlm: {
+                ...managed,
+                smartTranslateModelId: to,
+            },
+        });
+        return !!saved?.ok;
+    } catch (_) {
+        return false;
+    }
+}
+
 async function resolveSmartChatLlm(input, doc, hybrid, priorChoice = null) {
     let smartChoice = priorChoice && typeof priorChoice === 'object'
         ? { ...priorChoice }
@@ -92,11 +153,13 @@ async function resolveSmartChatLlm(input, doc, hybrid, priorChoice = null) {
             hybrid.pickInstalledSmartTranslateModelId(smartChoice.modelId) || '',
         ).trim();
         if (installedId && installedId !== smartChoice.modelId) {
+            const missingFrom = smartChoice.modelId || smartChoice.requestedId;
             smartChoice = {
                 ...smartChoice,
                 modelId: installedId,
-                missingFallbackFrom: smartChoice.modelId || smartChoice.requestedId,
+                missingFallbackFrom: missingFrom,
             };
+            healSmartTranslateModelIdIfSiblingMissing(missingFrom, installedId);
         }
     }
     // Final guard: picker may echo a translate-only request when not in chat list.
@@ -123,7 +186,7 @@ async function resolveSmartChatLlm(input, doc, hybrid, priorChoice = null) {
                 enabled: input.smartTranslateHybridMt,
                 language: input.language || input.sourceLanguage,
                 cues: input.cues,
-                preferredId: input.hybridMtModelId || input.engineLlmMtModel,
+                preferredId: input.hybridMtModelId || input.engineLlmMtModel || input.engineMtModel,
                 targetLang: input.targetLang,
                 subtitleTargetLang: input.subtitleTargetLang,
                 chineseSubtitleVariant: input.chineseSubtitleVariant,
@@ -239,6 +302,22 @@ function createAdvancedSmartTranslateJob(host = {}) {
                 }
                 if (input.smartTranslateAddressConsistency == null) {
                     input.smartTranslateAddressConsistency = opts.smartTranslateAddressConsistency !== false;
+                }
+                if (input.jevDecisionMode == null && opts.jevDecisionMode != null) {
+                    input.jevDecisionMode = opts.jevDecisionMode;
+                }
+                if (input.jevDecisionEndpoint == null
+                    && (opts.jevDecisionEndpoint != null || opts.jevEndpoint != null)) {
+                    input.jevDecisionEndpoint = opts.jevDecisionEndpoint || opts.jevEndpoint;
+                }
+                if (input.jevDecisionMinConfidence == null && opts.jevDecisionMinConfidence != null) {
+                    input.jevDecisionMinConfidence = opts.jevDecisionMinConfidence;
+                }
+                if (input.jevEndpoint == null && opts.jevEndpoint != null) {
+                    input.jevEndpoint = opts.jevEndpoint;
+                }
+                if (input.perfProfile == null && opts.perfProfile != null) {
+                    input.perfProfile = opts.perfProfile;
                 }
                 if (!input.subtitleTargetLang && !input.targetLang) {
                     if (opts.subtitleTargetLang) input.subtitleTargetLang = opts.subtitleTargetLang;
@@ -356,7 +435,7 @@ function createAdvancedSmartTranslateJob(host = {}) {
                     } catch (_) { hasByokKey = false; }
                 }
                 if (!polishOnly && !input.filmBrief && typeof hybrid.shouldSkipLlmFilmBrief === 'function') {
-                    const skipBrief = input._smartTranslateLite
+                    let skipBrief = input._smartTranslateLite
                         || hybrid.shouldSkipLlmFilmBrief({
                             enabled: input.smartTranslateHybridMt,
                             language: input.language || input.sourceLanguage,
@@ -372,6 +451,21 @@ function createAdvancedSmartTranslateJob(host = {}) {
                             chineseSubtitleVariant: input.chineseSubtitleVariant,
                             targetLanguage: input.targetLanguage,
                         });
+                    // Marginal skip: Laya may insist on LLM brief
+                    if (skipBrief && !input._smartTranslateLite && !input.skipFilmBrief) {
+                        try {
+                            const { runFilmBriefTrust } = require('./jev-laya-pipelines');
+                            const sampleText = (input.cues || []).slice(0, 4)
+                                .map((c) => String(c?.text || '').trim())
+                                .filter(Boolean)
+                                .join('\n');
+                            const trust = await runFilmBriefTrust({
+                                sampleText,
+                                heuristicBrief: input._heuristicFilmBrief || null,
+                            }, input);
+                            if (trust.trustHeuristic === false) skipBrief = false;
+                        } catch { /* soft-fail keep skip */ }
+                    }
                     if (skipBrief) {
                         input.skipFilmBrief = true;
                         // Only label as「智能翻译」when hybrid is actually on (blank-retry
@@ -464,13 +558,18 @@ function createAdvancedSmartTranslateJob(host = {}) {
             if (smartChoice.missingFallbackFrom) {
                 sendProgress({
                     phase: 'start',
-                    message: smartChoice.missingFallbackFrom === 'byok'
-                        ? `未配置云端 API Key，已改用本机「${smartChoice.modelId || llm.modelId || llm.model}」`
-                        : `智能翻译模型尚未下载，已改用已安装的「${smartChoice.modelId || llm.modelId || llm.model}」`,
+                    message: formatMissingSmartTranslateFallbackMessage(smartChoice),
                     pct: 0,
                     missingFallback: true,
                     missingFallbackFrom: smartChoice.missingFallbackFrom,
                     modelId: smartChoice.modelId,
+                    quantSiblingFallback: !!(
+                        smartChoice.missingFallbackFrom !== 'byok'
+                        && managedCatalog.isSmartTranslateQuantSibling?.(
+                            smartChoice.missingFallbackFrom,
+                            smartChoice.modelId,
+                        )
+                    ),
                 });
             }
             if (input._smartTranslateLite) {
@@ -644,4 +743,6 @@ module.exports = {
     createAdvancedSmartTranslateJob,
     shouldDegradeHybridChunkOnlyToChat,
     resolveChatCapableSmartChoice,
+    formatMissingSmartTranslateFallbackMessage,
+    healSmartTranslateModelIdIfSiblingMissing,
 };

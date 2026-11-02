@@ -10,6 +10,10 @@ const {
 } = require('./local-whl-install');
 const { normalizeEngineDownloadKind } = require('./engine-download-info');
 const { broadcastEngineDownloadProgress } = require('./download-window');
+const {
+    ensureEngineRunningWithColdInstallProgress,
+    coldInstallRestartFailMessage,
+} = require('./engine-cold-install-progress');
 
 /**
  * @param {(channel: string, handler: Function) => void} register
@@ -24,6 +28,7 @@ const { broadcastEngineDownloadProgress } = require('./download-window');
  * @param {(installPath: string) => string|null} deps.resolveEngineRuntimePython
  * @param {() => any} deps.getEngineProc
  * @param {() => void} deps.stopEngineProcess
+ * @param {() => void} [deps.stopEngineProcessAndPort]
  * @param {(ms: number) => Promise<void>} deps.sleep
  * @param {(opts: object) => Promise<object>} deps.ensureEngineRunning
  * @param {(baseUrl: string, opts?: object) => Promise<object>} deps.getAudioSeparateRuntime
@@ -35,6 +40,27 @@ function ortWhlSelectOpts(payload = {}) {
         ortGpuDesiredTarget: payload.ortGpuDesiredTarget || payload.ortGpuTarget,
         ortGpuTarget: payload.ortGpuTarget,
     };
+}
+
+/** Native wheel overwrite while DLLs are still mapped → WinError 5 / docstring poison. */
+function kindNeedsHardEngineStop(kind) {
+    const k = String(kind || '').trim().toLowerCase();
+    return k === 'torch-cuda'
+        || k === 'torch-rocm'
+        || k === 'torch-xpu'
+        || k === 'demucs'
+        || k === 'gpu'
+        || k === 'whisper'
+        || k === 'sensevoice'
+        || k === 'runtime';
+}
+
+/** True when selected .whl names need a hard engine kill before pip (numpy/torch/…). */
+function pathsNeedHardEngineStop(paths) {
+    const list = Array.isArray(paths) ? paths : [];
+    return list.some((p) => (
+        /(?:^|[/\\])(?:numpy|torch|torchaudio|ctranslate2|onnxruntime)/i.test(String(p || ''))
+    ));
 }
 
 function registerLocalWhlIpc(register, deps = {}) {
@@ -52,11 +78,19 @@ function registerLocalWhlIpc(register, deps = {}) {
         resolveEngineRuntimePython,
         getEngineProc,
         stopEngineProcess,
+        stopEngineProcessAndPort,
         sleep,
         ensureEngineRunning,
         getAudioSeparateRuntime,
         getGpuRuntime,
     } = deps;
+    const hardStopEngine = () => {
+        if (typeof stopEngineProcessAndPort === 'function') {
+            stopEngineProcessAndPort();
+            return;
+        }
+        stopEngineProcess?.();
+    };
 
     register('transub-engine-pick-whl', async (event, payload = {}) => {
         try {
@@ -135,10 +169,20 @@ function registerLocalWhlIpc(register, deps = {}) {
                 return { ok: false, error: err };
             }
 
-            if (getEngineProc?.()) {
-                emit({ phase: 'progress', message: '正在停止引擎以便安装…', pct: 2 });
-                stopEngineProcess?.();
-                await sleep(600);
+            // Soft kill alone can leave port listeners / mapped native DLLs; pip then
+            // hits WinError 5 (numpy) or writes hybrid site-packages (torch).
+            const hardStop = kindNeedsHardEngineStop(kind)
+                || pathsNeedHardEngineStop(checked.paths);
+            if (getEngineProc?.() || hardStop) {
+                emit({
+                    phase: 'progress',
+                    message: hardStop
+                        ? '正在彻底停止引擎（释放 NumPy / Torch DLL）以便安装…'
+                        : '正在停止引擎以便安装…',
+                    pct: 2,
+                });
+                hardStopEngine();
+                await sleep(hardStop ? 2500 : 600);
             }
 
             // onnxruntime (CPU) and onnxruntime-gpu are mutually exclusive.
@@ -206,15 +250,57 @@ function registerLocalWhlIpc(register, deps = {}) {
                 return { ok: false, error: err, logTail: res.logTail };
             }
 
-            emit({ phase: 'progress', message: '正在重启引擎…', pct: 92 });
-            const ensure2 = await ensureEngineRunning({ ...options, forceRestart: true });
+            const coldMode = kind === 'torch-rocm'
+                ? 'rocm'
+                : (kind === 'torch-xpu'
+                    ? 'xpu'
+                    : (kind === 'torch-cuda' || kind === 'demucs'
+                        ? 'torch-cuda'
+                        : (kind === 'gpu' ? 'gpu' : 'generic')));
+            const needsCleanRespawn = kindNeedsHardEngineStop(kind)
+                || pathsNeedHardEngineStop(checked.paths);
+            const ensure2 = await ensureEngineRunningWithColdInstallProgress({
+                emit,
+                ensureEngineRunning,
+                ensureOptions: { ...options, forceRestart: true },
+                mode: coldMode,
+                deferred: needsCleanRespawn,
+            });
             if (!ensure2.ok) {
-                const msg = '本地 wheel 已安装（引擎重启失败，请手动检测引擎）';
-                emit({ phase: 'done', ok: true, message: msg, pct: 100 });
+                const baseMsg = '本地 wheel 已安装（引擎重启失败，请完全退出 Transub 后重新检测）';
+                // Native DLL installs need a clean process; do not claim ready if restart failed.
+                if (needsCleanRespawn) {
+                    const err = coldInstallRestartFailMessage(
+                        ensure2.error || baseMsg,
+                        {
+                            mode: coldMode === 'rocm'
+                                ? 'rocm'
+                                : (coldMode === 'xpu' ? 'xpu' : 'torch-cuda'),
+                            deferred: kind === 'torch-cuda' || kind === 'demucs',
+                        },
+                    );
+                    emit({
+                        phase: 'error',
+                        ok: false,
+                        message: err,
+                        pct: 92,
+                        suggestManual: true,
+                    });
+                    return {
+                        ok: false,
+                        error: err,
+                        code: ensure2.code || 'engine_restart_failed',
+                        restarted: false,
+                        installed: res.installed,
+                        kind,
+                        suggestManual: true,
+                    };
+                }
+                emit({ phase: 'done', ok: true, message: baseMsg, pct: 100 });
                 return {
                     ok: true,
                     restarted: false,
-                    message: msg,
+                    message: baseMsg,
                     installed: res.installed,
                     kind,
                 };
@@ -256,4 +342,6 @@ function registerLocalWhlIpc(register, deps = {}) {
 
 module.exports = {
     registerLocalWhlIpc,
+    kindNeedsHardEngineStop,
+    pathsNeedHardEngineStop,
 };

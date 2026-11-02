@@ -44,11 +44,11 @@
         return TARGET_SUFFIX_DEFAULT;
     }
 
-    /** media = same basename as video; lang = `{stem}.{zh-cn|en|…}` */
+    /** media = same basename as video (default); lang = `{stem}.{zh-cn|en|…}` */
     function normalizeTargetSubtitleNaming(value) {
         const raw = String(value || '').trim().toLowerCase();
-        if (raw === 'media' || raw === 'same' || raw === 'video' || raw === 'bare') return 'media';
-        return 'lang';
+        if (raw === 'lang' || raw === 'suffix' || raw === 'tagged') return 'lang';
+        return 'media';
     }
 
     /**

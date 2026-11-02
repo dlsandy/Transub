@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .packaging/
+packaging/
 renderer-dist/
 data/
 temp/
@@ -98,11 +99,13 @@ src/js/advanced-film-reconstruct-core.js
 src/js/advanced-smart-translate-core.js
 src/js/smart-translate-verify-core.js
 src/js/smart-translate-address-core.js
+src/js/hy-mt2-30b-heretic-catalog-core.js
 tools/advanced-module-entry.js
 tests/advanced-context-reconstruct.test.js
 tests/advanced-film-reconstruct.test.js
 tests/advanced-smart-translate.test.js
 tests/smart-translate-verify-core.test.js
+tests/hy-mt2-30b-heretic-catalog.test.js
 
 # Advanced license private key & generated redeem codes (never commit)
 .advanced-license-private.b64

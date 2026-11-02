@@ -23,9 +23,17 @@
         paths: [],
         info: null,
         installing: false,
+        installStartedAt: 0,
+        progressTouchedAt: 0,
+        heartbeatTimer: 0,
+        llamaArchive: '',
+        llamaCompanion: '',
+        llamaRuntimeId: '',
+        llamaInstalledLocally: false,
         errorText: '',
         formPayload: null,
         resolve: null,
+        beforeClose: null,
         keysBound: false,
     };
 
@@ -56,6 +64,9 @@
         if (k === 'torch-rocm' || k === 'torchrocm' || k === 'rocm-torch' || k === 'pytorch-rocm') {
             return 'torch-rocm';
         }
+        if (k === 'torch-xpu' || k === 'torchxpu' || k === 'xpu-torch' || k === 'pytorch-xpu') {
+            return 'torch-xpu';
+        }
         if (k === 'sensevoice' || k === 'sensevoice-runtime' || k === 'runtime') return 'sensevoice';
         if (k === 'whisper' || k === 'whisper-runtime') return 'whisper';
         if (k === 'llamaruntime' || k === 'llama-runtime' || k === 'llama' || k === 'llama-server') {
@@ -77,6 +88,7 @@
         if (k === 'demucs') return '手动修复 · Demucs / PyTorch';
         if (k === 'torch-cuda') return '手动修复 · CUDA PyTorch';
         if (k === 'torch-rocm') return '手动修复 · ROCm PyTorch';
+        if (k === 'torch-xpu') return '手动修复 · XPU PyTorch';
         if (k === 'sensevoice') return '手动修复 · SenseVoice 运行库';
         if (k === 'whisper') return '手动修复 · Whisper 运行库';
         if (k === 'llamaRuntime') return '手动修复 · llama-server 运行时';
@@ -87,10 +99,43 @@
         if (kind === 'demucs') return 'Demucs';
         if (kind === 'torch-cuda') return 'CUDA PyTorch';
         if (kind === 'torch-rocm') return 'ROCm PyTorch';
+        if (kind === 'torch-xpu') return 'XPU PyTorch';
         if (kind === 'sensevoice') return 'SenseVoice 运行库';
         if (kind === 'whisper') return 'Whisper 运行库';
         if (kind === 'llamaRuntime') return 'llama-server';
         return 'GPU 支持';
+    }
+
+    /**
+     * Auto-fix often fails with "exit 75 / connection refused" while the engine
+     * dies mid-download. That string must NOT be shown as if manual install already
+     * failed — rewrite into next-step guidance for the local-.whl flow.
+     */
+    function formatManualErrorBanner(errorText, kind) {
+        const raw = String(errorText || '').trim();
+        if (!raw) return '';
+        const numpyHeal = global.TransubNumpyWhlHeal;
+        if (numpyHeal?.isNumpyPinOrDllError?.(raw)
+            || (kind === 'whisper' && /numpy/i.test(raw) && /2\.5|DLL|Win32|multiarray/i.test(raw))) {
+            return numpyHeal?.formatNumpyManualHealHint?.(raw) || raw.slice(0, 500);
+        }
+        const engineDrop = /退出码\s*75|exit(?:\s*code)?\s*75|连接被拒绝|ECONNREFUSED|引擎未响应|引擎进程已退出/i.test(raw);
+        const torchish = kind === 'torch-cuda' || kind === 'demucs'
+            || /CUDA\s*PyTorch|torch_cuda|改装\s*CUDA/i.test(raw);
+        if (engineDrop && torchish) {
+            return [
+                '自动联网补齐失败（引擎在下载中退出，常见于无法访问 download.pytorch.org）。',
+                '手动修复不会再次走同一下载通道：请用下方「下载文件」（优先阿里云镜像）拿到 .whl，',
+                '再点「选择本地文件」安装。约 2.5GB，需保持磁盘与浏览器下载畅通。',
+            ].join('');
+        }
+        if (engineDrop) {
+            return [
+                '自动联网补齐时引擎已退出，与手动安装不是同一步。',
+                '请用下方链接下载对应 .whl 后选择本地文件安装。',
+            ].join('');
+        }
+        return raw.slice(0, 500);
     }
 
     function llamaRuntimeCatalogItems(info) {
@@ -132,6 +177,7 @@
         if (k === 'demucs') return '选择 Demucs / torch 的 .whl（可多选）';
         if (k === 'torch-cuda') return '选择 CUDA 版 torch / torchaudio 的 .whl（可多选）';
         if (k === 'torch-rocm') return 'ROCm 请复制 pip 命令安装（无独立 .whl 清单）';
+        if (k === 'torch-xpu') return 'XPU 请复制 pip 命令安装（无独立 .whl 清单）';
         if (k === 'sensevoice') return '选择 torch / funasr 等 .whl（可多选）';
         if (k === 'whisper') return '选择 numpy / ctranslate2 / onnxruntime / faster-whisper 的 .whl（可多选）';
         return '选择 GPU 组件 .whl（可多选）';
@@ -143,6 +189,51 @@
 
     function linkExportApi() {
         return global.TransubManualWhlLinkExport || null;
+    }
+
+    function pipPanelApi() {
+        return global.TransubManualWhlPipPanel || null;
+    }
+
+    function syncPipCommandPanel() {
+        const api = pipPanelApi();
+        const panel = $('manualWhlPipPanel');
+        const ta = $('manualWhlPipText');
+        const copyBtn = $('manualWhlCopyPipBtn');
+        const pip = api?.trimPipCommand?.(state.info?.pipCommand)
+            || String(state.info?.pipCommand || '').trim();
+        const show = !!pip;
+        if (panel) panel.classList.toggle('hidden', !show);
+        if (ta) ta.value = pip;
+        if (copyBtn) copyBtn.disabled = !show || state.loading || state.installing;
+        return { pip, show };
+    }
+
+    async function copyPipCommand({ quiet = false } = {}) {
+        const api = pipPanelApi();
+        const pip = api?.trimPipCommand?.(state.info?.pipCommand)
+            || String(state.info?.pipCommand || '').trim();
+        if (!pip) {
+            if (!quiet) setStatus('当前没有可复制的 pip 命令', 'warn');
+            return { ok: false, error: 'empty' };
+        }
+        try {
+            if (global.navigator?.clipboard?.writeText) {
+                await global.navigator.clipboard.writeText(pip);
+            } else {
+                const ta = $('manualWhlPipText');
+                if (!ta) throw new Error('no_clipboard');
+                ta.focus();
+                ta.select();
+                const ok = document.execCommand?.('copy');
+                if (!ok) throw new Error('execCommand_copy_failed');
+            }
+            if (!quiet) setStatus('已复制 pip 命令（请在 cmd.exe 中粘贴执行）', 'ok');
+            return { ok: true, length: pip.length };
+        } catch (err) {
+            if (!quiet) setStatus('复制 pip 命令失败，请手动选中文本框内容', 'err');
+            return { ok: false, error: err?.message || String(err) };
+        }
     }
 
     function syncLinksExportPanel({ autoCopy = false } = {}) {
@@ -161,6 +252,7 @@
         if (copyBtn) copyBtn.disabled = !has || state.loading || state.installing;
         if (exportBtn) exportBtn.disabled = !has || state.loading || state.installing;
         if (toolBtn) toolBtn.disabled = !has || state.loading || state.installing;
+        syncPipCommandPanel();
         if (autoCopy && has) {
             void copyAllLinks({ quiet: true });
         }
@@ -346,7 +438,9 @@
         if (!host) return;
         const items = Array.isArray(state.info?.items) ? state.info.items : [];
         if (!items.length) {
-            host.innerHTML = '<p class="text-xs text-gray-500">暂无镜像清单，请自行在浏览器搜索对应包的 win_amd64 .whl。</p>';
+            const msg = pipPanelApi()?.emptyPackageListMessage?.(state.info)
+                || '暂无镜像清单，请自行在浏览器搜索对应包的 win_amd64 .whl。';
+            host.innerHTML = `<p class="text-xs text-gray-500">${esc(msg)}</p>`;
             return;
         }
         host.innerHTML = items.map((item) => {
@@ -426,6 +520,11 @@
             if (pctEl) pctEl.textContent = `${pct}%`;
         }
         if (msg && detail) detail.textContent = msg;
+        state.progressTouchedAt = Date.now();
+        const hint = $('manualWhlProgressHint');
+        if (hint) {
+            hint.textContent = '本地安装可能需要几分钟。进度若暂时不动，这里会提示仍在进行，请勿关闭窗口。';
+        }
         const installBtn = $('manualWhlInstallBtn');
         if (installBtn && state.installing) {
             installBtn.textContent = pct != null ? `安装中 ${pct}%` : '安装中…';
@@ -440,26 +539,82 @@
         }
     }
 
+    function formatInstallWait(ms) {
+        const sec = Math.max(0, Math.floor(Number(ms) / 1000));
+        if (sec < 60) return `${sec} 秒`;
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        return `${m} 分 ${String(s).padStart(2, '0')} 秒`;
+    }
+
+    function stopInstallHeartbeat() {
+        if (state.heartbeatTimer) {
+            try { clearInterval(state.heartbeatTimer); } catch (_) { /* ignore */ }
+            state.heartbeatTimer = 0;
+        }
+    }
+
+    function startInstallHeartbeat() {
+        stopInstallHeartbeat();
+        state.installStartedAt = Date.now();
+        state.progressTouchedAt = Date.now();
+        state.heartbeatTimer = setInterval(() => {
+            if (!state.installing) {
+                stopInstallHeartbeat();
+                return;
+            }
+            const idle = Date.now() - (state.progressTouchedAt || state.installStartedAt);
+            if (idle < 8000) return;
+            const hint = $('manualWhlProgressHint');
+            if (!hint) return;
+            const waited = formatInstallWait(Date.now() - state.installStartedAt);
+            hint.textContent = `安装仍在进行（已等待 ${waited}）。解压或复制大文件时进度可能暂时不动，请勿关闭窗口。`;
+        }, 1000);
+    }
+
+    function setInstallFocus(on) {
+        const modal = $('manualWhlModal');
+        if (modal) modal.classList.toggle('is-installing', !!on);
+        setProgressVisible(!!on);
+        if (on) startInstallHeartbeat();
+        else stopInstallHeartbeat();
+    }
+
+    function canStartManualInstall() {
+        return state.paths.length > 0 || !!state.llamaArchive;
+    }
+
     function setBusy(busy) {
         state.installing = !!busy;
         const installBtn = $('manualWhlInstallBtn');
         const pickBtn = $('manualWhlPickBtn');
         const cancelBtn = $('manualWhlCancelBtn');
         if (installBtn) {
-            installBtn.disabled = busy || state.loading || !state.paths.length;
-            installBtn.textContent = busy ? '安装中…' : '安装所选文件';
+            const ready = canStartManualInstall();
+            installBtn.disabled = busy || state.loading || !ready;
+            installBtn.textContent = busy
+                ? '安装中…'
+                : (state.llamaArchive && !state.paths.length ? '开始修复' : '安装所选文件');
         }
         if (pickBtn) pickBtn.disabled = busy || state.loading;
-        if (cancelBtn) cancelBtn.disabled = busy; // keep Cancel available while loading catalog
+        if (cancelBtn) {
+            // Keep cancel clickable during install so users can abort slow runtime downloads.
+            cancelBtn.disabled = false;
+            cancelBtn.textContent = busy ? '取消安装' : '取消';
+        }
         const copyBtn = $('manualWhlCopyLinksBtn');
         const exportBtn = $('manualWhlExportLinksBtn');
         const toolBtn = $('manualWhlToolBtn');
+        const copyPipBtn = $('manualWhlCopyPipBtn');
         const hasLinks = (linkExportApi()?.collectManualWhlUrls?.(state.info?.items) || []).length > 0;
+        const hasPip = !!(pipPanelApi()?.trimPipCommand?.(state.info?.pipCommand)
+            || String(state.info?.pipCommand || '').trim());
         if (copyBtn) copyBtn.disabled = busy || state.loading || !hasLinks;
         if (exportBtn) exportBtn.disabled = busy || state.loading || !hasLinks;
         if (toolBtn) toolBtn.disabled = busy || state.loading || !hasLinks;
+        if (copyPipBtn) copyPipBtn.disabled = busy || state.loading || !hasPip;
         if (busy) setToolMenuOpen(false);
-        if (!busy) setProgressVisible(false);
+        if (!busy) setInstallFocus(false);
     }
 
     function closeModal(result) {
@@ -473,7 +628,12 @@
         state.loading = false;
         state.loadToken += 1; // invalidate in-flight openModal fetches
         state.installing = false;
-        setProgressVisible(false);
+        state.llamaArchive = '';
+        state.llamaCompanion = '';
+        state.llamaRuntimeId = '';
+        state.llamaInstalledLocally = false;
+        state.beforeClose = null;
+        setInstallFocus(false);
         const resolve = state.resolve;
         state.resolve = null;
         if (resolve) resolve(result || { ok: false, cancelled: true });
@@ -487,7 +647,11 @@
         info = null,
         initialPaths = null,
         preferInstall = false,
+        beforeClose = null,
     } = {}) {
+        try {
+            await global.TransubUiFragmentLoad?.ensureUiFragment?.('factory-modals');
+        } catch (_) { /* ignore */ }
         bindOnce();
         const modal = $('manualWhlModal');
         if (!modal) return { ok: false, error: 'no_modal' };
@@ -498,18 +662,27 @@
         }
 
         const kindList = Array.isArray(kinds) && kinds.length
-            ? [...new Set(kinds.map(normalizeKind))]
-            : [normalizeKind(kind)];
+            ? [...new Set(kinds.map(normalizeKind))].filter((k) => k !== 'llamaRuntime')
+            : [normalizeKind(kind)].filter((k) => k !== 'llamaRuntime');
+        if (!kindList.length) {
+            return { ok: false, error: 'AI 运行时无需手动下载，将按显卡自动安装', deferredLlama: true };
+        }
         const loadToken = state.loadToken + 1;
         state.loadToken = loadToken;
+        const panelApi = pipPanelApi();
 
         state.open = true;
         state.loading = true;
         state.kinds = kindList;
         state.kind = kindList[0];
         state.paths = [];
-        state.errorText = String(errorText || '').trim();
+        state.llamaArchive = '';
+        state.llamaCompanion = '';
+        state.llamaRuntimeId = '';
+        state.llamaInstalledLocally = false;
+        state.errorText = formatManualErrorBanner(errorText, state.kind);
         state.formPayload = formPayload || {};
+        state.beforeClose = typeof beforeClose === 'function' ? beforeClose : null;
         state.info = info;
 
         const title = $('manualWhlTitle');
@@ -530,7 +703,11 @@
         renderPackages();
         renderPaths();
         syncLinksExportPanel();
-        setStatus('正在加载下载清单…', 'info');
+        {
+            const st = panelApi?.resolveManualCatalogStatus?.(state.info, { loading: true })
+                || { message: '正在加载下载清单…', tone: 'info' };
+            setStatus(st.message, st.tone);
+        }
         setBusy(false);
         modal.classList.remove('hidden');
         modal.classList.add('flex');
@@ -545,70 +722,97 @@
         if (seedPaths.length) {
             await mergeAndValidatePaths(seedPaths, { fromSeed: true });
         }
+        let loadError = '';
         if (!state.info && electron?.transubEngineDownloadInfo) {
             try {
-                const mergedItems = [];
-                let folder = '';
-                let wheelHint = '';
+                const parts = [];
+                const timeoutMs = panelApi?.DOWNLOAD_INFO_TIMEOUT_MS || 30000;
+                const race = panelApi?.withTimeout
+                    || ((p, ms, label) => {
+                        let t = 0;
+                        return Promise.race([
+                            Promise.resolve(p),
+                            new Promise((_, rej) => {
+                                t = setTimeout(() => rej(new Error(label || 'timeout')), ms || 30000);
+                            }),
+                        ]).finally(() => { if (t) clearTimeout(t); });
+                    });
                 for (const k of kindList) {
                     if (state.loadToken !== loadToken || !state.open) {
                         return resultPromise;
                     }
                     if (k === 'llamaRuntime') {
                         if (!electron?.transubAdvancedManagedLlmDownloadInfo) continue;
-                        const res = await electron.transubAdvancedManagedLlmDownloadInfo({ kind: 'runtime' });
+                        const res = await race(
+                            electron.transubAdvancedManagedLlmDownloadInfo({ kind: 'runtime' }),
+                            timeoutMs,
+                            'AI 运行时清单超时',
+                        );
                         if (state.loadToken !== loadToken || !state.open) {
                             return resultPromise;
                         }
-                        if (!res?.ok || !res.info) continue;
-                        folder = folder || res.info.folder || '';
-                        wheelHint = wheelHint
-                            || 'llama-server 为 zip 运行时（非 .whl）。请用下方链接下载后，到设置 → 运行环境选择 zip 安装。';
-                        for (const it of llamaRuntimeCatalogItems(res.info)) {
-                            const key = `${it.id || ''}::${it.fileName || it.defaultUrl || ''}`;
-                            if (mergedItems.some((x) => `${x.id || ''}::${x.fileName || x.defaultUrl || ''}` === key)) {
-                                continue;
-                            }
-                            mergedItems.push(it);
+                        if (!res?.ok || !res.info) {
+                            loadError = loadError || String(res?.error || '无法加载 AI 运行时清单');
+                            continue;
                         }
+                        if (res.info.localArchive) {
+                            state.llamaArchive = String(res.info.localArchive);
+                            state.llamaCompanion = String(res.info.localCompanion || '');
+                            state.llamaRuntimeId = String(res.info.runtimeId || '');
+                        }
+                        const llamaHint = state.llamaArchive
+                            ? '已在本机找到 AI 运行时压缩包。点「开始修复」即可解压安装，不必重新下载。'
+                            : 'llama-server 为 zip 运行时（非 .whl）。请用下方链接下载后，点「开始修复」或到设置选择 zip 安装。';
+                        parts.push({
+                            info: {
+                                kind: 'llamaRuntime',
+                                folder: res.info.folder || '',
+                                wheelHint: llamaHint,
+                                hint: llamaHint,
+                                items: llamaRuntimeCatalogItems(res.info),
+                            },
+                        });
                         continue;
                     }
-                    const res = await electron.transubEngineDownloadInfo({
-                        ...(state.formPayload || {}),
-                        kind: k,
-                    });
+                    const res = await race(
+                        electron.transubEngineDownloadInfo({
+                            ...(state.formPayload || {}),
+                            kind: k,
+                        }),
+                        timeoutMs,
+                        '下载清单超时',
+                    );
                     if (state.loadToken !== loadToken || !state.open) {
                         return resultPromise;
                     }
-                    if (!res?.ok || !res.info) continue;
-                    folder = folder || res.info.folder || '';
-                    wheelHint = wheelHint || res.info.wheelHint || res.info.hint || '';
-                    const items = Array.isArray(res.info.items) ? res.info.items : [];
-                    for (const it of items) {
-                        const key = `${it.id || ''}::${it.fileName || it.defaultUrl || ''}`;
-                        if (mergedItems.some((x) => `${x.id || ''}::${x.fileName || x.defaultUrl || ''}` === key)) {
-                            continue;
-                        }
-                        mergedItems.push({
-                            ...it,
-                            group: it.group || kindLabel(k),
-                            kind: it.kind || k,
-                        });
+                    if (!res?.ok || !res.info) {
+                        loadError = loadError || String(res?.error || `无法加载 ${kindLabel(k)} 清单`);
+                        continue;
                     }
+                    parts.push({ info: { ...res.info, kind: res.info.kind || k } });
                 }
                 if (state.loadToken !== loadToken || !state.open) {
                     return resultPromise;
                 }
-                state.info = {
-                    kind: kindList.length === 1 ? kindList[0] : 'bundle',
-                    folder,
-                    wheelHint: kindList.length > 1
-                        ? '按分组下载所需 .whl（可多选后一次安装）。重复的包只需下一份。'
-                        : (wheelHint || '请下载对应 .whl，再选择本地文件安装。'),
-                    hint: wheelHint,
-                    items: mergedItems,
-                };
-            } catch (_) { /* ignore */ }
+                if (parts.length) {
+                    state.info = panelApi?.mergeManualDownloadInfoParts?.(parts, {
+                        kindList,
+                        kindLabel,
+                    }) || {
+                        kind: kindList.length === 1 ? kindList[0] : 'bundle',
+                        folder: parts[0]?.info?.folder || '',
+                        pipCommand: parts.map((p) => String(p.info?.pipCommand || '').trim()).filter(Boolean).join('\n\n'),
+                        wheelHint: parts[0]?.info?.wheelHint || parts[0]?.info?.hint || '',
+                        hint: parts[0]?.info?.hint || '',
+                        items: parts.flatMap((p) => (Array.isArray(p.info?.items) ? p.info.items : [])),
+                        runtimePythonMissing: parts.some((p) => !!p.info?.runtimePythonMissing),
+                        runtimePythonExpected: parts.find((p) => p.info?.runtimePythonExpected)?.info?.runtimePythonExpected || '',
+                        engineInstallPath: parts.find((p) => p.info?.engineInstallPath)?.info?.engineInstallPath || '',
+                    };
+                }
+            } catch (err) {
+                loadError = String(err?.message || err || '加载下载清单失败');
+            }
         }
 
         if (state.loadToken !== loadToken || !state.open) {
@@ -616,15 +820,39 @@
         }
 
         state.loading = false;
+        if (state.info?.runtimePythonMissing) {
+            const banner = panelApi?.buildMissingRuntimePythonBanner?.(state.info)
+                || '引擎不完整：找不到 runtime\\python.exe，请重新下载完整包并完整解压。';
+            state.errorText = banner;
+            if (errEl) {
+                errEl.textContent = banner;
+                errEl.classList.remove('hidden');
+            }
+        } else if (state.llamaArchive && errEl && /未安装/.test(String(errEl.textContent || ''))) {
+            errEl.textContent = '';
+            errEl.classList.add('hidden');
+        } else if (loadError && !state.info && errEl) {
+            state.errorText = loadError;
+            errEl.textContent = loadError;
+            errEl.classList.remove('hidden');
+        }
         if (hintEl) {
             hintEl.textContent = state.info?.wheelHint
                 || state.info?.hint
-                || '请在浏览器下载对应 .whl，再选择本地文件安装。也可复制/导出下方全部链接，用下载软件批量拉取。';
+                || (loadError
+                    ? loadError
+                    : '请在浏览器下载对应 .whl，再选择本地文件安装。也可复制/导出下方全部链接，用下载软件批量拉取。');
         }
         renderPackages();
         renderPaths();
         // Prepare links for copy/export; do not overwrite clipboard without an explicit click.
         syncLinksExportPanel({ autoCopy: false });
+        {
+            const st = panelApi?.resolveManualCatalogStatus?.(state.info, { loading: false });
+            if (st?.message) setStatus(st.message, st.tone || 'info');
+            else if (loadError && !state.info) setStatus(loadError, 'err');
+            else setStatus('', 'info');
+        }
         setBusy(false);
 
         if (preferInstall && state.paths.length && state.open && state.loadToken === loadToken) {
@@ -696,20 +924,91 @@
         setBusy(false);
     }
 
+    async function installLlamaArchive() {
+        if (!state.llamaArchive) return { ok: true, skipped: true };
+        if (!electron?.transubAdvancedManagedLlmImportRuntime) {
+            return { ok: false, error: '当前环境不能安装已下载的 AI 运行时' };
+        }
+        updateInstallProgress({ pct: 12, message: '正在解压已下载的 AI 运行时…' });
+        let unsub = null;
+        try {
+            if (typeof electron.onAdvancedManagedLlmProgress === 'function') {
+                unsub = electron.onAdvancedManagedLlmProgress((p) => {
+                    if (!state.installing || !p) return;
+                    updateInstallProgress({
+                        pct: p.pct ?? p.percent,
+                        message: p.message || p.detail || '正在解压 AI 运行时…',
+                    });
+                });
+            }
+            return await electron.transubAdvancedManagedLlmImportRuntime({
+                archivePath: state.llamaArchive,
+                companionPath: state.llamaCompanion || undefined,
+                runtimeId: state.llamaRuntimeId || undefined,
+            });
+        } finally {
+            try { unsub?.(); } catch (_) { /* ignore */ }
+        }
+    }
+
+    async function completeInstall(payload) {
+        const hook = state.beforeClose;
+        const skipRuntime = !!payload?.llamaInstalledLocally;
+        if (typeof hook === 'function' && !skipRuntime) {
+            state.installing = true;
+            setInstallFocus(true);
+            updateInstallProgress({ pct: 92, message: '正在测速并安装 AI 运行时（非 CUDA PyTorch；请勿关闭）…' });
+            setStatus('正在测速下载源并安装 AI 运行时，请稍候（进度 92% 属正常）…', 'info');
+            let extra = null;
+            try {
+                extra = await hook({
+                    report: (info) => {
+                        const msg = String(info?.message || '').trim();
+                        const pct = Number(info?.pct);
+                        updateInstallProgress({
+                            pct: Number.isFinite(pct) ? pct : 8,
+                            message: msg || '正在安装 AI 运行时…',
+                        });
+                        if (msg) setStatus(msg, 'info');
+                    },
+                });
+            } catch (err) {
+                extra = { ok: false, error: err?.message || String(err) };
+            }
+            if (extra && (extra.cancelled || extra.code === 'cancelled')) {
+                setStatus('已取消安装', 'warn');
+                setBusy(false);
+                closeModal({ ok: false, cancelled: true });
+                return;
+            }
+            if (extra && extra.ok === false && !extra.skipped) {
+                setStatus(extra.error || 'AI 运行时安装失败', 'err');
+                setBusy(false);
+                return;
+            }
+            updateInstallProgress({ pct: 100, message: 'AI 运行时已安装' });
+            setStatus('AI 运行时已安装', 'ok');
+        }
+        setBusy(false);
+        closeModal(payload);
+    }
+
     async function installSelected() {
-        if (!state.paths.length) {
-            setStatus('请先选择 .whl 文件', 'warn');
+        if (!canStartManualInstall()) {
+            setStatus('请先选择 .whl，或先下载 AI 运行时压缩包', 'warn');
             return;
         }
-        if (!electron?.transubEngineInstallLocalWheels) {
+        if (state.paths.length && !electron?.transubEngineInstallLocalWheels) {
             setStatus('当前环境不支持本地安装', 'err');
             return;
         }
         setBusy(true);
-        setProgressVisible(true);
+        setInstallFocus(true);
         updateInstallProgress({
             pct: 2,
-            message: `准备安装 ${state.paths.length} 个文件…`,
+            message: state.paths.length
+                ? `准备安装 ${state.paths.length} 个文件…`
+                : '准备解压已下载的 AI 运行时…',
         });
         setStatus('正在本地安装，可能需要几分钟，请耐心等待…', 'info');
 
@@ -722,6 +1021,28 @@
                     if (p.source && p.source !== 'local-whl') return;
                     updateInstallProgress(p);
                 });
+            }
+
+            if (state.llamaArchive) {
+                const llamaRes = await installLlamaArchive();
+                if (llamaRes && !llamaRes.skipped && !llamaRes.ok) {
+                    setStatus(llamaRes.error || 'AI 运行时安装失败', 'err');
+                    setBusy(false);
+                    return;
+                }
+                if (llamaRes && !llamaRes.skipped && llamaRes.ok !== false) {
+                    state.llamaInstalledLocally = true;
+                }
+            }
+
+            if (!state.paths.length) {
+                await completeInstall({
+                    ok: true,
+                    message: 'AI 运行时已解压安装',
+                    kind: 'llamaRuntime',
+                    llamaInstalledLocally: true,
+                });
+                return;
             }
 
             if (electron.transubEngineValidateWhl) {
@@ -765,13 +1086,13 @@
             }
             updateInstallProgress({ pct: 100, message: res.message || '安装完成' });
             setStatus(res.message || '安装完成', 'ok');
-            setBusy(false);
-            closeModal({
+            await completeInstall({
                 ok: true,
                 message: res.message,
                 installed: res.installed,
                 kind: state.kind,
                 probe: res.probe,
+                llamaInstalledLocally: !!state.llamaInstalledLocally,
             });
         } catch (err) {
             setStatus(err?.message || String(err), 'err');
@@ -790,22 +1111,24 @@
         errorText = '',
         formPayload = null,
         silent = false,
+        beforeClose = null,
     } = {}) {
         if (silent) return { ok: false, skipped: true };
         if (!electron?.transubEngineInstallLocalWheels) {
             return { ok: false, skipped: true };
         }
         const normalized = normalizeKind(kind);
+        const banner = formatManualErrorBanner(errorText, normalized);
         const proceed = await confirmFn()({
             title: uiTf('{kind}自动安装失败', { kind: kindLabel(normalized) }),
             message: uiTf('{err}\n\n是否改为手动下载 .whl，并选择本地文件安装？', {
-                err: String(errorText || '网络下载失败').slice(0, 500),
+                err: banner || String(errorText || '网络下载失败').slice(0, 500),
             }),
             primaryLabel: '手动安装',
             secondaryLabel: '取消',
         });
         if (!proceed) return { ok: false, cancelled: true };
-        return openModal({ kind: normalized, errorText, formPayload });
+        return openModal({ kind: normalized, errorText: banner || errorText, formPayload, beforeClose });
     }
 
     function bindOnce() {
@@ -815,7 +1138,13 @@
         modal.dataset.bound = '1';
 
         $('manualWhlCancelBtn')?.addEventListener('click', () => {
-            if (state.installing) return;
+            if (state.installing) {
+                try { void electron?.transubAdvancedManagedLlmCancelPull?.(); } catch (_) { /* ignore */ }
+                try { void electron?.transubEngineCancelDownload?.(); } catch (_) { /* ignore */ }
+                setStatus('正在取消…', 'warn');
+                updateInstallProgress({ message: '正在取消下载与安装…' });
+                return;
+            }
             closeModal({ ok: false, cancelled: true });
         });
         $('manualWhlPickBtn')?.addEventListener('click', () => {
@@ -881,6 +1210,10 @@
             setBusy(false);
             setStatus('');
         });
+        $('manualWhlCopyPipBtn')?.addEventListener('click', () => {
+            if (state.loading || state.installing) return;
+            void copyPipCommand();
+        });
         $('manualWhlCopyLinksBtn')?.addEventListener('click', () => {
             if (state.loading) return;
             void copyAllLinks();
@@ -937,11 +1270,17 @@
         if (!state.keysBound) {
             state.keysBound = true;
             document.addEventListener('keydown', (event) => {
-                if (!state.open || state.installing) return;
-                if (event.key === 'Escape') {
-                    event.preventDefault();
-                    closeModal({ ok: false, cancelled: true });
+                if (!state.open) return;
+                if (event.key !== 'Escape') return;
+                event.preventDefault();
+                if (state.installing) {
+                    try { void electron?.transubAdvancedManagedLlmCancelPull?.(); } catch (_) { /* ignore */ }
+                    try { void electron?.transubEngineCancelDownload?.(); } catch (_) { /* ignore */ }
+                    setStatus('正在取消…', 'warn');
+                    updateInstallProgress({ message: '正在取消下载与安装…' });
+                    return;
                 }
+                closeModal({ ok: false, cancelled: true });
             });
         }
     }
@@ -965,9 +1304,12 @@
         closeModal,
         normalizeKind,
         kindLabel,
+        formatManualErrorBanner,
         copyAllLinks,
+        copyPipCommand,
         exportLinksFile,
         openWithThunder,
         syncLinksExportPanel,
+        syncPipCommandPanel,
     };
 })(typeof window !== 'undefined' ? window : globalThis);

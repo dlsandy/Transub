@@ -273,6 +273,15 @@
         const qcSmartFixBtn = canQcFix && advancedEntitled && hasSmartQcFix
             ? `<button type="button" data-qc-smart-fix="${idx}" class="row-action-btn text-violet-600 hover:text-violet-800 hover:bg-violet-50" title="智能修复QC (Pro)" aria-label="智能修复QC"><i class="fa fa-magic text-xs"></i></button>`
             : '';
+        const ellipsisLeft = Number(item.ellipsisLeft) || 0;
+        const canEllipsisBackfill = !running && !qcFixing
+            && (item.status === 'done' || item.status === 'skipped')
+            && ellipsisLeft > 0
+            && !!String(item.sourceSubtitlePath || '').trim()
+            && !!subPath;
+        const ellipsisBackfillBtn = canEllipsisBackfill
+            ? `<button type="button" data-ellipsis-backfill="${idx}" class="row-action-btn text-sky-600 hover:text-sky-800 hover:bg-sky-50" title="补译省略号（${ellipsisLeft}）" aria-label="补译省略号"><i class="fa fa-ellipsis-h text-xs"></i></button>`
+            : '';
         const retryBtn = (item.status === 'failed' || item.status === 'error') && !running
             ? `<button type="button" data-retry-idx="${idx}" class="row-action-btn text-amber-600 hover:text-amber-800 hover:bg-amber-50" title="重试本条" aria-label="重试本条"><i class="fa fa-repeat text-xs"></i></button>`
             : '';
@@ -365,6 +374,7 @@
                     ${diagBtn}
                     ${qcFixBtn}
                     ${qcSmartFixBtn}
+                    ${ellipsisBackfillBtn}
                     ${editBtn}
                     <button type="button" data-show-folder="${esc(revealPath)}" data-idx="${idx}"
                         class="row-action-btn text-gray-400 hover:text-primary hover:bg-gray-100 disabled:opacity-30"

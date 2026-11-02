@@ -10,7 +10,7 @@
         global.TransubQualityPipelinePolicy = api;
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function qualityPipelinePolicyFactory() {
-    const DEFAULT_LOOP_MAX_PASSES = 1;
+    const DEFAULT_LOOP_MAX_PASSES = 2;
     const DEFAULT_RETRANSLATE_INDEX_CAP = 40;
     /** Skip QC loop when signal is below these (quality profile still on). */
     const DEFAULT_LOOP_MIN_RED = 1;
@@ -74,6 +74,21 @@
     }
 
     /**
+     * Scale retranslate cap with cue count so long titles do not abandon residual holds.
+     */
+    function resolveAdaptiveRetranslateIndexCap(options = {}, cueCount = 0) {
+        const base = clampPostQcRetranslateIndexCap(
+            options.postQcRetranslateIndexCap != null
+                ? options.postQcRetranslateIndexCap
+                : DEFAULT_RETRANSLATE_INDEX_CAP,
+        );
+        const n = Math.max(0, Number(cueCount) || 0);
+        if (n <= 400) return base;
+        // ~10% of cues, capped
+        return Math.min(120, Math.max(base, Math.ceil(n * 0.1)));
+    }
+
+    /**
      * Skip expensive ASR+MT closed loop when residual risk/blank signal is low.
      * @returns {{ run: boolean, reason: string, red: number, blank: number, issues: number }}
      */
@@ -110,6 +125,7 @@
         }
         // Main/post blank-MT already exhausted these slots — ASR+MT closed loop is
         // duplicate work unless risk bands say the *source* is bad.
+        // Keep running when red holds remain (empty ZH may be peel-prefill, not true MT fail).
         if (
             blank >= blankFloor
             && blankExhausted > 0
@@ -147,6 +163,7 @@
         clampPostQcLoopMaxPasses,
         resolveEffectivePostQcLoopMaxPasses,
         clampPostQcRetranslateIndexCap,
+        resolveAdaptiveRetranslateIndexCap,
         shouldRunPostQcLoopForSignal,
     };
 }));

@@ -161,21 +161,23 @@ describe('subtitle-software-credit-core', () => {
         assert.ok(/字幕由\s*Transub\s*Pro/.test(parted.creditPrefixes[0].prefix));
 
         const healed = credit.normalizeSoftwareCreditInCues(
-            [{ index: 0, text: packed }],
+            [{ index: 0, startMs: 0, endMs: 3000, text: packed }],
             { isPro: true },
         );
         assert.ok(healed.changed >= 1);
-        // Heal preserves JA watermark locale from source; dialogue must survive.
+        // Heal expands packed credit+dialogue into two cues (never leave glued).
+        assert.strictEqual(healed.cues.length, 2);
         assert.ok(String(healed.cues[0].text).includes('字幕は Transub Pro'));
-        assert.ok(String(healed.cues[0].text).includes('女性を本当に気持ちよくさせたい'));
-        assert.ok(String(healed.cues[0].text).includes('\n'));
+        assert.ok(!String(healed.cues[0].text).includes('女性を本当に'));
+        assert.ok(String(healed.cues[1].text).includes('女性を本当に気持ちよくさせたい'));
 
         const healedZh = credit.normalizeSoftwareCreditInCues(
-            [{ index: 0, text: packed }],
+            [{ index: 0, startMs: 0, endMs: 3000, text: packed }],
             { isPro: true, lang: 'zh' },
         );
+        assert.strictEqual(healedZh.cues.length, 2);
         assert.ok(String(healedZh.cues[0].text).includes('字幕由 Transub Pro 生成'));
-        assert.ok(String(healedZh.cues[0].text).includes('女性を本当に気持ちよくさせたい'));
+        assert.ok(String(healedZh.cues[1].text).includes('女性を本当に気持ちよくさせたい'));
     });
 
     it('exclusive head credit slot replaces stolen dialogue invent', () => {
@@ -267,7 +269,7 @@ describe('subtitle-software-credit-core', () => {
         assert.strictEqual(res.tailInserted, true);
     });
 
-    it('merges credit onto last overlapping cue at tail', () => {
+    it('inserts dedicated tail credit instead of gluing onto dialogue', () => {
         const cues = [
             { startMs: 1000, endMs: 2000, text: '中段' },
             { startMs: 8500, endMs: 9800, text: '结尾' },
@@ -276,11 +278,69 @@ describe('subtitle-software-credit-core', () => {
             isPro: false,
             mediaDurationMs: 10000,
         });
-        assert.strictEqual(res.tailMerged, true);
-        assert.strictEqual(
-            res.cues[res.cues.length - 1].text,
-            '字幕由 Transub 生成 [ www.transub.cc ]\n结尾',
-        );
+        assert.strictEqual(res.tailInserted, true);
+        assert.strictEqual(res.tailMerged, false);
+        const tail = res.cues.filter((c) => credit.isSoftwareCreditText(c.text)
+            && Number(c.startMs) > 100);
+        assert.ok(tail.length >= 1);
+        // Must not overlap ending dialogue (NIMA-085: credit sat on 真的假的/幸运)
+        assert.ok(Number(tail[tail.length - 1].startMs) >= 9800, JSON.stringify(tail));
+        assert.ok(res.cues.some((c) => String(c.text).trim() === '结尾'));
+        assert.ok(!res.cues.some((c) => /\n结尾/.test(String(c.text))));
+    });
+
+    it('parks tail credit after last dialogue when mediaDurationMs is missing', () => {
+        const cues = [
+            { startMs: 7375040, endMs: 7376006, text: '诶，真的假的？' },
+            { startMs: 7376026, endMs: 7377340, text: '这不是挺幸运的吗！？' },
+        ];
+        const res = credit.insertSoftwareCreditIntoCues(cues, {
+            isPro: true,
+            lang: 'zh',
+        });
+        const tail = res.cues.filter((c) => credit.isSoftwareCreditText(c.text)
+            && Number(c.startMs) > 100);
+        assert.ok(tail.length >= 1);
+        assert.ok(Number(tail[0].startMs) >= 7377340, JSON.stringify(tail));
+        assert.ok(res.cues.some((c) => String(c.text).includes('幸运')));
+        assert.ok(res.cues.some((c) => String(c.text).includes('真的假的')));
+        // No overlap between credit and dialogue
+        for (const d of res.cues.filter((c) => !credit.isSoftwareCreditText(c.text))) {
+            for (const t of tail) {
+                assert.ok(
+                    Number(t.startMs) >= Number(d.endMs) || Number(t.endMs) <= Number(d.startMs),
+                    `overlap ${d.text} vs credit@${t.startMs}`,
+                );
+            }
+        }
+    });
+
+    it('peels packed credit+dialogue at tail and inserts dedicated watermark', () => {
+        const packed = '字幕由 Transub Pro 生成 [ www.transub.cc ]\n我这是自我满足啊…';
+        const cues = [
+            { startMs: 1000, endMs: 2000, text: '中段' },
+            { startMs: 8500, endMs: 9800, text: packed },
+        ];
+        const res = credit.insertSoftwareCreditIntoCues(cues, {
+            isPro: true,
+            mediaDurationMs: 10000,
+        });
+        assert.ok(res.cues.some((c) => String(c.text).trim() === '我这是自我满足啊…'));
+        assert.ok(res.cues.some((c) => (
+            credit.isSoftwareCreditText(c.text)
+            && !String(c.text).includes('自我满足')
+        )));
+    });
+
+    it('expands packed credit+dialogue in normalizeSoftwareCreditInCues', () => {
+        const packed = '字幕由 Transub Pro 生成 [ www.transub.cc ]\n呵呵';
+        const healed = credit.normalizeSoftwareCreditInCues([
+            { startMs: 9000, endMs: 10000, text: packed },
+        ], { isPro: true });
+        assert.ok(healed.changed >= 1);
+        assert.strictEqual(healed.cues.length, 2);
+        assert.ok(credit.isSoftwareCreditText(healed.cues[0].text));
+        assert.strictEqual(String(healed.cues[1].text).trim(), '呵呵');
     });
 
     it('skips duplicate credit lines', () => {
@@ -406,6 +466,51 @@ describe('subtitle-software-credit-core', () => {
         const repaired = credit.repairDetectedDialogueContentShift(zh, ja);
         assert.strictEqual(repaired.changed, false);
         assert.ok(/哪儿|哪里/.test(repaired.cues[1].text));
+    });
+
+    it('repairs opening-only dialogue shift without rotating the whole track (IENF-450)', () => {
+        // Head ZH is +1 ahead of JA; from cue ~9 onward they realign.
+        const ja = [
+            { index: 0, startMs: 0, endMs: 2000, text: '字幕は Transub Pro で生成されました [ www.transub.cc ]' },
+            { index: 1, startMs: 12000, endMs: 13000, text: 'すいません、すみません。' },
+            { index: 2, startMs: 14000, endMs: 15000, text: 'お時間' },
+            { index: 3, startMs: 15000, endMs: 16000, text: 'よろしいでしょうか?' },
+            { index: 4, startMs: 17000, endMs: 18000, text: 'あの、私ですね' },
+            { index: 5, startMs: 18000, endMs: 19000, text: 'あ、あの、どいったご用件?' },
+            { index: 6, startMs: 22000, endMs: 23000, text: '衛星放送の番組を作っておりまして…' },
+            { index: 7, startMs: 26000, endMs: 27000, text: 'ちょっと深夜帯の、若干…' },
+            { index: 8, startMs: 29000, endMs: 30000, text: '若干、ちょっとお色気' },
+            { index: 9, startMs: 31000, endMs: 32000, text: 'すみません' },
+            { index: 10, startMs: 37000, endMs: 38000, text: '失礼ですけど、ご結婚されてる?' },
+            { index: 11, startMs: 39000, endMs: 40000, text: 'あ、まあ一応、そうですね' },
+            { index: 12, startMs: 41000, endMs: 42000, text: 'お子さんいらっしゃる?' },
+        ];
+        const zh = [
+            { index: 0, startMs: 0, endMs: 2000, text: '字幕由 Transub Pro 生成 [ www.transub.cc ]' },
+            { index: 1, startMs: 12000, endMs: 13000, text: '不好意思，打扰了。' },
+            { index: 2, startMs: 14000, endMs: 15000, text: '请问您现在方便吗？' },
+            { index: 3, startMs: 15000, endMs: 16000, text: '那个，是我。' }, // should be under よろしい
+            { index: 4, startMs: 17000, endMs: 18000, text: '啊，那个，请问有什么事吗？' },
+            { index: 5, startMs: 18000, endMs: 19000, text: '我们正在制作卫星电视的节目…' },
+            { index: 6, startMs: 22000, endMs: 23000, text: '是关于深夜档的，稍微有点…' },
+            { index: 7, startMs: 26000, endMs: 27000, text: '…' },
+            { index: 8, startMs: 29000, endMs: 30000, text: '稍微，有点色气。' },
+            { index: 9, startMs: 31000, endMs: 32000, text: '对不起。' },
+            { index: 10, startMs: 37000, endMs: 38000, text: '虽然很失礼，但请问您结婚了吗？' },
+            { index: 11, startMs: 39000, endMs: 40000, text: '啊，嗯，算是吧。' },
+            { index: 12, startMs: 41000, endMs: 42000, text: '您有孩子吗？' },
+        ];
+        const head = credit.detectDialogueHeadContentShift(zh, ja, { headPairs: 20, maxOffset: 3 });
+        assert.ok(head.offset >= 1, `expected head offset>=1 got ${JSON.stringify(head)}`);
+        const fixed = credit.repairDetectedDialogueContentShift(zh, ja);
+        assert.ok(fixed.changed, JSON.stringify(fixed));
+        assert.strictEqual(fixed.scope, 'head');
+        // After +1 head rotate: slot for よろしい should receive prior ZH (方便吗)
+        const atYoroshii = fixed.cues.find((c) => c.startMs === 15000);
+        assert.ok(/方便|可以|打扰/.test(String(atYoroshii?.text || '')), atYoroshii?.text);
+        // Later aligned line must stay (not whole-track … cascade)
+        const married = fixed.cues.find((c) => c.startMs === 37000);
+        assert.ok(/结婚/.test(String(married?.text || '')), married?.text);
     });
 
     it('skips whole-track dialogue shift repair when opted out', () => {

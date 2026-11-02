@@ -1,0 +1,12 @@
+﻿# Keep Cursor from indexing packaging extracts (locks win-unpacked.tmp renames → EPERM).
+packaging/
+.packaging/
+dist/
+renderer-dist/
+_advanced/
+tmp/
+node_modules/
+transub-engine/runtime/
+transub-engine/models/
+advanced-llm/models/
+coverage/

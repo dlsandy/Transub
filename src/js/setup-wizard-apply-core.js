@@ -273,12 +273,16 @@
             return parts.join(' · ');
         }
     
+        function isBundledAlwaysReadyModelId(id) {
+            return id === 'silero-vad' || id === 'ten-vad';
+        }
+
         async function probeInstalledModelIds(modelIds) {
             const ids = (modelIds || []).filter(Boolean);
             /** @type {Record<string, boolean>} */
             const map = { ...getState().installById };
             ids.forEach((id) => {
-                if (id === 'silero-vad') map[id] = true;
+                if (isBundledAlwaysReadyModelId(id)) map[id] = true;
                 else if (!(id in map) && getState().catalogById[id]) {
                     map[id] = !!getState().catalogById[id].installed;
                 }
@@ -323,13 +327,13 @@
          */
         async function resolveRedownloadChoice(selectedIds, installMap) {
             const selected = (selectedIds || []).filter(Boolean);
-            const installedIds = selected.filter((id) => id !== 'silero-vad' && installMap[id]);
-            const needIds = selected.filter((id) => id !== 'silero-vad' && !installMap[id]);
+            const installedIds = selected.filter((id) => !isBundledAlwaysReadyModelId(id) && installMap[id]);
+            const needIds = selected.filter((id) => !isBundledAlwaysReadyModelId(id) && !installMap[id]);
             if (!installedIds.length) {
                 return {
                     force: false,
-                    modelIds: selected.filter((id) => id !== 'silero-vad'),
-                    skippedIds: selected.filter((id) => id === 'silero-vad'),
+                    modelIds: selected.filter((id) => !isBundledAlwaysReadyModelId(id)),
+                    skippedIds: selected.filter((id) => isBundledAlwaysReadyModelId(id)),
                 };
             }
             const preview = installedIds.length <= 3
@@ -355,14 +359,14 @@
                 return {
                     force: false,
                     modelIds: needIds.slice(),
-                    skippedIds: installedIds.concat(selected.filter((id) => id === 'silero-vad')),
+                    skippedIds: installedIds.concat(selected.filter((id) => isBundledAlwaysReadyModelId(id))),
                 };
             }
             if (choice === 'tertiary') {
                 return {
                     force: true,
-                    modelIds: selected.filter((id) => id !== 'silero-vad'),
-                    skippedIds: selected.filter((id) => id === 'silero-vad'),
+                    modelIds: selected.filter((id) => !isBundledAlwaysReadyModelId(id)),
+                    skippedIds: selected.filter((id) => isBundledAlwaysReadyModelId(id)),
                 };
             }
             return null;
@@ -484,19 +488,15 @@
                         || !!runtime.mismatch;
                     if (needRuntime && electron.transubAdvancedManagedLlmInstallRuntime) {
                         const tip = !runtime.available
-                            ? (preferredId
-                                ? `安装 llama-server 运行时（${preferredId}）…`
-                                : '安装 llama-server 运行时…')
+                            ? '正在按本机显卡安装 AI 运行时…'
                             : (runtime.mismatch
-                                ? (preferredId
-                                    ? `重新安装 llama-server（切换至 ${preferredId}）…`
-                                    : '重新安装 llama-server（后端不一致）…')
-                                : `更新 llama-server（${runtime.installedTag || '旧版'} → ${runtime.tag || '最新'}）…`);
+                                ? '正在按本机显卡重新安装 AI 运行时…'
+                                : `更新 AI 运行时（${runtime.installedTag || '旧版'} → ${runtime.tag || '最新'}）…`);
                         appendApplyLine(tip, null);
                         setApplyProgress(true, tip, 0, { itemTotal: modelIds.length });
                         const rt = await electron.transubAdvancedManagedLlmInstallRuntime({
                             force: true,
-                            runtimeId: preferredId || undefined,
+                            // Let main resolve CUDA/ROCm/Vulkan from a fresh GPU probe.
                         });
                         if (rt?.ok) {
                             appendApplyLine(rt.message || 'llama-server 运行时已就绪', true);
@@ -706,7 +706,7 @@
             if (status) status.textContent = uiTx('正在测速选择下载源…');
             setApplyProgress(false);
 
-            const engineDownloadIds = downloadIds.filter((id) => !isManagedLlmModelId(id) && id !== 'silero-vad');
+            const engineDownloadIds = downloadIds.filter((id) => !isManagedLlmModelId(id) && !isBundledAlwaysReadyModelId(id));
             const managedDownloadIds = downloadIds.filter((id) => isManagedLlmModelId(id));
             const allDlIds = [...engineDownloadIds, ...managedDownloadIds];
             const previewIds = allDlIds.length ? allDlIds : downloadIds.slice();
@@ -735,7 +735,7 @@
                 if (!downloadChoice.force) {
                     const skipped = new Set(downloadChoice.skippedIds || []);
                     downloadChoice.modelIds = (downloadChoice.modelIds || []).filter((id) => {
-                        if (id === 'silero-vad' || installMap[id]) {
+                        if (isBundledAlwaysReadyModelId(id) || installMap[id]) {
                             skipped.add(id);
                             return false;
                         }
@@ -833,6 +833,9 @@
                 patch.smartTranslate = true;
                 patch.translateMode = 'smart';
                 patch.smartTranslateHybridMt = enableSmartHybrid || undefined;
+                patch.smartTranslatePlotPolish = true;
+                patch.smartTranslateFaithfulVerify = true;
+                patch.smartTranslateAddressConsistency = true;
                 patch.engineMtModel = '';
                 if (enableSmartHybrid && sakuraPick) {
                     patch.engineLlmMtModel = sakuraPick;

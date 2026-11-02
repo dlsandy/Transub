@@ -63,6 +63,19 @@ describe('hymt-quality-guard-core', () => {
         assert.strictEqual(ok2.ok, true, ok2.reasons?.join(','));
     });
 
+    it('flags short JA over-inflated with neighbor-context ZH', () => {
+        const hit = qg.assessHyMtCueQuality(
+            '一周里大概有一半时间会实际烹饪',
+            '自炊',
+        );
+        assert.strictEqual(hit.ok, false);
+        assert.ok(
+            hit.reasons.includes('over_inflate') || hit.reasons.includes('balloon'),
+            hit.reasons.join(','),
+        );
+        assert.ok(hit.severity === 'wrong' || hit.severity === 'both');
+    });
+
     it('collectHyMtQualityRetryIndexes skips moan blanks and credit lines', () => {
         const src = [
             { index: 1, text: 'うちの会社さ' },
@@ -84,7 +97,7 @@ describe('hymt-quality-guard-core', () => {
     });
 
     it('qualityRetryHint distinguishes miss vs wrong', () => {
-        assert.match(qg.qualityRetryHint({ qualityReasons: ['blank'] }), /漏译/);
-        assert.match(qg.qualityRetryHint({ qualityReasons: ['plot_invent'] }), /错译|臆造/);
+        assert.match(qg.qualityRetryHint({ qualityReasons: ['blank'] }), /完整译出|重译/);
+        assert.match(qg.qualityRetryHint({ qualityReasons: ['plot_invent'] }), /字面|臆造|重译/);
     });
 });

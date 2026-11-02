@@ -28,6 +28,22 @@ function ensureEngineWorkTempRoot() {
 }
 
 /**
+ * App-owned root for engine mix timing PCM (`.transub-cache/*.timing-16k.wav`).
+ * Kept under writableRoot — never beside film / subtitle output folders.
+ */
+function getTimingPcmCacheRoot() {
+    return path.join(getWritableRoot(), 'cache', 'timing-pcm');
+}
+
+function ensureTimingPcmCacheRoot() {
+    const root = getTimingPcmCacheRoot();
+    try {
+        fs.mkdirSync(root, { recursive: true });
+    } catch { /* ignore */ }
+    return root;
+}
+
+/**
  * Point Python tempfile / third-party scratch at our engine-work dir.
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
  */
@@ -38,6 +54,7 @@ function applyEngineTempEnv(env = {}) {
     next.TMP = root;
     next.TMPDIR = root;
     next.TRANSUB_ENGINE_TEMP = root;
+    next.TRANSUB_TIMING_PCM_CACHE = ensureTimingPcmCacheRoot();
     return next;
 }
 
@@ -126,6 +143,8 @@ module.exports = {
     ELECTRON_JOB_TEMP_PREFIXES,
     getEngineWorkTempRoot,
     ensureEngineWorkTempRoot,
+    getTimingPcmCacheRoot,
+    ensureTimingPcmCacheRoot,
     applyEngineTempEnv,
     clearEngineWorkTemp,
     sweepElectronJobTemps,

@@ -20,6 +20,13 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         return () => ipcRenderer.removeListener('transub-window-maximize-changed', handler);
     },
     getAppVersion: () => ipcRenderer.invoke('transub-get-app-version'),
+    getAppUpdateAvailability: () => ipcRenderer.invoke('transub-get-app-update-availability'),
+    onAppUpdateAvailable: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-app-update-available', handler);
+        return () => ipcRenderer.removeListener('transub-app-update-available', handler);
+    },
     transubGetAppTheme: () => ipcRenderer.invoke('transub-get-app-theme'),
     transubSetAppTheme: (payload) => ipcRenderer.invoke('transub-set-app-theme', payload || {}),
     onAppThemeChanged: (callback) => {
@@ -44,6 +51,23 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     ffmpegProbeAcoustic: (payload) => ipcRenderer.invoke('ffmpeg-probe-acoustic', payload || {}),
     ffmpegValidate: (payload) => ipcRenderer.invoke('ffmpeg-validate', payload || {}),
     transubEnvCheck: (payload) => ipcRenderer.invoke('transub-env-check', payload || {}),
+    onEnvCheckProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-env-check-progress', handler);
+        return () => ipcRenderer.removeListener('transub-env-check-progress', handler);
+    },
+    transubEnvDoctorStatus: () => ipcRenderer.invoke('transub-env-doctor-status'),
+    transubEnvDoctorPassed: () => ipcRenderer.invoke('transub-env-doctor-passed'),
+    transubEnvDoctorStamp: () => ipcRenderer.invoke('transub-env-doctor-stamp'),
+    transubOpenEnvDoctor: (payload) => ipcRenderer.invoke('transub-open-env-doctor', payload || {}),
+    transubEnvDoctorQuit: () => ipcRenderer.invoke('transub-env-doctor-quit'),
+    onOpenEnvDoctor: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-open-env-doctor', handler);
+        return () => ipcRenderer.removeListener('transub-open-env-doctor', handler);
+    },
     ffmpegDetectSilence: (payload = {}) => ipcRenderer.invoke('ffmpeg-detect-silence', {
         path: payload.path || '',
         startMs: Number(payload.startMs) || 0,
@@ -71,6 +95,9 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         path: payload.path || '',
         peaksPerSec: payload.peaksPerSec,
         maxPeaks: payload.maxPeaks,
+        startSec: payload.startSec,
+        durationSec: payload.durationSec,
+        normRef: payload.normRef,
         ffmpegPath: payload.ffmpegPath || '',
     }),
     selectFfmpeg: (options) => ipcRenderer.invoke('electron-select-ffmpeg', options || {}),
@@ -110,6 +137,8 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         return () => ipcRenderer.removeListener('transub-engine-download-progress', listener);
     },
     transubEngineGenerateSubtitles: (payload) => ipcRenderer.invoke('transub-engine-generate-subtitles', payload || {}),
+    /** One-click leftover「…」fill for a finished item (Script + full-track context). */
+    transubEngineEllipsisBackfill: (payload) => ipcRenderer.invoke('transub-engine-ellipsis-backfill', payload || {}),
     transubLiveBatchAppend: (payload) => ipcRenderer.invoke('transub-live-batch-append', payload || {}),
     transubLiveBatchSkip: (payload) => ipcRenderer.invoke('transub-live-batch-skip', payload || {}),
     transubLiveBatchUpdateOverrides: (payload) => ipcRenderer.invoke('transub-live-batch-update-overrides', payload || {}),
@@ -165,6 +194,7 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubStationSelectModel: (payload) => ipcRenderer.invoke('transub-station-select-model', payload || {}),
     transubTestHfEndpoint: (payload) => ipcRenderer.invoke('transub-test-hf-endpoint', payload || {}),
     transubPickHfEndpoint: (payload) => ipcRenderer.invoke('transub-pick-hf-endpoint', payload || {}),
+    transubEnsureFirstRunHfEndpoint: (payload) => ipcRenderer.invoke('transub-ensure-first-run-hf-endpoint', payload || {}),
     transubTestGithubMirrors: (payload) => ipcRenderer.invoke('transub-test-github-mirrors', payload || {}),
     transWithAiSetPostTask: (payload) => ipcRenderer.invoke('transwithai-set-post-task', payload || {}),
     transubBatchFinalize: (payload) => ipcRenderer.invoke('transub-batch-finalize', payload || {}),
@@ -225,7 +255,6 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubExportGlossary: () => ipcRenderer.invoke('transub-export-glossary'),
     transubImportGlossary: () => ipcRenderer.invoke('transub-import-glossary'),
     transubImportAnilistGlossary: (payload) => ipcRenderer.invoke('transub-import-anilist-glossary', payload || {}),
-    transubImportBadPoolGlossary: (payload) => ipcRenderer.invoke('transub-import-bad-pool-glossary', payload || {}),
     transubGetTextPresets: () => ipcRenderer.invoke('transub-get-text-presets'),
     transubSaveTextPresets: (payload) => ipcRenderer.invoke('transub-save-text-presets', payload || {}),
     transubExportTextPresets: () => ipcRenderer.invoke('transub-export-text-presets'),
@@ -348,6 +377,19 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubAdvancedDeactivate: () => ipcRenderer.invoke('transub-advanced-deactivate'),
     transubAdvancedSaveByok: (payload) => ipcRenderer.invoke('transub-advanced-save-byok', payload || {}),
     transubAdvancedClearByokKey: () => ipcRenderer.invoke('transub-advanced-clear-byok-key'),
+    transubAdvancedSaveJev: (payload) => ipcRenderer.invoke('transub-advanced-save-jev', payload || {}),
+    transubAdvancedClearJevKey: () => ipcRenderer.invoke('transub-advanced-clear-jev-key'),
+    transubAdvancedTestJev: (payload) => ipcRenderer.invoke('transub-advanced-test-jev', payload || {}),
+    transubAdvancedProbeJev: (payload) => ipcRenderer.invoke('transub-advanced-probe-jev', payload || {}),
+    transubAdvancedLayaLocalStatus: (payload) => ipcRenderer.invoke('transub-advanced-laya-local-status', payload || {}),
+    transubAdvancedLayaInstall: (payload) => ipcRenderer.invoke('transub-advanced-laya-install', payload || {}),
+    transubAdvancedLayaStart: (payload) => ipcRenderer.invoke('transub-advanced-laya-start', payload || {}),
+    onAdvancedLayaProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const listener = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-advanced-laya-progress', listener);
+        return () => ipcRenderer.removeListener('transub-advanced-laya-progress', listener);
+    },
     transubAdvancedManagedLlmStatus: () => ipcRenderer.invoke('transub-advanced-managed-llm-status'),
     transubAdvancedManagedLlmSelect: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-select', payload || {}),
     transubAdvancedManagedLlmOpenPick: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-open-pick', payload || {}),
@@ -363,6 +405,7 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubAdvancedManagedLlmSetRuntime: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-set-runtime', payload || {}),
     transubAdvancedManagedLlmImportRuntime: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-import-runtime', payload || {}),
     transubAdvancedManagedLlmCancelPull: () => ipcRenderer.invoke('transub-advanced-managed-llm-cancel-pull'),
+    transubAdvancedManagedLlmClearInstallCancel: () => ipcRenderer.invoke('transub-advanced-managed-llm-clear-install-cancel'),
     transubAdvancedManagedLlmLabAdd: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-lab-add', payload || {}),
     transubAdvancedManagedLlmLabRemove: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-lab-remove', payload || {}),
     transubAdvancedManagedLlmStopServer: () => ipcRenderer.invoke('transub-advanced-managed-llm-stop-server'),
@@ -379,6 +422,12 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         const listener = (_event, payload) => callback(payload);
         ipcRenderer.on('transub-advanced-llm-model-changed', listener);
         return () => ipcRenderer.removeListener('transub-advanced-llm-model-changed', listener);
+    },
+    onAdvancedEntitlementChanged: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const listener = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-advanced-entitlement-changed', listener);
+        return () => ipcRenderer.removeListener('transub-advanced-entitlement-changed', listener);
     },
     transubAdvancedRequireFeature: (payload) => ipcRenderer.invoke('transub-advanced-require-feature', payload || {}),
     transubAdvancedQcSmartFix: (payload) => ipcRenderer.invoke('transub-advanced-qc-smart-fix', payload || {}),

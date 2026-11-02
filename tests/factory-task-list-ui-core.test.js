@@ -68,6 +68,51 @@ describe('TransubFactoryTaskListUi', () => {
         assert.doesNotThrow(() => ui.renderList());
         assert.strictEqual(fileListBody.innerHTML, '');
         assert.strictEqual(taskCardList.innerHTML, '');
+        assert.strictEqual(emptyState.classList.contains('hidden'), false);
+        assert.strictEqual(taskCardList.classList.contains('hidden'), true);
+    });
+
+    it('updateEmptyStateUi hides empty state when items exist', () => {
+        const emptyState = { classList: makeClassList() };
+        const taskCardList = { classList: makeClassList(['hidden']), innerHTML: '', querySelectorAll: () => [] };
+        const listScroll = { classList: makeClassList(['hidden']) };
+        const state = {
+            items: [{ path: 'a.mp4', status: 'ready', selected: true }],
+            factoryTaskTab: 'all',
+            taskListView: 'cards',
+            focusedTaskPath: '',
+            recipeExpert: false,
+            recipeSheetOpen: false,
+            running: false,
+            qcFixing: false,
+            retranslateBusy: false,
+        };
+        const ui = createFactoryTaskListUi({
+            state,
+            els: {
+                fileListBody: { innerHTML: '', querySelectorAll: () => [] },
+                taskCardList,
+                emptyState,
+                selectAllCheck: { checked: false, indeterminate: false },
+                listScroll,
+                taskViewCardsBtn: { classList: makeClassList(), setAttribute: () => {} },
+                taskViewTableBtn: { classList: makeClassList(), setAttribute: () => {} },
+            },
+            factoryTaskUiApi: {
+                normalizeView: () => 'cards',
+                buildCardHtml: () => '<div class="task-card"></div>',
+            },
+            factoryTaskTabApi,
+            applyListSortInPlace: () => {},
+            syncTaskTableSortHeaders: () => {},
+            applyTaskColumnWidths: () => {},
+            updateQcBanner: () => {},
+            updateContentProfileUi: () => {},
+            updateStartButton: () => {},
+        });
+        ui.renderList();
+        assert.strictEqual(emptyState.classList.contains('hidden'), true);
+        assert.strictEqual(taskCardList.classList.contains('hidden'), false);
     });
 
     it('renderList builds only the active view', () => {

@@ -31,7 +31,7 @@ describe('quality-pipeline-policy-core', () => {
     it('clamps loop passes and retranslate cap', () => {
         assert.strictEqual(policy.clampPostQcLoopMaxPasses(99), 2);
         assert.strictEqual(policy.clampPostQcLoopMaxPasses(-1), 0);
-        assert.strictEqual(policy.clampPostQcLoopMaxPasses(undefined), 1);
+        assert.strictEqual(policy.clampPostQcLoopMaxPasses(undefined), 2);
         assert.strictEqual(policy.clampPostQcRetranslateIndexCap(999), 200);
         assert.strictEqual(policy.clampPostQcRetranslateIndexCap('x'), 40);
     });

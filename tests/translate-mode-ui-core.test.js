@@ -241,4 +241,68 @@ describe('TransubTranslateModeUi', () => {
             global.document = prevDocument;
         }
     });
+
+    it('keeps hybrid mode until entitlement is known, and restores pipeline checks', () => {
+        let mode = 'llm';
+        const polish = { checked: false };
+        const verify = { checked: false };
+        const address = { checked: false };
+        const radios = {
+            translateModeSakura: { checked: true, value: 'llm' },
+            translateModeSmart: { checked: false, value: 'smart' },
+            translateModeDialog: { checked: false, value: 'dialog' },
+            translateModeExternal: { checked: false, value: 'external' },
+        };
+        function readMode() {
+            if (radios.translateModeSmart.checked) return 'smart';
+            if (radios.translateModeDialog.checked) return 'dialog';
+            if (radios.translateModeExternal.checked) return 'external';
+            return 'llm';
+        }
+        function setMode(next) {
+            mode = next;
+            radios.translateModeSakura.checked = next === 'llm';
+            radios.translateModeSmart.checked = next === 'smart';
+            radios.translateModeDialog.checked = next === 'dialog';
+            radios.translateModeExternal.checked = next === 'external';
+        }
+        let entitled = false;
+        let entitlementKnown = false;
+        const ui = createTranslateModeUi({
+            els: {
+                ...radios,
+                smartTranslatePolishCheck: polish,
+                smartTranslateVerifyCheck: verify,
+                smartTranslateAddressCheck: address,
+            },
+            getAdvancedEntitled: () => entitled,
+            getAdvancedEntitlementKnown: () => entitlementKnown,
+            readTaskFromForm: () => 'translate',
+            readTranslateModeFromForm: readMode,
+            setTranslateModeRadios: setMode,
+            translateChipApi: {},
+            syncExpertExtraChipsUi: () => {},
+        });
+        ui.applyTranslateModeToForm('smart');
+        assert.strictEqual(mode, 'smart');
+        assert.strictEqual(polish.checked, true);
+        assert.strictEqual(verify.checked, true);
+        assert.strictEqual(address.checked, true);
+
+        polish.checked = false;
+        verify.checked = false;
+        address.checked = false;
+        ui.applyTranslateModeToForm('smart');
+        assert.strictEqual(polish.checked, false, 'already on hybrid must keep an explicit off');
+
+        setMode('llm');
+        ui.applyTranslateModeToForm('smart');
+        assert.strictEqual(polish.checked, true);
+        assert.strictEqual(verify.checked, true);
+        assert.strictEqual(address.checked, true);
+
+        entitlementKnown = true;
+        ui.applyTranslateModeToForm('smart');
+        assert.strictEqual(mode, 'llm', 'known non-Pro still falls back to 推理翻译');
+    });
 });

@@ -192,11 +192,11 @@ describe('engine-blank-mt-retry', () => {
         assert.ok(!far[0].cues.some((c) => Number(c.index) === 25));
     });
 
-    it('mergeRetranslatedCues accepts real ZH when prior slot was literal ellipsis', () => {
+    it('mergeRetranslatedCues accepts real ZH when prior slot was literal ellipsis', async () => {
         const mtSanitize = require('../src/js/mt-sanitize-core');
         const zhCues = [{ index: 1, startMs: 0, endMs: 2000, text: '…' }];
         const sourcePairs = [{ index: 1, sourceText: 'うちの会社さ', zhCue: zhCues[0] }];
-        const merged = blankRetry.mergeRetranslatedCues(
+        const merged = await blankRetry.mergeRetranslatedCues(
             zhCues,
             [{ index: 1, text: '我们公司啊' }],
             sourcePairs,
@@ -239,11 +239,11 @@ describe('engine-blank-mt-retry', () => {
         );
     });
 
-    it('mergeRetranslatedCues falls back to lexical recovery when MT still stubs', () => {
+    it('mergeRetranslatedCues falls back to lexical recovery when MT still stubs', async () => {
         const mtSanitize = require('../src/js/mt-sanitize-core');
         const zhCues = [{ index: 5, startMs: 1000, endMs: 3000, text: '哈 哈' }];
         const sourcePairs = [{ index: 5, sourceText: 'はぁ はぁ 楽しいうん', zhCue: zhCues[0] }];
-        const merged = blankRetry.mergeRetranslatedCues(
+        const merged = await blankRetry.mergeRetranslatedCues(
             zhCues,
             [{ index: 5, text: '哈 哈' }],
             sourcePairs,
@@ -253,26 +253,26 @@ describe('engine-blank-mt-retry', () => {
         assert.ok(merged?.cues?.[0]?.text?.includes('好开心'), merged?.cues?.[0]?.text);
     });
 
-    it('mergeRetranslatedCues rejects Han fill for English target', () => {
+    it('mergeRetranslatedCues rejects Han fill for English target', async () => {
         const mtSanitize = require('../src/js/mt-sanitize-core');
         const cues = [{ index: 1, startMs: 0, endMs: 1000, text: '…' }];
         const pairs = [{ index: 1, sourceText: 'でも', zhCue: cues[0] }];
-        const merged = blankRetry.mergeRetranslatedCues(
+        const merged = await blankRetry.mergeRetranslatedCues(
             cues,
             [{ index: 1, text: '但是' }],
             pairs,
             mtSanitize,
             { subtitleTargetLang: 'en', targetLang: 'en' },
         );
-        assert.strictEqual(merged.changed, 0);
-        assert.strictEqual(merged.cues[0].text, '…');
+        // Intl finalize may map obvious ZH→EN; must not keep Han in 成片.
+        assert.ok(!/[\u4e00-\u9fff]/.test(String(merged.cues[0].text || '')));
     });
 
-    it('mergeRetranslatedCues clears prior Han when English retry fails', () => {
+    it('mergeRetranslatedCues clears prior Han when English retry fails', async () => {
         const mtSanitize = require('../src/js/mt-sanitize-core');
         const cues = [{ index: 1, startMs: 0, endMs: 1000, text: '好开心' }];
         const pairs = [{ index: 1, sourceText: '嬉しいうん', zhCue: cues[0] }];
-        const merged = blankRetry.mergeRetranslatedCues(
+        const merged = await blankRetry.mergeRetranslatedCues(
             cues,
             [{ index: 1, text: '不行' }],
             pairs,
@@ -280,7 +280,8 @@ describe('engine-blank-mt-retry', () => {
             { subtitleTargetLang: 'en', targetLang: 'en' },
         );
         assert.ok(merged.changed >= 1);
-        assert.strictEqual(merged.cues[0].text, '…');
+        // Prefer EN lexical finalize over leaving Han; ellipsis clear also OK.
+        assert.ok(!/[\u4e00-\u9fff]/.test(String(merged.cues[0].text || '')));
     });
 
     it('collectBlankRetranslatePairs queues Han leak for English target', () => {

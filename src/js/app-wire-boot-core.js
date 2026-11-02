@@ -277,6 +277,36 @@
             els.appVersionLabel.textContent = ver ? `v${ver}` : '';
         };
 
+        h.bindAppUpdateBadge = function bindAppUpdateBadge() {
+            if (h._appUpdateBadgeBound) return;
+            const badgeApi = resolveApi(h, 'appUpdateBadgeApi', 'TransubAppUpdateBadge');
+            if (typeof badgeApi.createAppUpdateBadge !== 'function') return;
+            h._appUpdateBadgeBound = true;
+            const badge = badgeApi.createAppUpdateBadge({
+                getButtonEl: () => (h.els || {}).appUpdateAvailableBtn,
+                openUpdateWindow: (opts) => {
+                    if (typeof h.electron?.transubOpenUpdateWindow === 'function') {
+                        return h.electron.transubOpenUpdateWindow(opts || { autoCheck: true });
+                    }
+                    return null;
+                },
+                onAvailable: (cb) => {
+                    if (typeof h.electron?.onAppUpdateAvailable === 'function') {
+                        return h.electron.onAppUpdateAvailable(cb);
+                    }
+                    return () => {};
+                },
+                getAvailability: () => {
+                    if (typeof h.electron?.getAppUpdateAvailability === 'function') {
+                        return h.electron.getAppUpdateAvailability();
+                    }
+                    return { updateAvailable: false };
+                },
+            });
+            badge.bind();
+            h.appUpdateBadgeApiInstance = badge;
+        };
+
         h.getLiveBatchRehydrate = createLazyFactory(
             () => resolveApi(h, 'liveBatchRehydrateApi', 'TransubLiveBatchRehydrate').createLiveBatchRehydrate,
             () => ({
@@ -309,6 +339,9 @@
                 getIsStandaloneWizard: () => (typeof h.getIsStandaloneWizard === 'function'
                     ? !!h.getIsStandaloneWizard()
                     : !!h.isStandaloneWizard),
+                getIsStandaloneEnvDoctor: () => (typeof h.getIsStandaloneEnvDoctor === 'function'
+                    ? !!h.getIsStandaloneEnvDoctor()
+                    : !!h.isStandaloneEnvDoctor),
                 getIsStandaloneChrome: () => (typeof h.getIsStandaloneChrome === 'function'
                     ? !!h.getIsStandaloneChrome()
                     : !!h.isStandaloneChrome),
@@ -322,6 +355,7 @@
                 cacheEls: late(h, 'cacheEls'),
                 syncQuickExtrasBar: late(h, 'syncQuickExtrasBar'),
                 fillAppVersionLabel: (...a) => h.fillAppVersionLabel(...a),
+                bindAppUpdateBadge: (...a) => h.bindAppUpdateBadge(...a),
                 bindEvents: (...a) => h.bindEvents(...a),
                 bindFactoryShellChrome: late(h, 'bindFactoryShellChrome'),
                 syncDeviceOptionsForMode: late(h, 'syncDeviceOptionsForMode'),

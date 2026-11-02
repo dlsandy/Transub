@@ -23,6 +23,10 @@
         global.TransubSubtitleMeta = api;
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleMetaCoreFactory(splitCore, fluencyCore, creditCore) {
+    const richTagsApi = (typeof module !== 'undefined' && module.exports)
+        ? (() => { try { return require('./sensevoice-rich-tags-core'); } catch { return null; } })()
+        : (typeof globalThis !== 'undefined' ? globalThis.TransubSensevoiceRichTags : null)
+            || (typeof window !== 'undefined' ? window.TransubSensevoiceRichTags : null);
     const DEFAULT_LOW_THRESHOLD = 0.55;
     const META_VERSION = 1;
 
@@ -276,21 +280,36 @@
             });
             if (!scored) continue;
             const cue = { startMs, endMs, text };
-            entries.push({
+            const richMode = richTagsApi?.normalizeSensevoiceRichTagsMode
+                ? richTagsApi.normalizeSensevoiceRichTagsMode(options.sensevoiceRichTags)
+                : 'sidecar';
+            const richEnabled = !richTagsApi?.richTagsEnabled || richTagsApi.richTagsEnabled(richMode);
+            const rich = richEnabled && richTagsApi?.pickRichFromCue
+                ? richTagsApi.pickRichFromCue(c)
+                : { emotion: null, audioEvent: null, senseLang: null };
+            const richFlags = richEnabled && richTagsApi?.buildRichFlags
+                ? richTagsApi.buildRichFlags(rich)
+                : [];
+            const flags = [...(Array.isArray(scored.flags) ? scored.flags : []), ...richFlags];
+            const entry = {
                 index: i,
                 startMs,
                 endMs,
                 text,
                 fingerprint: cueFingerprint(cue),
                 confidence: scored.confidence,
-                flags: scored.flags,
+                flags,
                 // Editor / mergeConfidenceAnnotations treat source==='asr' as ASR-seeded.
                 source: 'asr',
                 asrScoreKind: scored.source,
                 confirmed: false,
                 avgLogprob: scored.avgLogprob,
                 noSpeechProb: scored.noSpeechProb,
-            });
+            };
+            if (rich.emotion) entry.emotion = rich.emotion;
+            if (rich.audioEvent) entry.audioEvent = rich.audioEvent;
+            if (rich.senseLang) entry.senseLang = rich.senseLang;
+            entries.push(entry);
         }
         return {
             version: META_VERSION,
@@ -330,6 +349,9 @@
                 confirmed: e?.confirmed === true,
                 avgLogprob: e?.avgLogprob,
                 noSpeechProb: e?.noSpeechProb,
+                emotion: e?.emotion || undefined,
+                audioEvent: e?.audioEvent || undefined,
+                senseLang: e?.senseLang || undefined,
             };
         });
         const merged = kept.concat(incoming).sort((a, b) => {
@@ -364,20 +386,47 @@
         const heuristic = annotateCuesConfidence(cues, options);
         const entries = sidecar?.entries || [];
         const threshold = Math.max(0.05, Math.min(0.95, Number(options.lowThreshold) || DEFAULT_LOW_THRESHOLD));
+        const richApi = (typeof module !== 'undefined' && module.exports)
+            ? (() => { try { return require('./sensevoice-rich-tags-core'); } catch { return null; } })()
+            : (typeof globalThis !== 'undefined' ? globalThis.TransubSensevoiceRichTags : null);
+
+        const pickRich = (src) => {
+            if (!src) return { emotion: null, audioEvent: null, senseLang: null };
+            if (richApi?.pickRichFromCue) return richApi.pickRichFromCue(src);
+            return {
+                emotion: src.emotion || null,
+                audioEvent: src.audioEvent || src.audio_event || null,
+                senseLang: src.senseLang || null,
+            };
+        };
 
         return heuristic.map((base, index) => {
             const cue = cues[index];
             const entry = findSidecarEntry(entries, cue, index);
-            if (!entry) return { ...base, fingerprint: cueFingerprint(cue) };
+            const cueRich = pickRich(cue);
+            const entryRich = pickRich(entry);
+            const withRich = (row) => {
+                const emotion = entryRich.emotion || cueRich.emotion;
+                const audioEvent = entryRich.audioEvent || cueRich.audioEvent;
+                const senseLang = entryRich.senseLang || cueRich.senseLang;
+                if (emotion) row.emotion = emotion;
+                if (audioEvent) row.audioEvent = audioEvent;
+                if (senseLang) row.senseLang = senseLang;
+                return row;
+            };
+
+            if (!entry) {
+                return withRich({ ...base, fingerprint: cueFingerprint(cue) });
+            }
 
             if (entry.confirmed === true) {
-                return {
+                return withRich({
                     confidence: 1,
                     flags: ['confirmed'],
                     low: false,
                     source: 'confirmed',
                     fingerprint: cueFingerprint(cue),
-                };
+                });
             }
 
             if (entry.confidence != null && Number.isFinite(Number(entry.confidence))) {
@@ -388,7 +437,7 @@
                 const source = String(entry.source || 'sidecar');
                 // Prefer true ASR over pure heuristic when both exist
                 if (source === 'asr' || source === 'sidecar' || source === 'retranscribe') {
-                    return {
+                    return withRich({
                         confidence,
                         flags,
                         low: confidence < threshold,
@@ -396,11 +445,11 @@
                         fingerprint: cueFingerprint(cue),
                         avgLogprob: entry.avgLogprob,
                         noSpeechProb: entry.noSpeechProb,
-                    };
+                    });
                 }
             }
 
-            return { ...base, fingerprint: cueFingerprint(cue) };
+            return withRich({ ...base, fingerprint: cueFingerprint(cue) });
         });
     }
 
@@ -426,6 +475,12 @@
                 };
                 if (ann.avgLogprob != null) row.avgLogprob = ann.avgLogprob;
                 if (ann.noSpeechProb != null) row.noSpeechProb = ann.noSpeechProb;
+                const emo = ann.emotion || cue.emotion;
+                const evt = ann.audioEvent || cue.audioEvent || cue.audio_event;
+                const lang = ann.senseLang || cue.senseLang;
+                if (emo) row.emotion = emo;
+                if (evt) row.audioEvent = evt;
+                if (lang) row.senseLang = lang;
                 return row;
             }),
         };

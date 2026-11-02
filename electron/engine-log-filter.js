@@ -102,14 +102,40 @@ function friendlyEngineError(raw) {
         (lower.includes('winerror 1114') || lower.includes('[winerror 1114]'))
         && (lower.includes('torch') || lower.includes('cublas'))
     ) {
+        const amdHint = /rocm|amd|radeon|hiperror/i.test(msg);
         return (
-            'Torch CUDA 库加载失败（WinError 1114 · cublas）。'
-            + '请完全退出并重启 Transub 后重试；若仍失败，在设置中「补齐 CUDA PyTorch」。'
+            'Torch CUDA/HIP 库加载失败（WinError 1114）。'
+            + '请完全退出并重启 Transub 后重试；若仍失败，'
+            + (amdHint
+                ? '请点「自动修复」补齐 ROCm PyTorch。'
+                : '在设置中「补齐 CUDA PyTorch」。')
+            + ` 原始错误：${msg}`
+        );
+    }
+    if (
+        /omp:\s*error\s*#?\s*15/i.test(msg)
+        || /libiomp5md\.dll/i.test(msg)
+        || (/libomp140/i.test(msg) && /already initialized/i.test(msg))
+    ) {
+        return (
+            '引擎因 OpenMP 双运行时冲突退出（常见于 AMD ROCm + Anime Whisper）。'
+            + '请完全退出并重启 Transub 后重试；新版本已自动设置 KMP_DUPLICATE_LIB_OK。'
+            + ` 原始错误：${msg}`
+        );
+    }
+    if (
+        /qwen3-asr (ten|firered)?\s*failed \d+\/\d+ frames/i.test(msg)
+        && /hiperrorinvalidvalue|invalid argument|invalid value/i.test(msg)
+    ) {
+        return (
+            'Qwen3-ASR 在 AMD ROCm 上推理失败（HIP invalid）。'
+            + '请完全退出后重开并确认已覆盖最新引擎补丁；仍失败会自动改 CPU 续跑（较慢），'
+            + '或改用 SenseVoice / Anime Whisper。'
             + ` 原始错误：${msg}`
         );
     }
     if (/qwen3-asr failed \d+\/\d+ (windows|frames)/i.test(msg)
-        && /out of memory|cuda oom|显存不足/i.test(msg)) {
+        && /out of memory|cuda oom|显存不足|hip out of memory/i.test(msg)) {
         return (
             'Qwen3-ASR 显存不足。请完全退出 Transub 后重试（释放本地大模型显存），'
             + '或改用 Qwen3-ASR 0.6B / Anime Whisper。'

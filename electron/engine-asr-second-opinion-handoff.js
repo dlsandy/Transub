@@ -19,10 +19,10 @@ function isTranslateLikeEngineTask(engineTask) {
 function planAsrSecondOpinionBatch(fileMerged = {}, engineTask = '', options = {}) {
     const merged = { ...fileMerged, ...options };
     const mode = core.normalizeAsrSecondOpinionOption(merged.asrSecondOpinion);
+    const primaryAsr = merged.primaryAsr || merged.engineAsrModel || merged.asrModel || '';
     if (mode === 'off') {
         return { enabled: false, mode, reason: 'off' };
     }
-    const primaryAsr = merged.primaryAsr || merged.engineAsrModel || merged.asrModel || '';
     const should = core.shouldRunAsrSecondOpinion({
         asrSecondOpinion: mode,
         contentProfile: merged.contentProfile || merged.senseProfile,

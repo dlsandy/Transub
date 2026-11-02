@@ -71,6 +71,7 @@
     });
 
     const TARGET_LABELS = Object.freeze({
+        source: '原文',
         simplified: '简中',
         traditional: '繁中',
         'traditional-tw': '繁中',

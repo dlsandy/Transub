@@ -115,6 +115,50 @@ function parseEngineMtRequest(body) {
 }
 
 /**
+ * Expanded JA+ZH timeline after multi-speaker polish split.
+ * Engine must replace both tracks (same length).
+ */
+function buildEngineMtReplaceTimelineResponse(sourceCues, translatedCues, options = {}) {
+    const src = Array.isArray(sourceCues) ? sourceCues : [];
+    const zh = Array.isArray(translatedCues) ? translatedCues : [];
+    const n = Math.min(src.length, zh.length);
+    const cues = [];
+    const sourceOut = [];
+    for (let i = 0; i < n; i += 1) {
+        const s = src[i] || {};
+        const z = zh[i] || {};
+        const startMs = Number.isFinite(Number(s.startMs))
+            ? Number(s.startMs)
+            : (Number.isFinite(Number(z.startMs)) ? Number(z.startMs) : undefined);
+        const endMs = Number.isFinite(Number(s.endMs))
+            ? Number(s.endMs)
+            : (Number.isFinite(Number(z.endMs)) ? Number(z.endMs) : undefined);
+        const start = Number.isFinite(startMs) ? startMs / 1000 : s.start;
+        const end = Number.isFinite(endMs) ? endMs / 1000 : s.end;
+        sourceOut.push({
+            id: i,
+            index: i,
+            start,
+            end,
+            text: String(s.text ?? s.sourceText ?? ''),
+        });
+        cues.push({
+            id: i,
+            index: i,
+            start,
+            end,
+            text: String(z.text ?? ''),
+        });
+    }
+    return {
+        cues,
+        sourceCues: sourceOut,
+        replaceTimeline: true,
+        splitCount: options.splitCount || 0,
+    };
+}
+
+/**
  * Map LLM cue updates back to engine response shape (preserve request ids).
  * @param {object[]} requestCues
  * @param {object[]} translatedCues
@@ -485,14 +529,26 @@ async function polishExternalFilm(parsed, session, { onProgress, signal } = {}) 
     });
 
     const targetFields = resolveMtTargetFields(options, parsed);
-    // polish is for Pro hybrid (smart) and single-model dialog; llm/sakura skip.
-    // en/ko/ja hybrid-capable targets keep polish (chat model + targetLanguage label).
-    const polishEnabled = (mode === 'smart' || mode === 'dialog')
+    // polish: Pro hybrid (smart) / dialog; also Hy-MT sentence MT when a polish model is set
+    // (consistency pass after 1-line Hy-MT — watchability). Escape: hyMtPostPolish=false.
+    let hyMtSentence = false;
+    try {
+        const hymtCore = require('../src/js/hymt-translate-core');
+        const mid = String(session.modelId || options.engineMtModel || options.engineLlmMtModel || '').trim();
+        hyMtSentence = mode === 'sakura' && !!hymtCore.isHyMtModel?.(mid);
+    } catch { /* optional */ }
+    // Hy-MT post-polish needs a separate chat/polish model — never reuse the Hy-MT id.
+    const polishModelConfigured = !!String(options.smartTranslateModelId || '').trim();
+    const hyMtPostPolish = hyMtSentence
+        && polishModelConfigured
+        && options.hyMtPostPolish !== false
+        && options.smartTranslatePlotPolish !== false;
+    const polishEnabled = ((mode === 'smart' || mode === 'dialog') || hyMtPostPolish)
         && options.smartTranslatePlotPolish !== false;
     if (!polishEnabled || !sourceCues.length) {
         onProgress?.({
             phase: 'polish-skip',
-            message: (mode === 'smart' || mode === 'dialog')
+            message: (mode === 'smart' || mode === 'dialog' || hyMtSentence)
                 ? '已跳过剧情贴合润色'
                 : '推理翻译无需整片润色',
             plotPolish: false,
@@ -500,6 +556,14 @@ async function polishExternalFilm(parsed, session, { onProgress, signal } = {}) 
         return { ok: true, cues: normalizeMtOutputCues(translatedCues, options), plotPolish: false, polishSkipped: true };
     }
     const { runSmartTranslate } = require('./advanced-bridge');
+    // Forward chat polish model id — without it polishOnly falls back to managed
+    // settings only, and batch/CLI overrides (smartTranslateModelId) were ignored.
+    // Hy-MT sentence path: only smartTranslateModelId (never the Hy-MT weights).
+    const polishModelId = String(
+        options.smartTranslateModelId
+        || (hyMtPostPolish ? '' : (options.modelId || session.modelId || ''))
+        || '',
+    ).trim();
     const result = await runSmartTranslate({
         cues: sourceCues,
         translatedCues,
@@ -520,8 +584,25 @@ async function polishExternalFilm(parsed, session, { onProgress, signal } = {}) 
         smartTranslateHybridMt: false,
         smartTranslateFaithfulVerify: options.smartTranslateFaithfulVerify !== false,
         smartTranslateAddressConsistency: options.smartTranslateAddressConsistency !== false,
+        jevDecisionMode: options.jevDecisionMode,
+        jevDecisionMinConfidence: options.jevDecisionMinConfidence,
+        jevDecisionEndpoint: options.jevDecisionEndpoint || options.jevEndpoint,
+        jevEndpoint: options.jevEndpoint || options.jevDecisionEndpoint,
+        perfProfile: options.perfProfile,
         smartTranslatePolishSampleLimit: options.smartTranslatePolishSampleLimit,
-        language: parsed.language || options.language,
+        smartTranslateModelId: polishModelId,
+        modelId: polishModelId,
+        contentProfile: options.contentProfile || options.senseProfile,
+        senseProfile: options.senseProfile || options.contentProfile,
+        sakuraNsfwPrompt: options.sakuraNsfwPrompt,
+        hybridVramReleaseMs: options.hybridVramReleaseMs,
+        language: (() => {
+            const fromOpts = String(options.language || options.sourceLanguage || '').trim().toLowerCase();
+            const fromParsed = String(parsed.language || '').trim().toLowerCase();
+            if (fromOpts === 'yue' || fromOpts === 'zh-yue' || fromOpts === 'cantonese') return 'yue';
+            if (fromParsed === 'yue' || fromParsed === 'zh-yue' || fromParsed === 'cantonese') return 'yue';
+            return fromParsed || fromOpts || options.language;
+        })(),
         glossary: resolvePromptGlossary(options),
         bandByIndex: options.bandByIndex || options.cueRiskBands || session.bandByIndex,
         dryRun: options.dryRun,
@@ -546,15 +627,49 @@ async function polishExternalFilm(parsed, session, { onProgress, signal } = {}) 
         };
     }
     session.polishFixed = (session.polishFixed || 0) + (Number(result.polishFixed) || 0);
+    const splitCount = Number(result.splitCount) || 0;
+    const outZh = result.cues || translatedCues;
+    const outSrc = Array.isArray(result.sourceCues) && result.sourceCues.length === outZh.length
+        ? result.sourceCues
+        : sourceCues;
+    const replaceTimeline = !!(result.replaceTimeline || (splitCount > 0 && outSrc.length !== sourceCues.length));
+    if (replaceTimeline) {
+        return {
+            ok: true,
+            cues: normalizeMtOutputCues(outZh, options).map((c, i) => {
+                const src = outSrc[i] || {};
+                return {
+                    ...c,
+                    index: i,
+                    id: i,
+                    startMs: src.startMs ?? c.startMs,
+                    endMs: src.endMs ?? c.endMs,
+                    text: String(c.text ?? ''),
+                };
+            }),
+            sourceCues: outSrc.map((c, i) => ({
+                ...c,
+                index: i,
+                id: i,
+                text: String(c.text ?? c.sourceText ?? ''),
+            })),
+            replaceTimeline: true,
+            splitCount,
+            filmBrief: result.filmBrief || session.filmBrief,
+            plotPolish: true,
+            polishFixed: result.polishFixed || 0,
+        };
+    }
     return {
         ok: true,
         cues: normalizeMtOutputCues(
-            mergePrefillWithTranslated(sourceCues, [], result.cues || translatedCues),
+            mergePrefillWithTranslated(sourceCues, [], outZh),
             options,
         ),
         filmBrief: result.filmBrief || session.filmBrief,
         plotPolish: true,
         polishFixed: result.polishFixed || 0,
+        splitCount: 0,
     };
 }
 
@@ -667,8 +782,15 @@ async function translateExternalBatch(parsed, session) {
             // Per-batch polish causes Sakura↔chat VRAM thrash; engine POSTs phase=polish once after all batches.
             smartTranslatePlotPolish: false,
             engineLlmMtModel: options.engineLlmMtModel,
-            hybridMtModelId: options.hybridMtModelId || options.engineLlmMtModel,
-            language: parsed.language || options.language,
+            engineMtModel: options.engineMtModel,
+            hybridMtModelId: options.hybridMtModelId || options.engineLlmMtModel || options.engineMtModel,
+            language: (() => {
+                const fromOpts = String(options.language || options.sourceLanguage || '').trim().toLowerCase();
+                const fromParsed = String(parsed.language || '').trim().toLowerCase();
+                if (fromOpts === 'yue' || fromOpts === 'zh-yue' || fromOpts === 'cantonese') return 'yue';
+                if (fromParsed === 'yue' || fromParsed === 'zh-yue' || fromParsed === 'cantonese') return 'yue';
+                return fromParsed || fromOpts || options.language;
+            })(),
             glossary: resolvePromptGlossary(options),
             dryRun: options.dryRun,
             signal,
@@ -747,6 +869,21 @@ async function translateExternalBatch(parsed, session) {
                 ),
             };
         }
+        // Prefer job/session language (yue) over engine POST language when the latter is
+        // empty/auto/zh — Hy-MT2 needs language=yue for 粤语书面→普通话 prompts.
+        const resolveSakuraSourceLang = () => {
+            const fromOpts = String(options.language || options.sourceLanguage || '').trim().toLowerCase();
+            const fromParsed = String(parsed.language || '').trim().toLowerCase();
+            const preferOpts = fromOpts === 'yue' || fromOpts === 'zh-yue' || fromOpts === 'cantonese'
+                || fromOpts === 'ja' || fromOpts === 'ko' || fromOpts === 'en';
+            if (preferOpts) return fromOpts === 'zh-yue' || fromOpts === 'cantonese' ? 'yue' : fromOpts;
+            if (fromParsed && fromParsed !== 'auto' && fromParsed !== 'unknown') {
+                if (fromParsed === 'zh-yue' || fromParsed === 'cantonese') return 'yue';
+                return fromParsed;
+            }
+            return fromOpts || fromParsed || '';
+        };
+        const sourceLang = resolveSakuraSourceLang();
         const result = await runSakuraTranslate({
             cues: sakuraCues,
             modelId,
@@ -766,6 +903,8 @@ async function translateExternalBatch(parsed, session) {
             subtitleTargetLang: targetFields.subtitleTargetLang,
             targetLang: targetFields.targetLang,
             targetLanguage: targetFields.targetLanguage,
+            language: sourceLang,
+            sourceLanguage: sourceLang,
             // Prefer options.timeoutMs; else sakura uses 180s for engine external MT.
             timeoutMs: asNumber(options.timeoutMs, { min: 15000, max: 300000, fallback: 180000 }),
             signal,
@@ -1002,10 +1141,22 @@ function startEngineMtAdapter(session = {}) {
                         return;
                     }
                     noteBlankExhaustedIndexes(translated);
-                    sendJson(res, 200, buildEngineMtResponse(parsed.cues, translated.cues, {
-                        ...asPlainObject(state.options),
-                        glossary: resolvePromptGlossary(state.options),
-                    }));
+                    if (translated.replaceTimeline
+                        && Array.isArray(translated.sourceCues)
+                        && Array.isArray(translated.cues)
+                        && translated.sourceCues.length === translated.cues.length
+                        && translated.cues.length !== parsed.cues.length) {
+                        sendJson(res, 200, buildEngineMtReplaceTimelineResponse(
+                            translated.sourceCues,
+                            translated.cues,
+                            { splitCount: translated.splitCount || 0 },
+                        ));
+                    } else {
+                        sendJson(res, 200, buildEngineMtResponse(parsed.cues, translated.cues, {
+                            ...asPlainObject(state.options),
+                            glossary: resolvePromptGlossary(state.options),
+                        }));
+                    }
                 } catch (err) {
                     const name = String(err?.name || '');
                     const msg = String(err?.message || err || '');
@@ -1140,5 +1291,6 @@ module.exports = {
     resolveMtHoldIndexSet,
     translateExternalBatch,
     polishExternalFilm,
+    buildEngineMtReplaceTimelineResponse,
     startEngineMtAdapter,
 };

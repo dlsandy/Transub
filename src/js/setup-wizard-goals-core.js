@@ -38,10 +38,9 @@
         { id: 'whisper-ja-1.5b', label: 'Whisper JA 1.5B（日语微调）', langs: ['ja', 'auto'] },
         { id: 'kotoba-whisper-v2.0-faster', label: 'Kotoba Whisper v2.0（日语）', langs: ['ja', 'auto'] },
         { id: 'reazonspeech-k2', label: 'ReazonSpeech K2（日语·带时间戳）', langs: ['ja', 'auto'] },
-        { id: 'qwen3-asr-0.6b', label: 'Qwen3-ASR 0.6B（多语·VAD 时间戳）', langs: ['auto', 'ja', 'zh', 'en'] },
-        { id: 'qwen3-asr-1.7b', label: 'Qwen3-ASR 1.7B（官方 -hf·多语）', langs: ['auto', 'ja', 'zh', 'en'] },
+        { id: 'qwen3-asr-0.6b', label: 'Qwen3-ASR 0.6B（多语·VAD 时间戳）', langs: ['auto', 'ja', 'zh', 'yue', 'en'] },
+        { id: 'qwen3-asr-1.7b', label: 'Qwen3-ASR 1.7B（官方 -hf·多语）', langs: ['auto', 'ja', 'zh', 'yue', 'en'] },
         { id: 'qwen3-asr-1.7b-ja-anime-galgame', label: 'Qwen3-ASR 1.7B JA Anime/Galgame（-hf·约4GB）', langs: ['ja', 'auto'] },
-        { id: 'qwen3-asr-1.7b-ja-anime-lora-v3', label: 'Qwen3-ASR 1.7B JA Anime LoRA v3（hhim8826·附带基座）', langs: ['ja', 'auto'] },
     ];
     const WHISPER_JA_PRIMARY = 'whisper-ja-1.5b';
     const WHISPER_JA_IDS = [

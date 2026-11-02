@@ -44,6 +44,8 @@ const JS_FILES_UX = [
     'src/js/main-ui-ux.js',
     'src/js/translate-mode-ui-core.js',
     'src/js/env-check.js',
+    'src/js/env-check-locale-core.js',
+    'src/js/env-doctor-core.js',
     'src/js/engine-env-ui-core.js',
     'src/js/engine-models-workspace-core.js',
 ];

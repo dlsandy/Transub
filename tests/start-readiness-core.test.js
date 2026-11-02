@@ -25,6 +25,30 @@ describe('start-readiness-core', () => {
             batchStartInFlight: true,
             items: [{ selected: true, status: 'ready' }],
         }).includes('进行中'));
+        assert.ok(ready.computeStartBlockReason({
+            autoSenseEnabled: true,
+            items: [{
+                selected: true,
+                status: 'ready',
+                sense: { adopted: false, action: 'suggest', classification: { profile: 'film' } },
+            }],
+        }).includes('感知'));
+        assert.strictEqual(ready.computeStartBlockReason({
+            autoSenseEnabled: true,
+            items: [{
+                selected: true,
+                status: 'ready',
+                sense: { adopted: false, userRejected: true, classification: { profile: 'film' } },
+            }],
+        }), '');
+        assert.strictEqual(ready.computeStartBlockReason({
+            autoSenseEnabled: true,
+            items: [{
+                selected: true,
+                status: 'ready',
+                sense: { adopted: true, classification: { profile: 'film' } },
+            }],
+        }), '');
     });
 
     it('buildReadinessStripViewModel tones', () => {

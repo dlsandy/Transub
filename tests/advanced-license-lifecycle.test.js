@@ -82,4 +82,39 @@ describe('advanced-license-lifecycle factory', () => {
         assert.strictEqual(res.ok, true);
         assert.ok(String(res.message || '').includes('开发解锁'));
     });
+
+    it('notifies entitlement listeners after offline activate and deactivate', async () => {
+        const notes = [];
+        const base = mockHost();
+        const api = createAdvancedLicenseLifecycle(mockHost({
+            shouldUseLicenseServer: () => false,
+            licenseCrypto: {
+                verifyLicenseKey: () => ({
+                    ok: true,
+                    key: 'TSUB1.test',
+                    payload: {
+                        licenseId: 'lic-1',
+                        features: ['pro'],
+                        product: 'transub',
+                        expiresAt: null,
+                    },
+                }),
+            },
+            entitlement: {
+                ...base.entitlement,
+                bindDevice: (license) => ({ ok: true, alreadyBound: false, license }),
+                emptyLicenseState: () => ({ key: '' }),
+            },
+            publicStatus: (doc) => ({ entitled: !!String(doc?.license?.key || '').trim() }),
+            notifyEntitlementChanged: (status) => {
+                notes.push(!!status?.entitled);
+            },
+        }));
+        const activated = await api.activateWithKey('TSUB1.test');
+        assert.strictEqual(activated.ok, true);
+        assert.strictEqual(activated.status.entitled, true);
+        const cleared = await api.deactivateLicense();
+        assert.strictEqual(cleared.ok, true);
+        assert.deepStrictEqual(notes, [true, false]);
+    });
 });

@@ -1,5 +1,5 @@
 /**
- * Glossary import helpers (AniList ID parse, bad-pool merge hints).
+ * Glossary import helpers (AniList ID parse / messages).
  */
 (function (global, factory) {
     const api = factory();
@@ -74,18 +74,10 @@
         return `已从动漫资料库导入 ${count} 条角色名（中文标准写法）${title ? ` · ${title}` : ''}${bgm}`;
     }
 
-    function formatBadPoolImportMessage(result) {
-        if (!result?.ok) return result?.error || '导入失败';
-        const count = Number(result.entryCount) || 0;
-        if (!count) return '坏句池暂无待确认条目（ja_wrong → ja_right）';
-        return `已从坏句池导入 ${count} 条 ASR 修正条目`;
-    }
-
     return {
         parseAnilistMediaId,
         detectAnilistMediaType,
         formatAnilistImportMessage,
-        formatBadPoolImportMessage,
         ANILIST_HOME_URL,
         ANILIST_SEARCH_URL,
         getAnilistImportGuide,

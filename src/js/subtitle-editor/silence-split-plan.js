@@ -216,6 +216,16 @@
         if (!splitPoints.length) {
             return { error: '该时间段内未检测到足够长的静音，请调低阈值或改用智能断句' };
         }
+        if (typeof deps.rankSplitPoints === 'function' && splitPoints.length > 1) {
+            try {
+                const ranked = await Promise.resolve(deps.rankSplitPoints(
+                    { ...cue, startMs, endMs, text },
+                    splitPoints,
+                    { maxSplits },
+                ));
+                if (Array.isArray(ranked) && ranked.length) splitPoints = ranked;
+            } catch { /* keep original points */ }
+        }
         if (splitPoints.length > maxSplits) {
             splitPoints = splitPoints.slice(0, maxSplits);
         }

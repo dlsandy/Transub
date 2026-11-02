@@ -5,6 +5,7 @@ const path = require('path');
 const {
     stemKeyForPairing,
     resolveSourceForTarget,
+    buildPostBatchIsSourceTrack,
 } = require('../electron/post-batch-pipeline');
 
 function isSourceTrack(filePath) {
@@ -73,5 +74,33 @@ describe('post-batch memory source cues', () => {
     it('exports applyPostBatchPipeline', () => {
         const { applyPostBatchPipeline } = require('../electron/post-batch-pipeline');
         assert.strictEqual(typeof applyPostBatchPipeline, 'function');
+    });
+});
+
+describe('post-batch buildPostBatchIsSourceTrack', () => {
+    it('treats explicit sourceSubtitlePath as JA even when basename is plain .srt', () => {
+        const ja = 'E:\\un\\MARR-015.srt';
+        const zh = 'E:\\un\\MARR-015.zh-cn.srt';
+        const isSrc = buildPostBatchIsSourceTrack(
+            { sourceSubtitlePath: ja },
+            isSourceTrack,
+        );
+        assert.strictEqual(isSrc(ja), true);
+        assert.strictEqual(isSrc(zh), false);
+    });
+
+    it('treats all paths as source on ASR-only task=transcribe', () => {
+        const bare = 'E:\\un\\IPZZ-949.srt';
+        const isSrc = buildPostBatchIsSourceTrack(
+            { engineTask: 'transcribe' },
+            isSourceTrack,
+        );
+        assert.strictEqual(isSrc(bare), true);
+    });
+
+    it('keeps basename markers via fallback when no explicit path', () => {
+        const isSrc = buildPostBatchIsSourceTrack({}, isSourceTrack);
+        assert.strictEqual(isSrc('F:\\sub\\A.transcribe.srt'), true);
+        assert.strictEqual(isSrc('F:\\sub\\A.zh-cn.srt'), false);
     });
 });

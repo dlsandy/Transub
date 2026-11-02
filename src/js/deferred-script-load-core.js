@@ -100,6 +100,7 @@
         ],
         manualWhl: [
             'js/manual-whl-link-export-core.js',
+            'js/manual-whl-pip-panel-core.js',
             'js/manual-whl-install.js',
         ],
         editorPrefs: [

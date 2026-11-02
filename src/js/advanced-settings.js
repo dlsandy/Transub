@@ -469,7 +469,7 @@
             || choices[0]?.id
             || '',
         ).trim();
-        // choices 已按硬件偏好排序：首项即推荐默认（NVIDIA→CUDA / AMD→ROCm，否则 Vulkan）
+        // choices 已按硬件偏好排序：首项即推荐默认（NVIDIA→CUDA / AMD→ROCm / Intel→SYCL，否则 Vulkan）
         const hardwareDefaultId = String(choices[0]?.id || '').trim();
         const html = choices.map((c) => {
             const id = String(c.id || '').trim();
@@ -531,6 +531,7 @@
         // CUDA PyTorch is for Engine ASR — only prompt after NVIDIA CUDA llama runtime.
         if (backend && backend !== 'cuda') return;
         if (managedSnapshot?.runtime?.preferRocm && !managedSnapshot?.runtime?.preferCuda) return;
+        if (managedSnapshot?.runtime?.preferSycl && !managedSnapshot?.runtime?.preferCuda) return;
         const enginePath = String(document.getElementById('engineInstallPathInput')?.value || '').trim();
         let probe = null;
         try {
@@ -544,7 +545,7 @@
         const message = gpuTorch.buildLlamaFollowUpMessage?.(probe)
             || (
                 'llama-server 已就绪，但 Qwen3-ASR 转写还需补齐 CUDA PyTorch（约 2.5GB）。'
-                + ' 是否现在前往「运行环境 → GPU」安装？'
+                + ' 是否现在安装？'
             );
         const choice = await askConfirmChoice({
             title: '翻译运行时已就绪',
@@ -1515,11 +1516,13 @@
                     accelNote = `\n\n${uiTx('当前后端为 NVIDIA CUDA（含运行库），需要较新的 NVIDIA 驱动；失败时可改回 Vulkan 或改用「手动下载运行时」。')}`;
                 } else if (choice?.backend === 'rocm' || /rocm/i.test(runtimeId)) {
                     accelNote = `\n\n${uiTx('当前后端为 AMD ROCm；Windows 上通常还需本机 ROCm/HIP。失败时可改用 Vulkan 或「手动下载运行时」。')}`;
+                } else if (choice?.backend === 'sycl' || /sycl/i.test(runtimeId)) {
+                    accelNote = `\n\n${uiTx('当前后端为 Intel SYCL；包内含运行库，通常无需另装 oneAPI。失败时可改用 Vulkan 或「手动下载运行时」。')}`;
                 }
                 const recommendedTag = String(
                     window.TransubAdvancedManagedLlmCatalog?.LLAMA_CPP_TAG
                     || managedSnapshot?.runtime?.package?.tag
-                    || 'b11029',
+                    || 'b12032',
                 ).trim();
                 const versionChoice = await askConfirmChoice({
                     title: uiTx('选择运行时版本'),
@@ -1687,6 +1690,8 @@
                     accelNote = `\n${uiTf('需较新的 NVIDIA 驱动；失败时可改回 Vulkan 或改用手动下载。')}`;
                 } else if (choice?.backend === 'rocm' || /rocm/i.test(runtimeId)) {
                     accelNote = `\n${uiTf('需 AMD 显卡；Windows 上通常还需 ROCm/HIP；失败时可改回 Vulkan 或改用手动下载。')}`;
+                } else if (choice?.backend === 'sycl' || /sycl/i.test(runtimeId)) {
+                    accelNote = `\n${uiTf('需 Intel Arc；失败时可改回 Vulkan 或改用手动下载。')}`;
                 }
                 const confirmed = await askConfirm({
                     title: '切换 llama-server 后端',

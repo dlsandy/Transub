@@ -22,6 +22,7 @@ const PROPRIETARY_ALGORITHM_SOURCES = [
     'src/js/advanced-smart-translate-core.js',
     'src/js/smart-translate-verify-core.js',
     'src/js/smart-translate-address-core.js',
+    'src/js/hy-mt2-30b-heretic-catalog-core.js',
     'tools/advanced-module-entry.js',
 ];
 
@@ -31,6 +32,7 @@ const PROPRIETARY_TESTS = [
     'tests/advanced-film-reconstruct.test.js',
     'tests/advanced-smart-translate.test.js',
     'tests/smart-translate-verify-core.test.js',
+    'tests/hy-mt2-30b-heretic-catalog.test.js',
 ];
 
 /** Built closed blob + secrets + private fulfillment (never publish). */
@@ -89,6 +91,7 @@ const RENDERER_DIST_FORBIDDEN = [
     'renderer-dist/js/advanced-smart-translate-core.js',
     'renderer-dist/js/smart-translate-verify-core.js',
     'renderer-dist/js/smart-translate-address-core.js',
+    'renderer-dist/js/hy-mt2-30b-heretic-catalog-core.js',
 ];
 
 module.exports = {

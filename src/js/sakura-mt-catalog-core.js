@@ -170,8 +170,8 @@
             sizeBytes: 1184890880,
             size_hint_mb: 1130,
             ramHint: '建议 ≥4 GB 显存 / 内存',
-            languages: ['ja', 'zh'],
-            note: '日→简中 · 混元 Hy-MT2 轻量 · 低显存 / 智能混合 · Apache-2.0',
+            languages: ['ja', 'zh', 'yue', 'en', 'ko'],
+            note: '多语→简中 · 混元 Hy-MT2 轻量 · 含粤语书面→普通话 · Apache-2.0',
             recommended: false,
             promptFamily: 'hymt',
             translateOnly: true,
@@ -192,14 +192,181 @@
             sizeBytes: 4967931904,
             size_hint_mb: 4620,
             ramHint: '建议 ≥8 GB 显存 / 内存',
-            languages: ['ja', 'zh'],
-            note: '日→简中 · 混元 Hy-MT2 · 软声/通用 MT · Apache-2.0',
+            languages: ['ja', 'zh', 'yue', 'en', 'ko'],
+            note: '多语→简中 · 混元 Hy-MT2 · 含粤语书面→普通话 · Apache-2.0',
             recommended: false,
             promptFamily: 'hymt',
             translateOnly: true,
             paramBillion: 7,
             contextSize: 8192,
             llamaJinja: true,
+        },
+        // Hy-MT2 30B Heretic APEX (Mini/Compact/Quality): proprietary soft-merge via
+        // hy-mt2-30b-heretic-catalog-core.js / _advanced helpers (not in public CATALOG).
+        {
+            id: 'index-translate-2b',
+            name: 'Index-Translate 2B Q4_K_M',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'index',
+            familyLabel: 'Index-Translate',
+            fileName: 'Index-Translate-2B.Q4_K_M.gguf',
+            ggufUrl: 'https://huggingface.co/IndexTeam/Index-Translate-2B-GGUF/resolve/main/Index-Translate-2B.Q4_K_M.gguf',
+            sizeHint: '约 1.2 GB',
+            sizeBytes: 1312164352,
+            size_hint_mb: 1251,
+            ramHint: '建议 ≥4 GB 显存 / 内存',
+            languages: ['ja', 'zh', 'en', 'ko', 'yue'],
+            note: '多语翻译 · IndexTeam Index-Translate 2B · 约 150 语 · Apache-2.0',
+            recommended: false,
+            promptFamily: 'index',
+            translateOnly: true,
+            paramBillion: 2,
+            contextSize: 8192,
+            llamaJinja: true,
+        },
+        {
+            id: 'index-translate-9b',
+            name: 'Index-Translate 9B Q4_K_M',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'index',
+            familyLabel: 'Index-Translate',
+            fileName: 'Index-Translate-9B.Q4_K_M.gguf',
+            ggufUrl: 'https://huggingface.co/IndexTeam/Index-Translate-9B-GGUF/resolve/main/Index-Translate-9B.Q4_K_M.gguf',
+            sizeHint: '约 5.4 GB',
+            sizeBytes: 5780090304,
+            size_hint_mb: 5512,
+            ramHint: '建议 ≥8 GB 显存 / 内存',
+            languages: ['ja', 'zh', 'en', 'ko', 'yue'],
+            note: '多语翻译 · IndexTeam Index-Translate 9B · 约 150 语 · Apache-2.0',
+            recommended: false,
+            promptFamily: 'index',
+            translateOnly: true,
+            paramBillion: 9,
+            contextSize: 8192,
+            llamaJinja: true,
+        },
+        {
+            id: 'index-translate-35b-a3b-mini',
+            name: 'Index-Translate 35B-A3B APEX Mini',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'index',
+            familyLabel: 'Index-Translate',
+            fileName: 'Index-Translate-35B-A3B-preview-APEX-I-Mini.gguf',
+            ggufUrl: 'https://huggingface.co/alphaZimuth/Index-Translate-35B-A3B-preview-APEX-GGUF/resolve/main/Index-Translate-35B-A3B-preview-APEX-I-Mini.gguf',
+            sizeHint: '约 12.9 GB',
+            sizeBytes: 13869236800,
+            size_hint_mb: 13227,
+            weightGiB: 12.9,
+            ramHint: '建议 ≥24 GB 内存；8–12GB 显存用 --n-cpu-moe 混合加载',
+            languages: ['ja', 'zh', 'en', 'ko', 'yue'],
+            note: '多语翻译 · MoE 35B/激活≈3B · APEX-I Mini · 需 llama.cpp ≥b9993 · 手动选用 · Apache-2.0',
+            recommended: false,
+            promptFamily: 'index',
+            translateOnly: true,
+            paramBillion: 35,
+            activeParamBillion: 3,
+            moe: true,
+            contextSize: 4096,
+            llamaJinja: true,
+            llamaServer: {
+                flashAttn: true,
+                // 10GB: catalog ngl 60 OOMs during engine/desktop handoff; prefer CPU-moe like Hy-MT Compact.
+                nCpuMoe: 18,
+                nGpuLayers: 40,
+            },
+        },
+        {
+            id: 'index-translate-35b-a3b',
+            name: 'Index-Translate 35B-A3B APEX Compact',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'index',
+            familyLabel: 'Index-Translate',
+            fileName: 'Index-Translate-35B-A3B-preview-APEX-I-Compact.gguf',
+            ggufUrl: 'https://huggingface.co/alphaZimuth/Index-Translate-35B-A3B-preview-APEX-GGUF/resolve/main/Index-Translate-35B-A3B-preview-APEX-I-Compact.gguf',
+            sizeHint: '约 15.9 GB',
+            sizeBytes: 17085556288,
+            size_hint_mb: 16294,
+            weightGiB: 15.9,
+            ramHint: '建议 ≥32 GB 内存；10–12GB 显存需 --n-cpu-moe',
+            languages: ['ja', 'zh', 'en', 'ko', 'yue'],
+            note: '多语翻译 · MoE 35B/激活≈3B · APEX-I Compact · 需 llama.cpp ≥b9993 · 手动选用 · Apache-2.0',
+            recommended: false,
+            promptFamily: 'index',
+            translateOnly: true,
+            paramBillion: 35,
+            activeParamBillion: 3,
+            moe: true,
+            contextSize: 4096,
+            llamaJinja: true,
+            llamaServer: {
+                flashAttn: true,
+                nCpuMoe: 18,
+                nGpuLayers: 40,
+            },
+        },
+        {
+            id: 'index-translate-35b-a3b-quality',
+            name: 'Index-Translate 35B-A3B APEX Quality',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'index',
+            familyLabel: 'Index-Translate',
+            fileName: 'Index-Translate-35B-A3B-preview-APEX-I-Quality.gguf',
+            ggufUrl: 'https://huggingface.co/alphaZimuth/Index-Translate-35B-A3B-preview-APEX-GGUF/resolve/main/Index-Translate-35B-A3B-preview-APEX-I-Quality.gguf',
+            sizeHint: '约 21.9 GB',
+            sizeBytes: 23513980480,
+            size_hint_mb: 22427,
+            weightGiB: 21.9,
+            ramHint: '建议 ≥40 GB 内存；≥16GB 显存更稳',
+            languages: ['ja', 'zh', 'en', 'ko', 'yue'],
+            note: '多语翻译 · MoE 35B/激活≈3B · APEX-I Quality · 需 llama.cpp ≥b9993 · 手动选用 · Apache-2.0',
+            recommended: false,
+            promptFamily: 'index',
+            translateOnly: true,
+            paramBillion: 35,
+            activeParamBillion: 3,
+            moe: true,
+            contextSize: 8192,
+            llamaJinja: true,
+            llamaServer: {
+                flashAttn: true,
+                nCpuMoe: 14,
+                nGpuLayers: 99,
+            },
+        },
+        {
+            id: 'index-translate-35b-a3b-q4km',
+            name: 'Index-Translate 35B-A3B Q4_K_M',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'index',
+            familyLabel: 'Index-Translate',
+            fileName: 'Index-Translate-35B-A3B-preview.Q4_K_M.gguf',
+            ggufUrl: 'https://huggingface.co/IndexTeam/Index-Translate-35B-A3B-preview-GGUF/resolve/main/Index-Translate-35B-A3B-preview.Q4_K_M.gguf',
+            sizeHint: '约 20.2 GB',
+            sizeBytes: 21713462400,
+            size_hint_mb: 20708,
+            weightGiB: 20.2,
+            ramHint: '建议 ≥40 GB 内存；官方 Q4_K_M · 10–16GB 显存需 --n-cpu-moe',
+            languages: ['ja', 'zh', 'en', 'ko', 'yue'],
+            note: '多语翻译 · MoE 35B/激活≈3B · 官方 Q4_K_M · 需 llama.cpp ≥b9993 · 手动选用 · Apache-2.0',
+            recommended: false,
+            promptFamily: 'index',
+            translateOnly: true,
+            paramBillion: 35,
+            activeParamBillion: 3,
+            moe: true,
+            contextSize: 8192,
+            llamaJinja: true,
+            llamaServer: {
+                flashAttn: true,
+                nCpuMoe: 16,
+                nGpuLayers: 48,
+            },
         },
         {
             id: 'hunyuan-mt-chimera-7b-abliterated',
@@ -411,6 +578,97 @@
             paramBillion: 14,
         },
         {
+            id: 'murasaki-4b-v03',
+            name: 'Murasaki 4B v0.3 Q4_K_M',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'murasaki',
+            familyLabel: 'Murasaki',
+            fileName: 'Murasaki-4B-v0.3.Q4_K_M.gguf',
+            ggufUrl: 'https://huggingface.co/mradermacher/Murasaki-4B-v0.3-GGUF/resolve/main/Murasaki-4B-v0.3.Q4_K_M.gguf',
+            sizeHint: '约 2.5 GB',
+            sizeBytes: 2716068864,
+            size_hint_mb: 2591,
+            ramHint: '建议 ≥4–6 GB 显存 / 内存',
+            languages: ['ja', 'zh'],
+            mtPair: 'ja|zh',
+            note: '日→简中 · v0.3 Script 剧本/字幕 · 社区 Q4_K_M；CC-BY-NC-SA',
+            recommended: false,
+            promptFamily: 'murasaki',
+            translateOnly: true,
+            paramBillion: 4,
+            contextSize: 4096,
+            llamaServer: { forceSingleSlot: true },
+        },
+        {
+            id: 'murasaki-4b-v03-q6k',
+            name: 'Murasaki 4B v0.3 Q6_K',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'murasaki',
+            familyLabel: 'Murasaki',
+            fileName: 'Murasaki-4B-v0.3-Q6_K.gguf',
+            ggufUrl: 'https://huggingface.co/shoutmon/Murasaki-Backup/resolve/main/Murasaki-4B-v0.3-Q6_K.gguf',
+            sizeHint: '约 3.4 GB',
+            sizeBytes: 3625326688,
+            size_hint_mb: 3457,
+            ramHint: '建议 ≥6 GB 显存 / 内存',
+            languages: ['ja', 'zh'],
+            mtPair: 'ja|zh',
+            note: '日→简中 · v0.3 Script 剧本/字幕 · shoutmon 备份 Q6_K；CC-BY-NC-SA',
+            recommended: false,
+            promptFamily: 'murasaki',
+            translateOnly: true,
+            paramBillion: 4,
+            contextSize: 4096,
+            llamaServer: { forceSingleSlot: true },
+        },
+        {
+            id: 'murasaki-4b-v03-q8',
+            name: 'Murasaki 4B v0.3 Q8_0',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'murasaki',
+            familyLabel: 'Murasaki',
+            fileName: 'Murasaki-4B-v0.3.Q8_0.gguf',
+            ggufUrl: 'https://huggingface.co/mradermacher/Murasaki-4B-v0.3-GGUF/resolve/main/Murasaki-4B-v0.3.Q8_0.gguf',
+            sizeHint: '约 4.4 GB',
+            sizeBytes: 4689999872,
+            size_hint_mb: 4473,
+            ramHint: '建议 ≥8 GB 显存 / 内存',
+            languages: ['ja', 'zh'],
+            mtPair: 'ja|zh',
+            note: '日→简中 · v0.3 Script 剧本/字幕 · Q8_0 推荐最高实用保真（F16 已退役）；CC-BY-NC-SA',
+            recommended: true,
+            promptFamily: 'murasaki',
+            translateOnly: true,
+            paramBillion: 4,
+            contextSize: 4096,
+            llamaServer: { forceSingleSlot: true },
+        },
+        {
+            id: 'orion-4b-v2608',
+            name: 'Orion 4B SFT v2608 Q8_0',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'orion',
+            familyLabel: 'Orion',
+            fileName: 'orion-qwen3-4b-sft-v2608-q8_0.gguf',
+            ggufUrl: 'https://huggingface.co/shoutmon/Orion-Qwen3-4B-SFT-v2608-Q8_0-GGUF/resolve/main/orion-qwen3-4b-sft-v2608-q8_0.gguf',
+            sizeHint: '约 4.0 GB',
+            sizeBytes: 4280400640,
+            size_hint_mb: 4082,
+            ramHint: '建议 ≥8 GB 显存 / 内存',
+            languages: ['ja', 'zh'],
+            mtPair: 'ja|zh',
+            note: '日→简中 · 轻小说/游戏/动漫 · 3tic SFT v2608 · shoutmon Q8_0 · Apache-2.0',
+            recommended: false,
+            promptFamily: 'orion',
+            translateOnly: true,
+            paramBillion: 4,
+            contextSize: 4096,
+        },
+        {
             id: 'sakura-ln-korean-7b',
             name: 'LN-Korean 7B v0.3 Q4_K_M',
             kind: 'mt',
@@ -497,6 +755,28 @@
             ollamaTag: 'translategemma:4b',
         },
         {
+            id: 'translategemma-4-sub-e2b',
+            name: 'Translate Gemma 4 Sub E2B Q4_K_XL',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'translategemma',
+            familyLabel: 'TranslateGemma',
+            fileName: 'translate_gemma4_sub-E2B-Q4_K_XL.gguf',
+            ggufUrl: 'https://huggingface.co/17slever17/translate-gemma-4-sub-e2b-GGUF/resolve/main/translate_gemma4_sub-E2B-Q4_K_XL.gguf',
+            sizeHint: '约 3.0 GB',
+            sizeBytes: 3184494816,
+            size_hint_mb: 3037,
+            ramHint: '建议 ≥6 GB 显存 / 内存（需较新 llama.cpp / Gemma 4）',
+            languages: ['ja', 'zh', 'en', 'ko', 'ru', 'de', 'es', 'fr'],
+            note: '多语字幕 MT · Gemma 4 Sub E2B 轻量 · 前后句语境 · 保留口语/脏话 · Apache-2.0',
+            recommended: false,
+            promptFamily: 'translategemmasub',
+            translateOnly: true,
+            paramBillion: 2,
+            contextSize: 8192,
+            llamaJinja: true,
+        },
+        {
             id: 'translategemma-4-sub-e4b',
             name: 'Translate Gemma 4 Sub E4B Q4_K_XL',
             kind: 'mt',
@@ -510,7 +790,7 @@
             size_hint_mb: 4889,
             ramHint: '建议 ≥8 GB 显存 / 内存（需较新 llama.cpp / Gemma 4）',
             languages: ['ja', 'zh', 'en', 'ko', 'ru', 'de', 'es', 'fr'],
-            note: '多语字幕 MT · Gemma 4 Sub E4B · 保留口语/脏话 · Apache-2.0',
+            note: '多语字幕 MT · Gemma 4 Sub E4B · 前后句语境 · 保留口语/脏话 · Apache-2.0',
             recommended: false,
             promptFamily: 'translategemmasub',
             translateOnly: true,
@@ -570,28 +850,37 @@
         if (modelIdOrEntry && typeof modelIdOrEntry === 'object') {
             const fam = String(modelIdOrEntry.promptFamily || '').trim().toLowerCase();
             if (fam === 'galtransl') return 'galtransl';
+            if (fam === 'murasaki') return 'murasaki';
+            if (fam === 'orion') return 'orion';
             if (fam === 'ln-korean' || fam === 'lnkorean' || fam === 'korean') return 'ln-korean';
             if (fam === 'ln-ko2ja' || fam === 'lnko2ja' || fam === 'ko2ja') return 'ln-ko2ja';
             if (fam === 'hymt') return 'hymt';
             if (fam === 'hunyuan' || fam === 'hunyuan-mt') return 'hunyuan';
+            if (fam === 'index' || fam === 'indextranslate' || fam === 'index-translate') return 'index';
             if (fam === 'translategemmasub' || fam === 'translate-gemma-sub') return 'translategemmasub';
             if (fam === 'translategemma' || fam === 'translate-gemma') return 'translategemma';
             return 'sakura';
         }
         const entry = findCatalogEntry(modelIdOrEntry);
         if (entry?.promptFamily === 'galtransl') return 'galtransl';
+        if (entry?.promptFamily === 'murasaki') return 'murasaki';
+        if (entry?.promptFamily === 'orion') return 'orion';
         if (entry?.promptFamily === 'ln-korean') return 'ln-korean';
         if (entry?.promptFamily === 'ln-ko2ja') return 'ln-ko2ja';
         if (entry?.promptFamily === 'hymt') return 'hymt';
         if (entry?.promptFamily === 'hunyuan') return 'hunyuan';
+        if (entry?.promptFamily === 'index') return 'index';
         if (entry?.promptFamily === 'translategemmasub') return 'translategemmasub';
         if (entry?.promptFamily === 'translategemma') return 'translategemma';
         const id = String(modelIdOrEntry || '').trim().toLowerCase();
         if (/galtransl/i.test(id)) return 'galtransl';
+        if (/murasaki/i.test(id)) return 'murasaki';
+        if (/orion[-_]?qwen|^orion-/i.test(id)) return 'orion';
         if (/ln[-_]?korean|sakura[-_]?ln[-_]?korean/i.test(id)) return 'ln-korean';
         if (/ln[-_]?ko2ja|sakura[-_]?ln[-_]?ko2ja|ko2ja/i.test(id)) return 'ln-ko2ja';
         if (/hunyuan.*chimera|chimera.*abliterat|^hunyuan-mt|hy-?mt1\.?5|hy-?mt15/i.test(id)) return 'hunyuan';
         if (/^hy-?mt2/i.test(id)) return 'hymt';
+        if (/index[-_]?translate|indexteam[-_]?index[-_]?translate/i.test(id)) return 'index';
         if (/translategemma-.*-sub|translate[-_]?gemma[-_]?4[-_]?sub|translategemmasub/i.test(id)) {
             return 'translategemmasub';
         }
@@ -619,33 +908,47 @@
         const fam = resolvePromptFamily(entry || modelIdOrEntry);
         if (fam === 'ln-korean') return { source: 'ko', target: 'zh' };
         if (fam === 'ln-ko2ja') return { source: 'ko', target: 'ja' };
-        if (fam === 'galtransl' || fam === 'hymt' || fam === 'sakura') {
+        // Hy-MT2 / Index-Translate / TG are multilingual, not a fixed ja|zh pack.
+        if (fam === 'hymt' || fam === 'hunyuan' || fam === 'index'
+            || fam === 'translategemma' || fam === 'translategemmasub') {
+            return null;
+        }
+        if (fam === 'galtransl' || fam === 'sakura' || fam === 'murasaki' || fam === 'orion') {
             const id = String(
                 (entry && entry.id) || (typeof modelIdOrEntry === 'string' ? modelIdOrEntry : '') || '',
             ).trim();
             if (!id && !entry) return null;
-            if (/translategemma|translate[-_]?gemma|hunyuan|chimera/i.test(id)) return null;
+            if (/translategemma|translate[-_]?gemma|hunyuan|chimera|^hy-?mt|index[-_]?translate/i.test(id)) {
+                return null;
+            }
             return { source: 'ja', target: 'zh' };
         }
         return null;
     }
 
-    /** JA→ZH specialized MT (Sakura / Gal / Hy-MT). TranslateGemma / Hunyuan Chimera / KO packs excluded. */
+    /** JA→ZH specialized MT (Sakura / Gal). TranslateGemma / Hunyuan / Hy-MT2 / KO packs excluded. */
     function isJaZhOnlyMtModel(modelId) {
         const id = String(modelId || '').trim();
         if (!id) return false;
         if (/translategemma|translate[-_]?gemma/i.test(id)) return false;
-        if (/hunyuan|chimera/i.test(id)) return false;
+        if (/hunyuan|chimera|^hy-?mt/i.test(id)) return false;
+        if (/index[-_]?translate/i.test(id)) return false;
         const pair = resolveMtPair(id);
         if (pair && (pair.source !== 'ja' || pair.target !== 'zh')) return false;
         const fam = resolvePromptFamily(id);
-        if (fam === 'translategemma' || fam === 'translategemmasub' || fam === 'hunyuan') return false;
+        if (
+            fam === 'translategemma' || fam === 'translategemmasub'
+            || fam === 'hunyuan' || fam === 'hymt' || fam === 'index'
+        ) {
+            return false;
+        }
         if (fam === 'ln-korean' || fam === 'ln-ko2ja') return false;
-        if (fam === 'galtransl' || fam === 'hymt' || fam === 'sakura') {
+        if (fam === 'galtransl' || fam === 'sakura' || fam === 'murasaki' || fam === 'orion') {
             return !!findCatalogEntry(id)
                 || /^sakura-/i.test(id)
                 || /galtransl/i.test(id)
-                || /^hy-?mt2/i.test(id);
+                || /murasaki/i.test(id)
+                || /orion[-_]?qwen|^orion-/i.test(id);
         }
         return false;
     }
@@ -668,7 +971,15 @@
         const id = String(modelId || '').trim();
         if (!id) return true;
         const fam = resolvePromptFamily(id);
-        if (fam === 'translategemma' || fam === 'translategemmasub' || fam === 'hunyuan') return true;
+        if (fam === 'translategemma' || fam === 'translategemmasub'
+            || fam === 'hunyuan' || fam === 'index') {
+            return true;
+        }
+        // Hy-MT2: any source → ZH 成片 (粤/日/英/韩…→简中)；非中文成片请用 TG / Index / 通用推理.
+        if (fam === 'hymt') {
+            const tgt = String(targetCode || '').trim().toLowerCase().split(/[-_]/)[0];
+            return !tgt || tgt === 'zh';
+        }
         const pair = resolveMtPair(id);
         if (!pair) return true;
         const tgt = String(targetCode || '').trim().toLowerCase().split(/[-_]/)[0];
@@ -693,7 +1004,10 @@
         const fam = resolvePromptFamily(id);
         if (fam === 'hymt') return 'Hy-MT2 翻译';
         if (fam === 'hunyuan') return 'Hunyuan MT 翻译';
+        if (fam === 'index') return 'Index-Translate 翻译';
         if (fam === 'galtransl') return 'GalTransl 翻译';
+        if (fam === 'murasaki') return 'Murasaki 翻译';
+        if (fam === 'orion') return 'Orion 翻译';
         if (fam === 'ln-korean') return 'LN-Korean 翻译';
         if (fam === 'ln-ko2ja') return 'LN-ko2ja 翻译';
         if (fam === 'translategemmasub') return 'TG Sub 翻译';
@@ -711,15 +1025,68 @@
         return mtChunkProgressLabel(modelId, options).replace(/\s*翻译$/, '') + ' 已译';
     }
 
+    /**
+     * Soft-load proprietary Hy-MT2 30B Heretic APEX rows.
+     * Unpackaged: gitignored hy-mt2-30b-heretic-catalog-core.js
+     * Packaged: _advanced helpers via advanced-closed-api / global install
+     */
+    function loadHyMt230bHereticEntries() {
+        const fromApi = (api) => {
+            if (!api || typeof api !== 'object') return null;
+            if (typeof api.listCatalogEntries === 'function') {
+                const rows = api.listCatalogEntries();
+                return Array.isArray(rows) ? rows : null;
+            }
+            if (Array.isArray(api.CATALOG)) return api.CATALOG.slice();
+            return null;
+        };
+        try {
+            if (typeof require === 'function') {
+                const rows = fromApi(require('./hy-mt2-30b-heretic-catalog-core'));
+                if (rows && rows.length) return rows;
+            }
+        } catch (_) { /* public checkout / asar-stripped */ }
+        try {
+            const g = typeof globalThis !== 'undefined' ? globalThis : null;
+            const rows = fromApi(g?.TransubHyMt230bHereticCatalog);
+            if (rows && rows.length) return rows;
+        } catch (_) { /* ignore */ }
+        try {
+            if (typeof require === 'function') {
+                const closed = require('../../electron/advanced-closed-api');
+                if (typeof closed.loadClosedHyMt230bHereticCatalog === 'function') {
+                    const rows = fromApi(closed.loadClosedHyMt230bHereticCatalog());
+                    if (rows && rows.length) return rows;
+                }
+            }
+        } catch (_) { /* renderer / missing closed module */ }
+        return [];
+    }
+
     function listCatalog() {
-        return CATALOG.map((m) => ({ ...m }));
+        const extras = loadHyMt230bHereticEntries();
+        if (!extras.length) return CATALOG.map((m) => ({ ...m }));
+        const seen = new Set(CATALOG.map((m) => String(m.id || '').toLowerCase()));
+        const out = CATALOG.map((m) => ({ ...m }));
+        for (const row of extras) {
+            const key = String(row?.id || '').toLowerCase();
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            out.push({ ...row });
+        }
+        return out;
     }
 
     function findCatalogEntry(modelIdOrFile) {
         const want = String(modelIdOrFile || '').trim().toLowerCase();
         if (!want) return null;
-        return CATALOG.find((m) => (
+        const hit = CATALOG.find((m) => (
             m.id.toLowerCase() === want
+            || String(m.fileName || '').toLowerCase() === want
+        ));
+        if (hit) return hit;
+        return loadHyMt230bHereticEntries().find((m) => (
+            String(m.id || '').toLowerCase() === want
             || String(m.fileName || '').toLowerCase() === want
         )) || null;
     }
@@ -767,7 +1134,7 @@
         if (!id) return false;
         if (/(^|[-_])asr([-_]|$)/i.test(id)) return true;
         if (/forced[-_]?aligner/i.test(id)) return true;
-        if (/^(whisper|sensevoice|reazon|parakeet|anime-whisper|kotoba|cohere-transcribe|firered|fsmn|silero|whisperseg)/i.test(id)) {
+        if (/^(whisper|sensevoice|reazon|parakeet|anime-whisper|kotoba|cohere-transcribe|firered-asr2|firered|fsmn|silero|whisperseg)/i.test(id)) {
             return true;
         }
         if (/(^|[-_])(vad|demucs)([-_]|$)/i.test(id)) return true;
@@ -787,7 +1154,7 @@
         if (isNonTranslateEngineModelId(id)) return false;
         if (isSakuraMtModel(id)) return true;
         // Managed GGUF catalog ids (qwen25-7b, llama32-3b, …) + future backends
-        if (/^(sakura|hy-?mt|hunyuan|translategemma|qwen|llama|mistral|gemma|chatglm|glm|yi-|deepseek|phi)/i.test(id)) return true;
+        if (/^(sakura|murasaki|orion|hy-?mt|hunyuan|index[-_]?translate|translategemma|qwen|llama|mistral|gemma|chatglm|glm|yi-|deepseek|phi)/i.test(id)) return true;
         if (/gguf|llm|instruct/i.test(id)) return true;
         return false;
     }
@@ -889,6 +1256,8 @@
         const id = String(modelId || '').trim();
         if (!id) return '';
         if (isRetiredTransubJaModelId(id)) return String(fallback || DEFAULT_MODEL_ID).trim() || DEFAULT_MODEL_ID;
+        // Murasaki v0.2 (8B/14B) retired — map to current v0.3 Q6_K.
+        if (/^murasaki-(?:8|14)b-v0?2(?:-q6k)?$/i.test(id)) return 'murasaki-4b-v03-q6k';
         return id;
     }
 
@@ -904,10 +1273,17 @@
             return SMART_ENGINE_BATCH_SIZE;
         }
         let billion = Number(input.paramBillion);
-        if (!Number.isFinite(billion) || billion <= 0) {
+        let activeBillion = Number(input.activeParamBillion);
+        if (!Number.isFinite(billion) || billion <= 0
+            || !Number.isFinite(activeBillion) || activeBillion <= 0) {
             const entry = findCatalogEntry(input.modelId || input.engineMtModel);
-            billion = Number(entry?.paramBillion);
+            if (!Number.isFinite(billion) || billion <= 0) billion = Number(entry?.paramBillion);
+            if (!Number.isFinite(activeBillion) || activeBillion <= 0) {
+                activeBillion = Number(entry?.activeParamBillion);
+            }
         }
+        // MoE: batch by active params (compute), not total stored experts.
+        if (Number.isFinite(activeBillion) && activeBillion > 0) billion = activeBillion;
         if (Number.isFinite(billion) && billion > 0) {
             if (billion <= 2) return 32;
             if (billion <= 4.5) return 24;

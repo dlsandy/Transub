@@ -26,6 +26,9 @@
         'sakura-8b-qwen3',
         'sakura-7b',
         'sakura-galtransl-v4-4b',
+        'murasaki-4b-v03-q8',
+        'murasaki-4b-v03-q6k',
+        'murasaki-4b-v03',
         'sakura-1.5b',
     ]);
 
@@ -34,6 +37,7 @@
         'sakura-ln-korean-14b',
         'sakura-ln-korean-7b',
         'translategemma-4-sub-e4b',
+        'translategemma-4-sub-e2b',
         'translategemma-12b',
         'translategemma-4b',
         'hunyuan-mt-chimera-7b-abliterated',
@@ -45,6 +49,7 @@
     const PREFERRED_HYBRID_MT_IDS_KO_JA = Object.freeze([
         'sakura-ln-ko2ja-14b',
         'translategemma-4-sub-e4b',
+        'translategemma-4-sub-e2b',
         'translategemma-12b',
         'translategemma-4b',
         'hunyuan-mt-chimera-7b-abliterated',
@@ -55,19 +60,25 @@
     /** Non-ZH 成片：多语字幕 MT（永不自动选 Sakura/Gal/Hy-MT2）. Soft-AV prefers Sub E4B. */
     const PREFERRED_HYBRID_MT_IDS_INTL = Object.freeze([
         'translategemma-4-sub-e4b',
+        'translategemma-4-sub-e2b',
         'translategemma-12b',
         'translategemma-4b',
+        'index-translate-9b',
+        'index-translate-2b',
         'translategemma-27b',
         'hunyuan-mt-chimera-7b-abliterated',
         'hunyuan-mt-7b-abliterated',
         'hy-mt15-7b-abliterated',
     ]);
 
-    /** Soft-AV + intl: Sub E4B first (colloquial / less refusal), then larger TG. */
+    /** Soft-AV + intl: Sub E4B/E2B first (colloquial / less refusal), then larger TG. */
     const PREFERRED_HYBRID_MT_IDS_INTL_SOFT = Object.freeze([
         'translategemma-4-sub-e4b',
+        'translategemma-4-sub-e2b',
         'translategemma-4b',
         'translategemma-12b',
+        'index-translate-9b',
+        'index-translate-2b',
         'hunyuan-mt-chimera-7b-abliterated',
         'hunyuan-mt-7b-abliterated',
         'hy-mt15-7b-abliterated',
@@ -78,9 +89,47 @@
         'en', 'eng', 'english',
         'ko', 'kr', 'kor', 'korean',
         'zh', 'cn', 'chinese', 'zh-cn', 'zh-tw', 'zh-hk',
+        'yue', 'zh-yue', 'cantonese',
         'de', 'fr', 'es', 'ru', 'vi', 'th', 'id', 'pt', 'it',
         'nl', 'pl', 'tr', 'ar', 'hi', 'sv', 'fi', 'da', 'no',
     ]);
+
+    /** Yue / Cantonese source → ZH 成片 (Hy-MT2 7B/1.8B；30B / Index 35B 旗舰仅手动选用). */
+    const PREFERRED_HYBRID_MT_IDS_YUE_ZH = Object.freeze([
+        'hy-mt2-7b',
+        'hy-mt2-1.8b',
+        'index-translate-9b',
+        'index-translate-2b',
+        'hy-mt15-7b-abliterated',
+        'hy-mt15-1.8b-abliterated',
+        'hunyuan-mt-chimera-7b-abliterated',
+        'hunyuan-mt-7b-abliterated',
+        'translategemma-4-sub-e4b',
+        'translategemma-4-sub-e2b',
+        'translategemma-12b',
+        'translategemma-4b',
+    ]);
+
+    function isYueSource(language, cues) {
+        const lang = String(language || '').trim().toLowerCase();
+        if (lang === 'yue' || lang === 'zh-yue' || lang === 'cantonese'
+            || lang.startsWith('yue-')) {
+            return true;
+        }
+        try {
+            const tgt = (typeof module !== 'undefined' && module.exports)
+                ? require('./subtitle-target-lang-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleTargetLang : null);
+            if (typeof tgt?.shouldUseYueToMandarinPrompt === 'function') {
+                return !!tgt.shouldUseYueToMandarinPrompt(
+                    { language: lang || 'zh' },
+                    cues,
+                ) && (lang === 'yue' || lang === 'zh-yue' || lang === 'cantonese'
+                    || !lang || lang === 'auto' || lang === 'zh' || lang.startsWith('zh'));
+            }
+        } catch { /* optional */ }
+        return false;
+    }
 
     function isKoreanSource(language, cues) {
         const lang = String(language || '').trim().toLowerCase();
@@ -150,6 +199,7 @@
         if (/(^|[/_\s.-])sakura([/_\s.-]|$)/i.test(id)) return true;
         if (/galtransl/i.test(id)) return true;
         if (/^hy-?mt/i.test(id)) return true;
+        if (/index[-_]?translate/i.test(id)) return true;
         if (/translategemma|translate[-_]?gemma/i.test(id)) return true;
         if (/hunyuan|chimera/i.test(id)) return true;
         try {
@@ -246,6 +296,7 @@
         contentProfile,
         senseProfile,
         strongAv,
+        vramGb,
     } = {}) {
         const installed = (Array.isArray(installedIds) ? installedIds : [])
             .map((x) => String(x || '').trim())
@@ -265,21 +316,79 @@
             return false;
         })();
         const koSrc = isKoreanSource(language);
+        const yueSrc = isYueSource(language);
         let preferList;
-        if (koSrc && zhTarget) preferList = PREFERRED_HYBRID_MT_IDS_KO_ZH;
+        if (yueSrc && zhTarget) preferList = PREFERRED_HYBRID_MT_IDS_YUE_ZH;
+        else if (koSrc && zhTarget) preferList = PREFERRED_HYBRID_MT_IDS_KO_ZH;
         else if (koSrc && jaTarget) preferList = PREFERRED_HYBRID_MT_IDS_KO_JA;
         else if (zhTarget) preferList = PREFERRED_HYBRID_MT_IDS;
         else preferList = softAv ? PREFERRED_HYBRID_MT_IDS_INTL_SOFT : PREFERRED_HYBRID_MT_IDS_INTL;
+        // VRAM-aware Murasaki quant order inside the JA→ZH prefer list.
+        if (zhTarget && !yueSrc && !koSrc) {
+            try {
+                const mura = (typeof module !== 'undefined' && module.exports)
+                    ? require('./murasaki-translate-core')
+                    : (typeof globalThis !== 'undefined' ? globalThis.TransubMurasakiTranslate : null);
+                const ordered = mura?.orderMurasakiModelIdsForVram?.(vramGb) || [
+                    'murasaki-4b-v03-q8',
+                    'murasaki-4b-v03-q6k',
+                    'murasaki-4b-v03',
+                ];
+                preferList = preferList.flatMap((id) => {
+                    if (/^murasaki-4b-v03/i.test(id)) return [];
+                    return [id];
+                });
+                const insertAt = preferList.findIndex((id) => /^sakura-1\.5b$/i.test(id));
+                if (insertAt >= 0) {
+                    preferList = [
+                        ...preferList.slice(0, insertAt),
+                        ...ordered,
+                        ...preferList.slice(insertAt),
+                    ];
+                } else {
+                    preferList = [...preferList, ...ordered];
+                }
+            } catch { /* optional */ }
+        }
         const allowed = (id) => modelAllowedForHybridTarget(id, targetOpts);
 
-        const pref = String(preferredId || '').trim();
+        let pref = String(preferredId || '').trim();
+        if (/^murasaki/i.test(pref)) {
+            try {
+                const mura = (typeof module !== 'undefined' && module.exports)
+                    ? require('./murasaki-translate-core')
+                    : (typeof globalThis !== 'undefined' ? globalThis.TransubMurasakiTranslate : null);
+                if (mura?.canonicalizeMurasakiModelId) {
+                    pref = mura.canonicalizeMurasakiModelId(pref) || pref;
+                }
+            } catch { /* keep pref */ }
+        }
         if (pref) {
             if (!isTranslateOnlyLike(pref)) {
                 // Explicit non-specialist pick must not be remapped to GalTransl.
-                return '';
+                // Retired Murasaki F16 may fail translate-only lookup — remap family below.
+                if (!/^murasaki/i.test(String(preferredId || ''))) {
+                    return '';
+                }
+            } else {
+                const hit = lower.get(pref.toLowerCase());
+                if (hit && allowed(hit)) return hit;
             }
-            const hit = lower.get(pref.toLowerCase());
-            if (hit && allowed(hit)) return hit;
+            // Preferred quant missing / retired → remap Murasaki family to a VRAM-fitting install.
+            if (/^murasaki/i.test(pref) || /^murasaki/i.test(String(preferredId || ''))) {
+                try {
+                    const mura = (typeof module !== 'undefined' && module.exports)
+                        ? require('./murasaki-translate-core')
+                        : (typeof globalThis !== 'undefined' ? globalThis.TransubMurasakiTranslate : null);
+                    const picked = mura?.pickMurasakiModelIdForVram?.({
+                        vramGb,
+                        installedIds: installed,
+                    });
+                    if (picked && allowed(picked) && lower.has(picked.toLowerCase())) {
+                        return lower.get(picked.toLowerCase());
+                    }
+                } catch { /* fall through */ }
+            }
             // Preferred specialist missing or blocked for target → auto below.
         }
         for (const id of preferList) {
@@ -330,8 +439,9 @@
             return { ok: false, reason: 'model_target' };
         }
         if (!isJapaneseSource(language, cues)) {
-            // Multilingual MT (TranslateGemma / Hunyuan Chimera) may run lite without JA source.
-            if (/translategemma|translate[-_]?gemma|hunyuan|chimera/i.test(id)) {
+            // Multilingual MT (TranslateGemma / Hunyuan / Hy-MT2 / Index) may run without JA source.
+            if (/translategemma|translate[-_]?gemma|hunyuan|chimera|^hy-?mt|index[-_]?translate/i.test(id)
+                || isHyMtModelId(id)) {
                 return { ok: true, reason: '' };
             }
             // Korean pair specialists (LN-Korean / LN-ko2ja).
@@ -441,6 +551,48 @@
         return true;
     }
 
+    /**
+     * Sentence-window for hybrid → runSakuraTranslate.
+     * Must honor model profiles (Murasaki=3). Defaulting to 1 made engine hybrid
+     * ~3× slower than dedicated scripts that pass windowLines:3, and thrashed
+     * llama-server into connection-refused + chat fallback (XVSR-898).
+     */
+    function resolveHybridWindowLines(input = {}) {
+        if (input._blankRetry || input._skipAlignAudit) return 1;
+        const explicit = Number(input.windowLines);
+        if (Number.isFinite(explicit) && explicit > 0) {
+            return Math.max(1, Math.min(20, Math.round(explicit)));
+        }
+        const modelId = String(input.modelId || '').trim();
+        const family = String(input.promptFamily || '').trim().toLowerCase();
+        const idLower = modelId.toLowerCase();
+        const looksMura = family === 'murasaki' || /murasaki/.test(idLower);
+        if (looksMura) {
+            try {
+                const murasaki = (typeof module !== 'undefined' && module.exports)
+                    ? require('./murasaki-translate-core')
+                    : (global && global.TransubMurasakiTranslate);
+                const n = Number(murasaki?.resolveMurasakiInferenceOptions?.({
+                    ...input,
+                    modelId,
+                })?.windowLines);
+                if (Number.isFinite(n) && n > 0) return Math.max(1, Math.min(20, Math.round(n)));
+            } catch { /* optional */ }
+            return 3;
+        }
+        if (family === 'orion' || /orion/.test(idLower)) return 6;
+        if (
+            family === 'galtransl'
+            || family === 'sakura'
+            || (/galtransl|sakura/.test(idLower)
+                && !/hy-?mt|translategemma|hunyuan|index[-_]?translate/.test(idLower))
+        ) {
+            return 8;
+        }
+        // Hy-MT / TranslateGemma / Hunyuan / unknown: serial 1
+        return 1;
+    }
+
     return {
         PREFERRED_HYBRID_MT_IDS,
         PREFERRED_HYBRID_MT_IDS_KO_ZH,
@@ -451,6 +603,7 @@
         isTranslateOnlyLike,
         isJapaneseSource,
         isKoreanSource,
+        isYueSource,
         pickHybridMtModelId,
         shouldUseHybridChunkMt,
         glossaryObjectFromTerms,
@@ -458,6 +611,7 @@
         looksLikeLocalLlamaBaseUrl,
         shouldReleaseChatLlmForHybridChunk,
         shouldSkipLlmFilmBrief,
+        resolveHybridWindowLines,
         applySmartTranslateLiteOptions,
     };
 }));

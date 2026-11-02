@@ -28,6 +28,8 @@ const NOISE_ZH_RE = /^[啊嗯哦呀哈嘿哎呜唔呼呲啾]+$/;
 const DOMAIN_COMMON_JUNK = new Set([
     'じゃ', 'そう', '先生', '彼女', '息子', '姉妹', '親子', '先輩', '兄貴', '姫様', '疑似',
     'あーし', 'わらひ',
+    // Volitional イこう is ambiguous (行こう / climax); mapping to「去了」poisons leave dialogue.
+    'イこう',
 ]);
 
 function parseArgs(argv) {

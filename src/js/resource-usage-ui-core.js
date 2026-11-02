@@ -12,7 +12,7 @@
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function resourceUsageUiFactory(global) {
     const RESOURCE_USAGE_INTERVAL_MS = 5000;
-    /** Idle status-bar chips: CPU/RAM only, slower tick (skip nvidia-smi). */
+    /** Idle status-bar chips: slower tick; GPU sampled every other poll (keep last chips). */
     const RESOURCE_USAGE_IDLE_INTERVAL_MS = 15000;
     const RESOURCE_CHIPS_EMPTY_HTML = '<span class="text-gray-400">资源采样中…</span>';
 
@@ -80,8 +80,9 @@
         }
 
         /**
-         * Keep last-known GPU when a poll skips nvidia-smi or returns a transient miss,
-         * so status chips do not flap back to placeholders while CPU/RAM still update.
+         * Keep last-known GPU when a poll skips nvidia-smi / AMD probe or returns a
+         * transient miss, so status chips do not flap back to placeholders.
+         * AMD samples often lack utilPct (total VRAM only) — still treat as usable.
          * @param {object|null|undefined} sample
          * @param {boolean} includeGpu
          */
@@ -89,9 +90,16 @@
             if (!sample || typeof sample !== 'object') return sample;
             const next = sample;
             const prevGpu = state.factoryResourceSample?.gpu;
-            const hasGpu = next.gpu
-                && Number.isFinite(Number(next.gpu.utilPct));
-            if (!hasGpu && prevGpu && Number.isFinite(Number(prevGpu.utilPct))) {
+            const gpuUsable = (gpu) => {
+                if (!gpu || typeof gpu !== 'object') return false;
+                if (gpu.utilPct != null && gpu.utilPct !== '' && Number.isFinite(Number(gpu.utilPct))) {
+                    return true;
+                }
+                const total = Number(gpu.memTotalMiB);
+                return Number.isFinite(total) && total > 0;
+            };
+            const hasGpu = gpuUsable(next.gpu);
+            if (!hasGpu && gpuUsable(prevGpu)) {
                 next.gpu = prevGpu;
                 // IPC text was built without GPU when includeGpu=false or query missed.
                 if (!includeGpu || !String(next.text || '').includes('GPU')) {
@@ -106,13 +114,21 @@
                         const fmt = (n) => (Number.isFinite(n) ? n.toFixed(1) : '—');
                         parts.push(`内存 ${fmt(used)}/${fmt(total)} GB`);
                     }
-                    const util = Number(prevGpu.utilPct);
-                    parts.push(`GPU ${Math.round(util)}%`);
+                    if (prevGpu.utilPct != null && prevGpu.utilPct !== ''
+                        && Number.isFinite(Number(prevGpu.utilPct))) {
+                        parts.push(`GPU ${Math.round(Number(prevGpu.utilPct))}%`);
+                    } else if (String(prevGpu.vendor || '').toLowerCase() === 'amd') {
+                        parts.push('GPU AMD');
+                    } else if (String(prevGpu.vendor || '').toLowerCase() === 'intel') {
+                        parts.push('GPU Intel');
+                    }
                     const memTotal = Number(prevGpu.memTotalMiB);
                     if (Number.isFinite(memTotal) && memTotal > 0) {
-                        const usedG = Number(prevGpu.memUsedMiB) / 1024;
+                        const usedOk = Number.isFinite(Number(prevGpu.memUsedMiB));
+                        const usedG = usedOk ? Number(prevGpu.memUsedMiB) / 1024 : null;
                         const totalG = memTotal / 1024;
-                        parts.push(`显存 ${usedG.toFixed(1)}/${totalG.toFixed(1)} GB`);
+                        const usedLabel = usedOk && usedG != null ? usedG.toFixed(1) : '—';
+                        parts.push(`显存 ${usedLabel}/${totalG.toFixed(1)} GB`);
                     }
                     next.text = parts.join(' · ');
                 }
@@ -154,8 +170,9 @@
         }
 
         function shouldIncludeGpu() {
-            if (!state.running) return true;
-            // While a job runs, nvidia-smi can stall under GPU load — sample every other poll.
+            // Alternate GPU samples idle + running: nvidia-smi is expensive;
+            // mergeResourceSample keeps last GPU chips on skip polls.
+            // Idle interval 15s → GPU ≈ every 30s; running 5s → ≈ every 10s.
             state._resourceGpuTick = (Number(state._resourceGpuTick) || 0) + 1;
             return state._resourceGpuTick % 2 === 1;
         }

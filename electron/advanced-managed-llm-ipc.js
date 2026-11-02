@@ -94,6 +94,10 @@ function registerAdvancedManagedLlmIpc(register, deps = {}) {
 
     register('transub-advanced-managed-llm-cancel-pull', async () => managedLlm.cancelManagedPull());
 
+    register('transub-advanced-managed-llm-clear-install-cancel', async () => (
+        managedLlm.clearManagedInstallCancel()
+    ));
+
     register('transub-advanced-managed-llm-lab-add', async (_event, payload = {}) => {
         const patch = asPlainObject(payload);
         const deviceId = getAdvancedDeviceId();

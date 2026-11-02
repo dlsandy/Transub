@@ -25,6 +25,11 @@ describe('settings-options-normalize-core', () => {
         // Transcript retention clamps are currently hard-disabled (always 0).
         assert.strictEqual(n.clampTranscriptKeepLimit('99999'), 0);
         assert.strictEqual(n.clampTranscriptKeepDays('x'), 0);
+        assert.strictEqual(n.clampFilmDemucsAutoSplitMinutes(''), 150);
+        assert.strictEqual(n.clampFilmDemucsAutoSplitMinutes('0'), 0);
+        assert.strictEqual(n.clampFilmDemucsAutoSplitMinutes('999'), 720);
+        assert.strictEqual(n.clampFilmDemucsChunkMinutes('5'), 10);
+        assert.strictEqual(n.clampFilmDemucsChunkMinutes('90'), 90);
     });
 
     it('normalizeTranslateStyleOptions keeps enabled=true', () => {

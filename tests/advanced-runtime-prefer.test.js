@@ -67,7 +67,29 @@ describe('advanced-runtime-prefer', () => {
         });
         assert.strictEqual(hints.preferRocm, true);
         assert.strictEqual(hints.preferCuda, false);
+        assert.strictEqual(hints.preferSycl, false);
         assert.strictEqual(hints.gpuName, 'Radeon RX 7800 XT');
+    });
+
+    it('prefers SYCL when Intel Arc GPU is detected', () => {
+        assert.strictEqual(prefer.shouldPreferSycl({
+            vendor: 'intel',
+            detected: true,
+            gpuName: 'Intel(R) Arc(TM) A770 Graphics',
+        }), true);
+        assert.strictEqual(prefer.shouldPreferSycl({
+            vendor: 'amd',
+            detected: true,
+        }), false);
+        const hints = prefer.applyGpuInfo({
+            vendor: 'intel',
+            detected: true,
+            gpuName: 'Intel Arc B580',
+        });
+        assert.strictEqual(hints.preferSycl, true);
+        assert.strictEqual(hints.preferCuda, false);
+        assert.strictEqual(hints.preferRocm, false);
+        assert.strictEqual(hints.gpuName, 'Intel Arc B580');
     });
 
     it('applyGpuInfo caches preferCuda and cudaVersion', () => {
@@ -81,5 +103,51 @@ describe('advanced-runtime-prefer', () => {
         assert.strictEqual(hints.cudaVersion, '12.7');
         assert.strictEqual(hints.gpuName, 'RTX 4070');
         assert.strictEqual(prefer.getHints().preferCuda, true);
+    });
+
+    it('runtimeIdFromGpuInfo prefers CUDA 13 / ROCm / SYCL over Vulkan', () => {
+        assert.strictEqual(
+            prefer.runtimeIdFromGpuInfo({
+                vendor: 'nvidia',
+                detected: true,
+                cudaVersion: '13.3',
+            }),
+            'win-cuda13-x64',
+        );
+        assert.strictEqual(
+            prefer.runtimeIdFromGpuInfo({
+                vendor: 'amd',
+                detected: true,
+                gpuName: 'RX 7800',
+            }),
+            'win-rocm-x64',
+        );
+        assert.strictEqual(
+            prefer.runtimeIdFromGpuInfo({
+                vendor: 'intel',
+                detected: true,
+                gpuName: 'Intel Arc A750',
+            }),
+            'win-sycl-x64',
+        );
+        assert.strictEqual(
+            prefer.runtimeIdFromGpuInfo({ vendor: 'cpu', detected: false }),
+            '',
+        );
+    });
+
+    it('resolveInstallRuntimeSelection ignores saved Vulkan when CUDA preferred', async () => {
+        const sel = await prefer.resolveInstallRuntimeSelection({
+            runtimeId: 'win-vulkan-x64',
+            gpuInfo: {
+                vendor: 'nvidia',
+                detected: true,
+                gpuName: 'RTX 4070',
+                cudaVersion: '12.8',
+            },
+        });
+        assert.strictEqual(sel.runtimeId, 'win-cuda12-x64');
+        assert.ok(sel.pkg);
+        assert.ok(!/Vulkan/i.test(String(sel.pkg.label || '')));
     });
 });

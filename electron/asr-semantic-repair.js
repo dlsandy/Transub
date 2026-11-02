@@ -43,6 +43,102 @@ function releaseManagedLlmAfterJob(llm, input = {}) {
     try { require('./advanced-llama-server').scheduleIdleStop(); } catch (_) { /* ignore */ }
 }
 
+/**
+ * Apply repair updates with optional Laya accept/revert on substantial / soft-drift edits.
+ */
+async function applyRepairUpdatesWithLayaGate(cues, updates, {
+    allowIndexes,
+    langKey,
+    options = {},
+    signal,
+    onLog,
+} = {}) {
+    const applyOpts = { allowIndexes, langKey, ...options };
+    const split = typeof core.splitRepairUpdatesForLayaGate === 'function'
+        ? core.splitRepairUpdatesForLayaGate(cues, updates, applyOpts)
+        : { direct: updates, gated: [], hardReject: [] };
+
+    let working = cues;
+    let rejected = Number(split.hardReject?.length) || 0;
+    let skippedTrivial = 0;
+    let layaAccepted = 0;
+    let layaReverted = 0;
+
+    if (split.direct?.length) {
+        const applied = core.applyRepairUpdates(working, split.direct, applyOpts);
+        working = applied.cues;
+        rejected += Number(applied.rejected) || 0;
+        skippedTrivial += Number(applied.skippedTrivial) || 0;
+    }
+
+    if (split.gated?.length) {
+        let gatedAccepted = split.gated.map((g) => ({ index: g.index, text: g.text || g.after }));
+        try {
+            const { prepareJevDecideReady, decideChoiceChunks } = require('./jev-decide');
+            const auth = await prepareJevDecideReady(options);
+            if (auth.ok) {
+                const built = core.buildRepairGateJevRequest(split.gated);
+                if (built.items?.length) {
+                    const decided = await decideChoiceChunks({
+                        auth,
+                        items: built.items,
+                        buildRequest: (chunk) => core.buildRepairGateJevRequest(chunk),
+                        partition: (answers, chunk, minConfidence) => (
+                            core.partitionRepairGateJevAnswers(answers, chunk, minConfidence)
+                        ),
+                        signal,
+                        timeoutMs: 30000,
+                    });
+                    const acceptIds = new Set(
+                        (decided.accept || []).map((x) => String(x.id || `r${x.index}`)),
+                    );
+                    const rejectIds = new Set(
+                        (decided.reject || []).map((x) => String(x.id || `r${x.index}`)),
+                    );
+                    // Undecided soft-fail: apply as today (trust LLM) unless softLengthDrift
+                    gatedAccepted = [];
+                    for (const g of split.gated) {
+                        const id = String(g.id || `r${g.index}`);
+                        if (rejectIds.has(id)) {
+                            layaReverted += 1;
+                            rejected += 1;
+                            continue;
+                        }
+                        if (acceptIds.has(id) || !g.softLengthDrift) {
+                            if (acceptIds.has(id)) layaAccepted += 1;
+                            gatedAccepted.push({ index: g.index, text: g.text || g.after });
+                            continue;
+                        }
+                        // soft length-drift without confident Laya accept → keep reject
+                        rejected += 1;
+                        layaReverted += 1;
+                    }
+                    if (layaAccepted || layaReverted) {
+                        onLog?.(
+                            `转录语义校正：Laya 门控采纳 ${layaAccepted} / 回退 ${layaReverted}`,
+                        );
+                    }
+                }
+            }
+        } catch (_) { /* soft-fail → apply gated as-is except softLengthDrift */ }
+
+        if (gatedAccepted.length) {
+            const applied = core.applyRepairUpdates(working, gatedAccepted, applyOpts);
+            working = applied.cues;
+            rejected += Number(applied.rejected) || 0;
+            skippedTrivial += Number(applied.skippedTrivial) || 0;
+        }
+    }
+
+    return {
+        cues: working,
+        rejected,
+        skippedTrivial,
+        layaAccepted,
+        layaReverted,
+    };
+}
+
 async function resolveRepairLlm(doc, input = {}) {
     const { resolveAdvancedLlmConfig } = require('./advanced-llm-resolve');
     const { logAdvancedLlmToEngine } = require('./advanced-llm-log');
@@ -132,9 +228,12 @@ async function runAsrSemanticRepairOnCues(engineOrMsCues, input = {}) {
 
         if (llm.dryRun) {
             const updates = core.mockRepairUpdates(cues, targets);
-            const applied = core.applyRepairUpdates(cues, updates, {
+            const applied = await applyRepairUpdatesWithLayaGate(cues, updates, {
                 allowIndexes: targetIndexes,
                 langKey,
+                options,
+                signal: input.signal,
+                onLog: input.onLog,
             });
             totalRejected += Number(applied.rejected) || 0;
             totalSkippedTrivial += Number(applied.skippedTrivial) || 0;
@@ -248,9 +347,12 @@ async function runAsrSemanticRepairOnCues(engineOrMsCues, input = {}) {
                     snippet: parseFailureSnippets[0] || '',
                 };
             }
-            const applied = core.applyRepairUpdates(cues, allUpdates, {
+            const applied = await applyRepairUpdatesWithLayaGate(cues, allUpdates, {
                 allowIndexes: targetIndexes,
                 langKey,
+                options,
+                signal: input.signal,
+                onLog: input.onLog,
             });
             totalRejected += Number(applied.rejected) || 0;
             totalSkippedTrivial += Number(applied.skippedTrivial) || 0;

@@ -153,6 +153,10 @@ describe('TransubJobSessionControl', () => {
         api.appendLog('hello', 'info');
         assert.strictEqual(children.length, 1);
         assert.ok(String(children[0].textContent).includes('hello'));
+        api.appendLog(undefined, 'err');
+        api.appendLog('undefined', 'err');
+        api.appendLog(null, 'err');
+        assert.strictEqual(children.length, 1);
         delete global.document;
     });
 });
@@ -202,6 +206,52 @@ describe('TransubBilingualTaskUi', () => {
         assert.strictEqual(els.mergeBilingualCheck.disabled, true);
         assert.strictEqual(els.deleteSourcesAfterMergeCheck.checked, false);
         assert.strictEqual(chip, 1);
+    });
+
+    it('目标 chip stays enabled; 原文 sets task=transcribe and language targets set translate', () => {
+        const classes = new Set();
+        const els = {
+            taskSelect: { value: 'translate' },
+            quickTargetLangSelect: { disabled: true, value: 'simplified' },
+            quickTargetLangWrap: {
+                classList: {
+                    toggle(name, on) {
+                        if (on) classes.add(name);
+                        else classes.delete(name);
+                    },
+                    remove(...names) {
+                        names.forEach((n) => classes.delete(n));
+                    },
+                },
+            },
+            chineseSubtitleVariantSelect: { disabled: false, value: 'simplified' },
+        };
+        const readTask = () => els.taskSelect.value;
+        const ui = createBilingualTaskUi({
+            els,
+            readTaskFromForm: readTask,
+            isTranslateLikeTask: (t) => t === 'translate' || t === 'dual',
+            syncBilingualChipUi: () => {},
+            updateModelSelectHint: () => {},
+            applyTranslateModeToForm: () => {},
+            getIsSyncingTranslateMode: () => true,
+            syncFaithfulToneUi: () => {},
+            syncHybridMtUi: () => {},
+            syncAdvancedFeaturesGate: () => {},
+        });
+
+        ui.applyQuickTargetChipValue('source');
+        assert.strictEqual(els.taskSelect.value, 'transcribe');
+        assert.strictEqual(els.quickTargetLangSelect.value, 'source');
+        assert.strictEqual(els.quickTargetLangSelect.disabled, false);
+        assert.strictEqual(els.chineseSubtitleVariantSelect.value, 'simplified');
+        assert.ok(!classes.has('pointer-events-none'));
+
+        ui.applyQuickTargetChipValue('en');
+        assert.strictEqual(els.taskSelect.value, 'translate');
+        assert.strictEqual(els.quickTargetLangSelect.value, 'en');
+        assert.strictEqual(els.chineseSubtitleVariantSelect.value, 'en');
+        assert.strictEqual(els.quickTargetLangSelect.disabled, false);
     });
 });
 

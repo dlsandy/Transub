@@ -71,7 +71,7 @@
                 : true;
             const writeSource = els.outputWriteSourceCheck
                 ? !!els.outputWriteSourceCheck.checked
-                : true;
+                : false;
             if (!writeTarget && !writeSource && els.outputWriteTargetCheck) {
                 els.outputWriteTargetCheck.checked = true;
             }
@@ -244,11 +244,19 @@
             if (els.deviceSelect && options.device) {
                 els.deviceSelect.value = options.device;
             }
-            if (els.taskSelect) {
-                const task = options.task === 'transcribe' || options.task === 'dual'
-                    ? options.task
-                    : 'translate';
-                els.taskSelect.value = task;
+            {
+                const liveTask = (typeof document !== 'undefined'
+                    ? document.getElementById('taskSelect')
+                    : null)
+                    || els.taskSelect
+                    || null;
+                if (liveTask) {
+                    els.taskSelect = liveTask;
+                    const task = options.task === 'transcribe' || options.task === 'dual'
+                        ? options.task
+                        : 'translate';
+                    liveTask.value = task;
+                }
             }
             if (els.overwriteCheck) {
                 els.overwriteCheck.checked = !!options.overwrite;
@@ -257,11 +265,11 @@
                 els.outputWriteTargetCheck.checked = options.outputWriteTarget !== false;
             }
             if (els.outputWriteSourceCheck) {
-                els.outputWriteSourceCheck.checked = options.outputWriteSource !== false;
+                els.outputWriteSourceCheck.checked = options.outputWriteSource === true;
             }
             if (els.targetSubtitleNamingSelect) {
-                const naming = String(options.targetSubtitleNaming || 'lang').trim().toLowerCase();
-                els.targetSubtitleNamingSelect.value = naming === 'media' ? 'media' : 'lang';
+                const naming = String(options.targetSubtitleNaming || 'media').trim().toLowerCase();
+                els.targetSubtitleNamingSelect.value = naming === 'lang' ? 'lang' : 'media';
             }
             syncOutputTrackNamingUi();
             if (els.mergeBilingualCheck) {
@@ -327,6 +335,35 @@
             if (els.smartTranslateVerifyCheck) {
                 els.smartTranslateVerifyCheck.checked = options.smartTranslateFaithfulVerify !== false;
             }
+            if (els.jevDecisionModeSelect) {
+                const mode = settingsNormApi?.normalizeJevDecisionMode
+                    ? settingsNormApi.normalizeJevDecisionMode(options.jevDecisionMode)
+                    : (String(options.jevDecisionMode || 'auto').toLowerCase() === 'off' ? 'off' : 'auto');
+                els.jevDecisionModeSelect.value = mode;
+            }
+            if (els.jevDecisionEndpointInput) {
+                els.jevDecisionEndpointInput.value = String(
+                    options.jevDecisionEndpoint || options.jevEndpoint || 'local',
+                ).trim() || 'local';
+            }
+            if (els.jevDecisionEndpointResolved) {
+                try {
+                    const jevApi = (typeof globalThis !== 'undefined' && globalThis.TransubJevDecision) || null;
+                    const pref = String(els.jevDecisionEndpointInput?.value || 'local').trim() || 'local';
+                    const resolved = jevApi?.formatResolvedEndpointLabel
+                        ? jevApi.formatResolvedEndpointLabel(pref)
+                        : pref;
+                    els.jevDecisionEndpointResolved.textContent = `解析：${resolved}`;
+                } catch {
+                    els.jevDecisionEndpointResolved.textContent = '';
+                }
+            }
+            if (els.jevDecisionMinConfidenceInput) {
+                const conf = settingsNormApi?.clampJevMinConfidence
+                    ? settingsNormApi.clampJevMinConfidence(options.jevDecisionMinConfidence)
+                    : 0.65;
+                els.jevDecisionMinConfidenceInput.value = String(conf);
+            }
             if (els.smartTranslateAddressCheck) {
                 els.smartTranslateAddressCheck.checked = options.smartTranslateAddressConsistency !== false;
             }
@@ -343,6 +380,30 @@
                         : (String(options.asrSecondOpinion || '').toLowerCase() === 'on' ? 'on' : 'auto'));
                 els.asrSecondOpinionSelect.value = mode;
             }
+            if (els.hyMtWindowLinesSelect) {
+                const mode = settingsNormApi.normalizeHyMtWindowLines
+                    ? settingsNormApi.normalizeHyMtWindowLines(options.hyMtWindowLines)
+                    : (String(options.hyMtWindowLines || 'auto').trim() || 'auto');
+                els.hyMtWindowLinesSelect.value = mode;
+            }
+            if (els.sensevoiceRichTagsSelect) {
+                const mode = settingsNormApi.normalizeSensevoiceRichTags
+                    ? settingsNormApi.normalizeSensevoiceRichTags(options.sensevoiceRichTags)
+                    : 'sidecar';
+                els.sensevoiceRichTagsSelect.value = mode;
+            }
+            if (els.sensevoiceEmotionMtStyleSelect) {
+                const mode = settingsNormApi.normalizeSensevoiceEmotionMtStyle
+                    ? settingsNormApi.normalizeSensevoiceEmotionMtStyle(options.sensevoiceEmotionMtStyle)
+                    : 'off';
+                els.sensevoiceEmotionMtStyleSelect.value = mode;
+            }
+            if (els.glossaryPromptInjectModeSelect) {
+                const mode = settingsNormApi.normalizeGlossaryPromptInjectMode
+                    ? settingsNormApi.normalizeGlossaryPromptInjectMode(options.glossaryPromptInjectMode)
+                    : 'hitOnly';
+                els.glossaryPromptInjectModeSelect.value = mode;
+            }
             if (els.qualityPipelineModeSelect) {
                 const mode = settingsNormApi.normalizeQualityPipelineMode
                     ? settingsNormApi.normalizeQualityPipelineMode(options.qualityPipelineMode)
@@ -355,9 +416,6 @@
                     ? settingsNormApi.clampPostQcLoopMaxPasses(options.postQcLoopMaxPasses)
                     : Math.max(0, Math.min(2, Math.round(Number(options.postQcLoopMaxPasses) || 1)));
                 els.postQcLoopMaxPassesInput.value = String(n);
-            }
-            if (els.asrBadPoolDraftsCheck) {
-                els.asrBadPoolDraftsCheck.checked = options.asrBadPoolDrafts !== false;
             }
             if (els.asrSemanticRepairSelect) {
                 const mode = settingsNormApi.normalizeAsrSemanticRepair
@@ -381,11 +439,32 @@
                     }
                 } catch (_) { /* ignore */ }
             }
-            if (els.filmAudioEnhanceCheck) {
+            // filmAudioEnhance / enhanceForVadOnly are settings-only — do not clear
+            // when a patch omits them (scene presets strip these keys).
+            const hasFilmEnhance = Object.prototype.hasOwnProperty.call(options, 'filmAudioEnhance');
+            const hasEnhanceVadOnly = Object.prototype.hasOwnProperty.call(options, 'enhanceForVadOnly');
+            if (els.filmAudioEnhanceCheck && hasFilmEnhance) {
                 els.filmAudioEnhanceCheck.checked = !!options.filmAudioEnhance;
             }
+            const filmEnhanceOn = hasFilmEnhance
+                ? !!options.filmAudioEnhance
+                : !!els.filmAudioEnhanceCheck?.checked;
+            if (els.enhanceForVadOnlyCheck) {
+                if (hasFilmEnhance || hasEnhanceVadOnly) {
+                    els.enhanceForVadOnlyCheck.checked = filmEnhanceOn
+                        && (hasEnhanceVadOnly
+                            ? !!options.enhanceForVadOnly
+                            : !!els.enhanceForVadOnlyCheck.checked);
+                }
+                els.enhanceForVadOnlyCheck.disabled = !filmEnhanceOn;
+            }
             if (els.filmVadPresetCheck) {
-                els.filmVadPresetCheck.checked = !!options.filmVadPreset && !options.filmAudioEnhance;
+                const hasFilmVad = Object.prototype.hasOwnProperty.call(options, 'filmVadPreset');
+                if (hasFilmVad) {
+                    els.filmVadPresetCheck.checked = !!options.filmVadPreset && !filmEnhanceOn;
+                } else if (hasFilmEnhance && filmEnhanceOn) {
+                    els.filmVadPresetCheck.checked = false;
+                }
             }
             const setOptNum = (el, value) => {
                 if (!el) return;
@@ -395,6 +474,18 @@
             setOptNum(els.filmVadMinSpeechInput, options.filmVadMinSpeechDurationMs);
             setOptNum(els.filmVadMinSilenceInput, options.filmVadMinSilenceDurationMs);
             setOptNum(els.filmHallucinationSilenceInput, options.filmHallucinationSilenceThreshold);
+            if (els.filmDemucsAutoSplitMinutesInput) {
+                const n = Number(options.filmDemucsAutoSplitMinutes);
+                els.filmDemucsAutoSplitMinutesInput.value = String(
+                    Number.isFinite(n) ? Math.max(0, Math.min(720, Math.round(n))) : 120,
+                );
+            }
+            if (els.filmDemucsChunkMinutesInput) {
+                const n = Number(options.filmDemucsChunkMinutes);
+                els.filmDemucsChunkMinutesInput.value = String(
+                    Number.isFinite(n) ? Math.max(10, Math.min(240, Math.round(n))) : 60,
+                );
+            }
             if (els.qcSmartLlmSplitCheck) {
                 els.qcSmartLlmSplitCheck.checked = options.qcSmartLlmSplit !== false;
             }
@@ -426,10 +517,11 @@
             if (els.autoCpuOnGpuBusyCheck) {
                 els.autoCpuOnGpuBusyCheck.checked = !!options.autoCpuOnGpuBusy;
             }
+            const tgtLangApi = (typeof window !== 'undefined' ? window.TransubSubtitleTargetLang : null)
+                || (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleTargetLang : null);
             if (els.chineseSubtitleVariantSelect) {
-                const tgtApi = window.TransubSubtitleTargetLang;
-                const formFromTarget = options.subtitleTargetLang && tgtApi?.formValueFromTargetLang
-                    ? tgtApi.formValueFromTargetLang(options.subtitleTargetLang)
+                const formFromTarget = options.subtitleTargetLang && tgtLangApi?.formValueFromTargetLang
+                    ? tgtLangApi.formValueFromTargetLang(options.subtitleTargetLang)
                     : '';
                 const cv = String(formFromTarget || options.chineseSubtitleVariant || 'simplified');
                 const allowed = new Set([
@@ -438,7 +530,69 @@
                 ]);
                 const next = allowed.has(cv) ? cv : 'simplified';
                 els.chineseSubtitleVariantSelect.value = next;
-                if (els.quickTargetLangSelect) els.quickTargetLangSelect.value = toQuickTargetLang(next);
+            }
+            if (els.quickTargetLangSelect) {
+                const task = options.task === 'transcribe' || options.task === 'dual'
+                    ? options.task
+                    : 'translate';
+                const srcLang = String(options.language || '').trim();
+                const cv = toQuickTargetLang(
+                    els.chineseSubtitleVariantSelect?.value
+                    || options.chineseSubtitleVariant
+                    || 'simplified',
+                );
+                const tgtApi = tgtLangApi;
+                const chipNorm = settingsNormApi.normalizeSubtitleTargetChipValue
+                    ? settingsNormApi.normalizeSubtitleTargetChipValue(
+                        options.subtitleTargetChip || '',
+                    )
+                    : String(options.subtitleTargetChip || '').trim();
+                const zhChip = new Set([
+                    'simplified', 'traditional', 'traditional-tw', 'traditional-hk',
+                ]);
+                // Prefer persisted chip. Legacy (no subtitleTargetChip): transcribe→原文.
+                // Yue + 简/繁/外文 + stale transcribe → keep chip and heal task to translate.
+                let nextChip = 'source';
+                let healYueTranslate = false;
+                const yueSrc = typeof tgtApi?.isYueSourceLanguage === 'function'
+                    ? !!tgtApi.isYueSourceLanguage(srcLang)
+                    : (() => {
+                        const s = String(srcLang || '').trim().toLowerCase();
+                        return s === 'yue' || s === 'zh-yue' || s === 'cantonese';
+                    })();
+                if (task === 'transcribe') {
+                    if (chipNorm === 'source' || !chipNorm) {
+                        nextChip = 'source';
+                    } else if (
+                        yueSrc
+                        && (zhChip.has(chipNorm) || chipNorm === 'en' || chipNorm === 'ja' || chipNorm === 'ko')
+                    ) {
+                        nextChip = chipNorm;
+                        healYueTranslate = true;
+                    } else if (zhChip.has(chipNorm) || chipNorm === 'en' || chipNorm === 'ja' || chipNorm === 'ko') {
+                        // Stale chip with transcribe — show 原文 (task wins).
+                        nextChip = 'source';
+                    } else {
+                        nextChip = 'source';
+                    }
+                } else if (chipNorm && chipNorm !== 'source') {
+                    nextChip = chipNorm;
+                } else {
+                    nextChip = cv;
+                }
+                els.quickTargetLangSelect.value = nextChip;
+                if (healYueTranslate) {
+                    const liveTask = (typeof document !== 'undefined'
+                        ? document.getElementById('taskSelect')
+                        : null)
+                        || els.taskSelect
+                        || null;
+                    if (liveTask) {
+                        const cur = String(liveTask.value || '').trim();
+                        liveTask.value = cur === 'dual' ? 'dual' : 'translate';
+                        els.taskSelect = liveTask;
+                    }
+                }
             }
             if (options.lastMtByTarget && mtRouteApi().normalizeLastMtByTarget) {
                 getTranslateModeUi()?.setLastMtByTargetState?.(
@@ -450,7 +604,7 @@
                 els.glossaryMtCheck.checked = !!options.glossaryMtEnabled;
             }
             if (els.glossaryPromptCheck) {
-                els.glossaryPromptCheck.checked = options.glossaryPromptEnabled !== false;
+                els.glossaryPromptCheck.checked = !!options.glossaryPromptEnabled;
             }
             if (els.outputModeSelect) {
                 els.outputModeSelect.value = options.outputMode === 'custom' || options.outputDir ? 'custom' : 'same';
@@ -473,13 +627,31 @@
             if (els.maxBatchSizeInput && options.maxBatchSize != null) {
                 els.maxBatchSizeInput.value = String(options.maxBatchSize);
             }
-            if (els.languageSelect && options.language) {
+            if (options.language) {
                 const lang = String(options.language).trim().toLowerCase();
                 const supported = ['auto', 'ja', 'zh', 'yue', 'ko', 'en'];
                 // Ignore exotic tags (nn/de/…) so the form never sticks on garbage ISO codes.
-                if (supported.includes(lang)
-                    && [...els.languageSelect.options].some((o) => o.value === lang)) {
-                    els.languageSelect.value = lang;
+                if (supported.includes(lang)) {
+                    const liveLang = (typeof document !== 'undefined'
+                        ? document.getElementById('languageSelect')
+                        : null)
+                        || els.languageSelect
+                        || null;
+                    if (liveLang) {
+                        els.languageSelect = liveLang;
+                        if ([...liveLang.options].some((o) => o.value === lang)) {
+                            liveLang.value = lang;
+                        }
+                    }
+                    const quickLang = (typeof document !== 'undefined'
+                        ? document.getElementById('quickLanguageSelect')
+                        : null)
+                        || els.quickLanguageSelect
+                        || null;
+                    if (quickLang && [...quickLang.options].some((o) => o.value === lang)) {
+                        els.quickLanguageSelect = quickLang;
+                        quickLang.value = lang;
+                    }
                 }
             }
             if (els.beamSizeInput && options.beamSize != null) {
@@ -510,6 +682,33 @@
                     if (Number.isFinite(sec) && sec > 0) maxSeg = Math.round(sec * 1000);
                 }
                 if (maxSeg != null) els.vadMaxSingleSegmentInput.value = String(maxSeg);
+            }
+            {
+                const alignCheck = (typeof document !== 'undefined'
+                    ? document.getElementById('timingAlignCheck')
+                    : null)
+                    || els.timingAlignCheck
+                    || null;
+                if (alignCheck) {
+                    els.timingAlignCheck = alignCheck;
+                    if (Object.prototype.hasOwnProperty.call(options, 'timingAlign')) {
+                        alignCheck.checked = options.timingAlign !== false;
+                    }
+                }
+                const alignModelSel = (typeof document !== 'undefined'
+                    ? document.getElementById('timingAlignModelSelect')
+                    : null)
+                    || els.timingAlignModelSelect
+                    || null;
+                if (alignModelSel && options.timingAlignModel != null) {
+                    els.timingAlignModelSelect = alignModelSel;
+                    const alignModel = settingsNormApi.normalizeTimingAlignModel
+                        ? settingsNormApi.normalizeTimingAlignModel(options.timingAlignModel)
+                        : String(options.timingAlignModel || 'ten').trim();
+                    ensureSelectValue(alignModelSel, alignModel, {
+                        label: alignModel,
+                    });
+                }
             }
             if (els.hallucinationSilenceInput) {
                 const hallu = options.hallucinationSilenceThreshold;
@@ -761,7 +960,7 @@
                     outputWriteSource: els.outputWriteSourceCheck
                         ? !!els.outputWriteSourceCheck.checked
                         : true,
-                    targetSubtitleNaming: els.targetSubtitleNamingSelect?.value || 'lang',
+                    targetSubtitleNaming: els.targetSubtitleNamingSelect?.value || 'media',
                     mergeBilingualSubtitles: !!els.mergeBilingualCheck?.checked,
                     insertSoftwareCredit: els.insertSoftwareCreditCheck
                         ? !!els.insertSoftwareCreditCheck.checked
@@ -787,20 +986,44 @@
                         ? !!els.smartTranslateAddressCheck.checked
                         : true,
                     smartTranslatePolishSampleLimitRaw: els.smartTranslatePolishLimitInput?.value,
+                    jevDecisionMode: els.jevDecisionModeSelect?.value || 'auto',
+                    jevDecisionEndpoint: els.jevDecisionEndpointInput?.value || 'local',
+                    jevDecisionMinConfidenceRaw: els.jevDecisionMinConfidenceInput?.value,
                     asrSecondOpinion: els.asrSecondOpinionSelect?.value || 'auto',
+                    hyMtWindowLines: els.hyMtWindowLinesSelect?.value || 'auto',
+                    sensevoiceRichTags: els.sensevoiceRichTagsSelect?.value || 'sidecar',
+                    sensevoiceEmotionMtStyle: els.sensevoiceEmotionMtStyleSelect?.value || 'off',
+                    sensevoiceSdhExport: els.sensevoiceRichTagsSelect?.value === 'sdh',
+                    glossaryPromptInjectMode: els.glossaryPromptInjectModeSelect?.value || 'hitOnly',
+                    glossaryAlwaysCharacterMax: 8,
+                    glossaryConditionalPostReplace: true,
                     qualityPipelineMode: els.qualityPipelineModeSelect?.value || 'auto',
                     postQcLoopMaxPassesRaw: els.postQcLoopMaxPassesInput?.value,
-                    asrBadPoolDrafts: els.asrBadPoolDraftsCheck ? !!els.asrBadPoolDraftsCheck.checked : true,
                     asrSemanticRepair: els.asrSemanticRepairSelect?.value || 'auto',
                     filmBriefSampleMode: document.getElementById('reconstructBriefSampleModeSelect')?.value
                         || els.reconstructBriefSampleModeSelect?.value,
                     advancedEntitled: getAdvancedEntitled(),
-                    filmAudioEnhance: !!els.filmAudioEnhanceCheck?.checked,
+                    filmAudioEnhance: (() => {
+                        if (els.filmAudioEnhanceCheck) {
+                            return !!els.filmAudioEnhanceCheck.checked;
+                        }
+                        return !!getSavedOptionsSnapshot()?.filmAudioEnhance;
+                    })(),
+                    enhanceForVadOnly: (() => {
+                        if (els.filmAudioEnhanceCheck && els.enhanceForVadOnlyCheck) {
+                            return !!els.filmAudioEnhanceCheck.checked
+                                && !!els.enhanceForVadOnlyCheck.checked;
+                        }
+                        const snap = getSavedOptionsSnapshot();
+                        return !!snap?.filmAudioEnhance && !!snap?.enhanceForVadOnly;
+                    })(),
                     filmVadPreset: !!els.filmVadPresetCheck?.checked,
                     filmVadThresholdRaw: els.filmVadThresholdInput?.value,
                     filmVadMinSpeechDurationMsRaw: els.filmVadMinSpeechInput?.value,
                     filmVadMinSilenceDurationMsRaw: els.filmVadMinSilenceInput?.value,
                     filmHallucinationSilenceThresholdRaw: els.filmHallucinationSilenceInput?.value,
+                    filmDemucsAutoSplitMinutesRaw: els.filmDemucsAutoSplitMinutesInput?.value,
+                    filmDemucsChunkMinutesRaw: els.filmDemucsChunkMinutesInput?.value,
                     qcSmartLlmSplit: els.qcSmartLlmSplitCheck ? !!els.qcSmartLlmSplitCheck.checked : true,
                     qcSmartRetranscribe: els.qcSmartRetranscribeCheck
                         ? !!els.qcSmartRetranscribeCheck.checked
@@ -828,16 +1051,22 @@
                     })(),
                     subtitleTargetForm: settingsNormApi.normalizeSubtitleTargetFormValue
                         ? settingsNormApi.normalizeSubtitleTargetFormValue(
-                            els.chineseSubtitleVariantSelect?.value
-                            || els.quickTargetLangSelect?.value
-                            || 'simplified',
+                            els.chineseSubtitleVariantSelect?.value || 'simplified',
                         )
                         : String(els.chineseSubtitleVariantSelect?.value || 'simplified'),
+                    subtitleTargetChip: (() => {
+                        const chip = els.quickTargetLangSelect?.value
+                            || els.chineseSubtitleVariantSelect?.value
+                            || 'simplified';
+                        if (settingsNormApi.normalizeSubtitleTargetChipValue) {
+                            return settingsNormApi.normalizeSubtitleTargetChipValue(chip) || 'source';
+                        }
+                        const s = String(chip || '').trim();
+                        return (s === 'source' || s === 'original') ? 'source' : s || 'source';
+                    })(),
                     subtitleTargetLang: settingsNormApi.normalizeSubtitleTargetLang
                         ? settingsNormApi.normalizeSubtitleTargetLang(
-                            els.chineseSubtitleVariantSelect?.value
-                            || els.quickTargetLangSelect?.value
-                            || 'simplified',
+                            els.chineseSubtitleVariantSelect?.value || 'simplified',
                             els.chineseSubtitleVariantSelect?.value || 'simplified',
                         )
                         : 'zh-Hans',
@@ -849,10 +1078,32 @@
                     glossaryMtEnabled: els.glossaryMtCheck
                         ? !!els.glossaryMtCheck.checked
                         : !!els.quickGlossaryMtCheck?.checked,
-                    glossaryPromptEnabled: els.glossaryPromptCheck ? !!els.glossaryPromptCheck.checked : true,
+                    glossaryPromptEnabled: els.glossaryPromptCheck ? !!els.glossaryPromptCheck.checked : false,
                     logLevel: els.logLevelSelect?.value || 'DEBUG',
                     maxBatchSize: Number(els.maxBatchSizeInput?.value) || 8,
-                    language: els.languageSelect?.value || 'auto',
+                    language: (() => {
+                        // Visible 片源 chip wins over hidden settings #languageSelect.
+                        const liveQuick = (typeof document !== 'undefined'
+                            ? document.getElementById('quickLanguageSelect')
+                            : null)
+                            || els.quickLanguageSelect
+                            || null;
+                        const liveLang = (typeof document !== 'undefined'
+                            ? document.getElementById('languageSelect')
+                            : null)
+                            || els.languageSelect
+                            || null;
+                        if (liveQuick) els.quickLanguageSelect = liveQuick;
+                        if (liveLang) els.languageSelect = liveLang;
+                        const fromForm = String(
+                            liveQuick?.value
+                            || liveLang?.value
+                            || '',
+                        ).trim();
+                        if (fromForm) return fromForm;
+                        const snap = getSavedOptionsSnapshot();
+                        return String(snap?.language || 'auto').trim() || 'auto';
+                    })(),
                     beamSize: Number(els.beamSizeInput?.value) || 5,
                     vadEnabled: els.vadEnabledCheck ? !!els.vadEnabledCheck.checked : true,
                     vadSensitive: !!els.vadSensitiveCheck?.checked,
@@ -862,6 +1113,42 @@
                     vadSpeechPadMs: els.vadSpeechPadInput?.value,
                     vadMaxSingleSegmentMsRaw: els.vadMaxSingleSegmentInput?.value,
                     vadAggressive: !!els.vadAggressiveCheck?.checked,
+                    timingAlign: (() => {
+                        const el = (typeof document !== 'undefined'
+                            ? document.getElementById('timingAlignCheck')
+                            : null)
+                            || els.timingAlignCheck
+                            || null;
+                        if (el) {
+                            els.timingAlignCheck = el;
+                            return !!el.checked;
+                        }
+                        const snap = getSavedOptionsSnapshot();
+                        return snap?.timingAlign !== false;
+                    })(),
+                    timingAlignModel: (() => {
+                        const el = (typeof document !== 'undefined'
+                            ? document.getElementById('timingAlignModelSelect')
+                            : null)
+                            || els.timingAlignModelSelect
+                            || null;
+                        if (el) {
+                            els.timingAlignModelSelect = el;
+                            const v = String(el.value || '').trim();
+                            if (v) return v;
+                        }
+                        const snap = getSavedOptionsSnapshot();
+                        const fromSnap = String(snap?.timingAlignModel || '').trim();
+                        return fromSnap || 'ten';
+                    })(),
+                    // No dedicated checkbox — keep from snapshot / song preset id.
+                    singingKaraoke: (() => {
+                        const snap = getSavedOptionsSnapshot();
+                        if (snap && Object.prototype.hasOwnProperty.call(snap, 'singingKaraoke')) {
+                            return !!snap.singingKaraoke;
+                        }
+                        return String(getActiveParamsPresetId?.() || '').trim() === 'zh-yue-qwen3-song';
+                    })(),
                     audioLightDenoise: !!els.audioLightDenoiseCheck?.checked,
                     perfProfile: els.perfProfileSelect?.value || 'quality',
                     qwenAsrBatchMode: els.qwenAsrBatchModeSelect?.value || 'auto',

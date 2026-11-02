@@ -144,7 +144,7 @@
     ]);
 
     /** Runtime-bundled; never prompt a Hub download when applying a preset. */
-    const BUNDLED_ALWAYS_READY_MODEL_IDS = Object.freeze(['silero-vad']);
+    const BUNDLED_ALWAYS_READY_MODEL_IDS = Object.freeze(['silero-vad', 'ten-vad']);
 
     function isBundledAlwaysReadyModelId(id) {
         return BUNDLED_ALWAYS_READY_MODEL_IDS.includes(String(id || '').trim());
@@ -159,6 +159,19 @@
             if (!id || seen.has(id) || isBundledAlwaysReadyModelId(id)) continue;
             seen.add(id);
             out.push(id);
+        }
+        // ForcedAligner is selected via timingAlignModel (not engineAsrModel).
+        const alignRaw = String(options?.timingAlignModel || '').trim().toLowerCase().replace(/_/g, '-');
+        if (
+            alignRaw === 'qwen3-forced-aligner-0.6b'
+            || alignRaw.startsWith('qwen3-forced')
+            || (alignRaw.includes('align') && alignRaw.includes('force'))
+        ) {
+            const alignId = 'qwen3-forced-aligner-0.6b';
+            if (!seen.has(alignId) && !isBundledAlwaysReadyModelId(alignId)) {
+                seen.add(alignId);
+                out.push(alignId);
+            }
         }
         return out;
     }

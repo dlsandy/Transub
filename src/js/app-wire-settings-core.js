@@ -297,6 +297,9 @@
         if (typeof runtimeApi.createRuntimeOptions === 'function') {
             const runtime = runtimeApi.createRuntimeOptions({
                 buildSavedOptionsFromForm: (...a) => h.buildSavedOptionsFromForm(...a),
+                getSavedOptionsSnapshot: () => (typeof h.getSavedOptionsSnapshot === 'function'
+                    ? h.getSavedOptionsSnapshot()
+                    : h.savedOptionsSnapshot),
                 getPostTaskOptionsFromUi: late(h, 'getPostTaskOptionsFromUi'),
                 readActiveEngineMtModelFromForm: late(h, 'readActiveEngineMtModelFromForm'),
                 readTranslateModeFromForm: late(h, 'readTranslateModeFromForm'),

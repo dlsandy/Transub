@@ -395,7 +395,8 @@
 
         function bindActionsOnce() {
             const modal = modalEl();
-            if (!modal || actionsBound) return;
+            const autoBtn = $('envFixStartAutoBtn');
+            if (!modal || !autoBtn || actionsBound) return;
             actionsBound = true;
             drop.bindOnce();
             $('envFixStartCancelBtn')?.addEventListener('click', () => finish({ action: 'cancel' }));

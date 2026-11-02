@@ -14,6 +14,7 @@ const FRAGMENTS = [
         roots: [
             'editorFindReplaceModal',
             'editorGlossaryModal',
+            'editorGendictConfirmModal',
             'editorAnilistImportModal',
             'editorAssStylesModal',
             'editorBreakWordsModal',

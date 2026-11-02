@@ -4,6 +4,9 @@ const {
     formatGiBFromBytes,
     formatGiBFromMiB,
     parseNvidiaCsvLine,
+    parseAdapterRamBytes,
+    resolveAmdVramBytes,
+    ADAPTER_RAM_UINT32_CAP_BYTES,
     _resetSystemResourcesStateForTests,
 } = require('../electron/system-resources');
 const { mergeTransWithAiOptions } = require('../electron/transwithai-options');
@@ -54,6 +57,21 @@ describe('system-resources', () => {
         assert.ok(text.includes('显存'));
     });
 
+    it('formats amd total-vram without used', () => {
+        const text = formatResourceUsageText({
+            cpuPct: 12,
+            memory: { usedBytes: 8 * 1024 ** 3, totalBytes: 32 * 1024 ** 3 },
+            gpu: {
+                vendor: 'amd',
+                utilPct: null,
+                memUsedMiB: null,
+                memTotalMiB: 16384,
+            },
+        });
+        assert.ok(text.includes('GPU AMD'));
+        assert.ok(text.includes('显存 —/16.0 GB'));
+    });
+
     it('omits gpu when absent', () => {
         const text = formatResourceUsageText({
             cpuPct: 10,
@@ -62,6 +80,14 @@ describe('system-resources', () => {
         });
         assert.ok(text.includes('CPU 10%'));
         assert.ok(!text.includes('GPU'));
+    });
+
+    it('resolveAmdVramBytes prefers registry over capped AdapterRAM', () => {
+        const capped = ADAPTER_RAM_UINT32_CAP_BYTES; // ~4 GiB uint32 max
+        const real = 16 * 1024 * 1024 * 1024;
+        assert.strictEqual(resolveAmdVramBytes(real, capped), real);
+        assert.strictEqual(resolveAmdVramBytes(null, capped), capped);
+        assert.strictEqual(parseAdapterRamBytes(-1048576), 4293918720);
     });
 });
 

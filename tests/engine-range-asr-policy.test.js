@@ -48,6 +48,25 @@ describe('engine-range-asr-policy', () => {
         const tiny = policy.buildRangeAsrCandidates('whisper-tiny');
         assert.strictEqual(tiny[0], 'whisper-tiny');
         assert.ok(tiny.includes('sensevoice-small'));
+        // Short-range: demote whisper-large* — lead with SenseVoice, not turbo.
+        assert.deepStrictEqual(
+            policy.buildRangeRetranscribeAsrCandidates('whisper-large-v3-turbo'),
+            ['sensevoice-small', 'whisper-tiny', 'whisper-large-v3-turbo'],
+        );
+        assert.deepStrictEqual(
+            policy.buildRangeRetranscribeAsrCandidates('whisper-large-v3'),
+            ['sensevoice-small', 'whisper-tiny', 'whisper-large-v3'],
+        );
+        assert.strictEqual(
+            policy.classifyRangeAsrFamily('whisper-large-v3-turbo'),
+            'ct2_whisper',
+        );
+        assert.strictEqual(policy.classifyRangeAsrFamily('sensevoice-small'), 'sensevoice');
+        assert.strictEqual(policy.classifyRangeAsrFamily('qwen3-asr-0.6b'), 'torch_qwen');
+        assert.notStrictEqual(
+            policy.classifyRangeAsrFamily('whisper-large-v3-turbo'),
+            policy.classifyRangeAsrFamily('sensevoice-small'),
+        );
         const ja = policy.buildBatchAsrCandidates('whisper-ja-1.5b');
         assert.ok(ja.indexOf('reazonspeech-k2') < ja.indexOf('sensevoice-small'));
         const cohere = policy.buildBatchAsrCandidates('cohere-transcribe-03-2026');
@@ -58,6 +77,20 @@ describe('engine-range-asr-policy', () => {
             'whisper-tiny',
             'whisper-large-v3-turbo',
         ]);
+        const fireredAsr2 = policy.buildBatchAsrCandidates('firered-asr2-aed');
+        assert.deepStrictEqual(fireredAsr2, [
+            'firered-asr2-aed',
+            'sensevoice-small',
+            'cohere-transcribe-03-2026',
+            'whisper-tiny',
+            'whisper-large-v3-turbo',
+        ]);
+        const fireredRange = policy.buildRangeRetranscribeAsrCandidates('firered-asr2-aed');
+        assert.deepStrictEqual(fireredRange, [
+            'firered-asr2-aed',
+            'sensevoice-small',
+            'whisper-tiny',
+        ]);
         const anime = policy.buildBatchAsrCandidates('anime-whisper');
         assert.ok(anime.includes('qwen3-asr-1.7b-ja-anime-galgame'));
         assert.ok(anime.indexOf('qwen3-asr-1.7b-ja-anime-galgame') < anime.indexOf('sensevoice-small'));
@@ -65,7 +98,10 @@ describe('engine-range-asr-policy', () => {
         assert.ok(qwenBatch.includes('qwen3-asr-1.7b-ja-anime-galgame'));
         assert.ok(qwenBatch.includes('qwen3-asr-1.7b'));
         assert.ok(!qwenBatch.includes('qwen3-asr-1.7b-ja'));
+        assert.ok(!qwenBatch.includes('qwen3-asr-1.7b-ja-anime-lora-v3'));
         assert.ok(qwenBatch.indexOf('whisper-ja-1.5b') < qwenBatch.indexOf('sensevoice-small'));
+        assert.ok(qwenBatch.includes('whisper-large-v2'));
+        assert.ok(qwenBatch.indexOf('whisper-large-v2') < qwenBatch.indexOf('sensevoice-small'));
         const qwenRange = policy.buildRangeRetranscribeAsrCandidates('qwen3-asr-0.6b');
         assert.deepStrictEqual(qwenRange, [
             'qwen3-asr-0.6b',

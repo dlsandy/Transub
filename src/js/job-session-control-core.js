@@ -115,8 +115,10 @@
 
         function appendLog(line, tone) {
             if (!els.logHost) return;
+            const textLine = line == null ? '' : String(line).trim();
+            if (!textLine || textLine === 'undefined' || textLine === 'null') return;
             const ts = new Date().toLocaleTimeString();
-            const text = `[${ts}] ${line}`;
+            const text = `[${ts}] ${textLine}`;
             const renderer = getAppLogRenderer();
             if (renderer) {
                 renderer.append(text, { tone });
@@ -147,7 +149,7 @@
             }
             updateFactoryStatusLogFromHost();
             if (!getIsStandaloneSettings() && (tone === 'err' || tone === 'warn')) {
-                showToast(line, tone);
+                showToast(textLine, tone);
             }
         }
 

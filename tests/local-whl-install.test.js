@@ -169,6 +169,92 @@ describe('local-whl-install', () => {
         }
     });
 
+    it('torch-rocm manual command defaults to device-all and pins torchaudio without device extra', () => {
+        const src = fs.readFileSync(
+            path.join(__dirname, '..', 'electron', 'engine-download-info.js'),
+            'utf8',
+        );
+        assert.ok(src.includes("kind === 'torch-rocm'"), 'missing torch-rocm kind');
+        assert.ok(
+            /torchaudio==2\.11\.0\+rocm10\.1\.0/.test(src),
+            'torchaudio pin must match AMD 2.12 pair (2.11.0+rocm10.1.0, not 2.11.0.2+rocm10.0.0)',
+        );
+        assert.ok(
+            /amd-torch-device-\$\{gfx\}/.test(src),
+            'manual ROCm command must include amd-torch-device-gfx kernels extra',
+        );
+        assert.ok(
+            !/torchaudio\[\$\{extra\}\]==2\.12\.0\+rocm10/.test(src)
+            && !/torchaudio\[device-/.test(src),
+            'torchaudio must not use device-* extras or bogus 2.12 pin',
+        );
+        assert.ok(
+            /gfxRaw \|\| 'all'|gfxRaw\) \? \(gfxRaw \|\| 'all'\) : 'all'/.test(src)
+            || src.includes(": 'all'"),
+            'unknown gfx should default to all, not gfx1201',
+        );
+        assert.ok(
+            !/gfxRaw\) \? gfxRaw : 'gfx1201'/.test(src),
+            'must not default manual ROCm pip to gfx1201',
+        );
+        assert.ok(
+            /runtimePythonMissing/.test(src),
+            'torch-rocm download-info must expose runtimePythonMissing for manual UI',
+        );
+        assert.ok(
+            /runtimePythonExpected/.test(src),
+            'torch-rocm download-info must expose runtimePythonExpected path',
+        );
+    });
+
+    it('torch-xpu manual command pins +xpu wheels from pytorch.org/whl/xpu', () => {
+        const src = fs.readFileSync(
+            path.join(__dirname, '..', 'electron', 'engine-download-info.js'),
+            'utf8',
+        );
+        assert.ok(src.includes("kind === 'torch-xpu'"), 'missing torch-xpu kind');
+        assert.ok(
+            /download\.pytorch\.org\/whl\/xpu/.test(src),
+            'torch-xpu must use official +xpu index',
+        );
+        assert.ok(
+            /torch==2\.12\.1\+xpu/.test(src),
+            'torch-xpu must pin torch 2.12.1+xpu',
+        );
+        assert.ok(
+            /numpy==2\.4\.6/.test(src),
+            'torch-xpu must pin numpy 2.4.6 for numba',
+        );
+        assert.ok(
+            /runtimePythonMissing/.test(src),
+            'torch-xpu download-info must expose runtimePythonMissing for manual UI',
+        );
+    });
+
+    it('demucs manual info branches Intel to XPU pip (no CUDA whl list)', async () => {
+        const {
+            buildEngineDownloadInfo,
+            resolveDownloadGpuVendor,
+        } = require('../electron/engine-download-info');
+        assert.strictEqual(resolveDownloadGpuVendor({ gpuVendor: 'intel' }), 'intel');
+        assert.strictEqual(resolveDownloadGpuVendor({ gpuName: 'Intel Arc A770' }), 'intel');
+        const stubs = {
+            mergeEngineOptions: (p) => ({ ...(p || {}), engineInstallPath: String(p?.engineInstallPath || '') }),
+            resolveEngineInstallPath: (p) => String(p || ''),
+            ensureEngineRunning: async () => ({ ok: true }),
+            listModels: async () => ({ ok: true, models: [] }),
+        };
+        const res = await buildEngineDownloadInfo({
+            kind: 'demucs',
+            gpuVendor: 'intel',
+            engineInstallPath: '',
+        }, stubs);
+        assert.equal(res.ok, true);
+        assert.equal(res.info.gpuVendor, 'intel');
+        assert.match(String(res.info.pipCommand || ''), /whl\/xpu|torch==2\.12\.1\+xpu/);
+        assert.ok(!(res.info.items || []).some((it) => /cu12|cu13|torch-cuda/i.test(String(it.id || it.group || ''))));
+    });
+
     it('GPU_MANUAL_PACKAGES lists all CUDA12 pip packages', () => {
         const src = fs.readFileSync(
             path.join(__dirname, '..', 'electron', 'engine-download-info.js'),
@@ -252,6 +338,14 @@ describe('local-whl-install', () => {
             'missing cu130 torch manual wheel for Blackwell + CUDA 13',
         );
         assert.ok(src.includes('resolveTorchCudaManualPackages'), 'missing torch variant resolver');
+        assert.ok(
+            /find-links https:\/\/mirrors\.aliyun\.com\/pytorch-wheels\/cu128\//.test(src),
+            'cu128 pip hint must prefer Aliyun find-links (not download.pytorch.org index)',
+        );
+        assert.ok(
+            /find-links https:\/\/mirrors\.aliyun\.com\/pytorch-wheels\/cu130\//.test(src),
+            'cu130 pip hint must prefer Aliyun find-links',
+        );
     });
 
     it('registerLocalWhlIpc exports pick/validate/install channels', () => {

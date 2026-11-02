@@ -1,6 +1,6 @@
 /**
- * Tencent Hy-MT2 JA→ZH subtitle prompts + inference knobs (no network).
- * Reuses Sakura glossary / AV / NSFW lexicon merge for full Transub training assets.
+ * Tencent Hy-MT2 multilingual→ZH subtitle prompts + inference knobs (no network).
+ * Supports JA/YUE/…→简中 (粤语书面→普通话). Reuses Sakura glossary / AV / NSFW merge.
  */
 (function (global, factory) {
     const api = factory();
@@ -31,6 +31,32 @@
         }
     }
 
+    function loadHyMtContext() {
+        try {
+            return (typeof module !== 'undefined' && module.exports)
+                ? require('./hymt-context-core')
+                : (global && global.TransubHyMtContext);
+        } catch (_) {
+            return null;
+        }
+    }
+
+    /** Prefix previous + hit-only state lines (keep official Style body short). */
+    function prependHyMtContextLines(lines, list, options = {}) {
+        const ctx = loadHyMtContext();
+        if (!ctx) return lines;
+        const out = Array.isArray(lines) ? [...lines] : [];
+        const prev = ctx.formatHyMtPreviousBlock?.(options) || '';
+        const joined = (Array.isArray(list) ? list : []).map((c) => String(c?.text || '')).join('\n');
+        const stateHint = options.hyMtStateHint
+            || ctx.formatHyMtStateHint?.(options.hyMtRollingState, joined)
+            || '';
+        const head = [];
+        if (prev && !options._blankRetry) head.push(prev, '');
+        if (stateHint) head.push(stateHint);
+        return head.length ? [...head, ...out] : out;
+    }
+
     const HYMT_STOP_TOKENS = Object.freeze([
         '<|hy_end_of_assistant|>',
         '<|hy_User|>',
@@ -45,13 +71,15 @@
     const HYMT_BLANK_RETRY_BATCH = 4;
     const HYMT_BLANK_RETRY_BATCH_SPEED = 1;
     /**
-     * Keep windows tight: soft prefs + glossary crowd KV and raise mid-window skips.
-     * Soft 8→4 after ADN-806 log (整窗 8 空白 / 百级仍漏).
+     * Multi-cue windows (numbered pack/parse) for native cross-line consistency.
+     * Bare newline zip used to scramble (SAME-250); numbered I/O + align audit + per-cue fallback.
      */
-    const HYMT_WINDOW_LINES_SOFT = 1;
-    /** All Hy-MT profiles: 1-line windows — multi-line positional zip silently scrambles (SAME-250). */
-    const HYMT_WINDOW_LINES_DEFAULT = 1;
-    const HYMT_WINDOW_LINES_TIGHT = 1;
+    const HYMT_WINDOW_LINES_SOFT = 3;
+    const HYMT_WINDOW_LINES_DEFAULT = 3;
+    /** Glossary pressure / speed: shrink to reduce mid-window skips. */
+    const HYMT_WINDOW_LINES_TIGHT = 2;
+    const HYMT_WINDOW_LINES_SPEED = 1;
+    const HYMT_WINDOW_LINES_MAX = 4;
     /** Prompt budget: Hy-MT2 follows short official templates better than long Sakura-style dumps. */
     const HYMT_MAX_TERMINOLOGY = 16;
     const HYMT_MAX_TERM_NOTE = 0;
@@ -81,8 +109,44 @@
     const HYMT_STYLE_SPOKEN = '自然口语化简体中文字幕对白；先忠实完整译出语义、不漏译不错译，再求听感自然；忌书面腔与翻译腔；禁止为顺口改意；不臆造原文没有的情节、人名或旁白';
     const HYMT_STYLE_SOFT_MUNDANE = '自然口语化简体中文字幕对白；按字面忠实翻译、不漏译不错译；听感自然；禁止臆造成人向内容或额外情节';
     const HYMT_STYLE_SOFT_ADULT = '自然口语化简体中文字幕对白；原文有成人语义则忠实传达、不净化不拒译；完整译出、不漏译不错译；听感自然；禁止为顺口改意；不臆造原文没有的内容';
+    /** Yue written Chinese → Mandarin Simplified (do not passthrough Cantonese particles). */
+    const HYMT_STYLE_YUE_TO_MANDARIN = '将粤语书面语改写为自然口语化普通话简体中文；须转换粤语特有用法；禁止照抄粤语原文；先忠实完整译出语义，再求听感自然；不臆造原文没有的情节、人名或旁白';
     /** @deprecated use HYMT_STYLE_* — kept for callers/tests */
     const HYMT_SOFT_STYLE_HINT = HYMT_STYLE_SOFT_ADULT;
+
+    function isYueSourceLanguage(options = {}) {
+        const lang = String(options.language || options.sourceLanguage || '').trim().toLowerCase();
+        return lang === 'yue' || lang === 'zh-yue' || lang === 'cantonese';
+    }
+
+    /**
+     * Written Cantonese particle heuristic (simplified ASR forms).
+     * Used when language was collapsed to zh/auto but cues are clearly Yue.
+     */
+    function cuesLookLikeWrittenCantonese(cuesOrText) {
+        const sample = typeof cuesOrText === 'string'
+            ? cuesOrText
+            : (Array.isArray(cuesOrText) ? cuesOrText : [])
+                .slice(0, 48)
+                .map((c) => String(c?.text || ''))
+                .join('');
+        if (!sample.trim()) return false;
+        // High-signal written-Cantonese markers (avoid rare Mandarin overlaps).
+        const hits = (sample.match(/[嘅佢喺啲唔哋冇嚟嗰噉嘢]/g) || []).length;
+        return hits >= 2;
+    }
+
+    /** True when options say yue, or zh/auto/empty + cue text looks like written Cantonese. */
+    function shouldUseYueToMandarinPrompt(options = {}, chunkCues = null) {
+        if (isYueSourceLanguage(options)) return true;
+        const lang = String(options.language || options.sourceLanguage || '').trim().toLowerCase();
+        if (lang && lang !== 'auto' && lang !== 'unknown' && lang !== 'zh'
+            && lang !== 'chinese' && lang !== 'zh-cn' && lang !== 'zh-hans'
+            && lang !== 'cn' && !/^zh[-_]/i.test(lang)) {
+            return false;
+        }
+        return cuesLookLikeWrittenCantonese(chunkCues);
+    }
 
     function isHyMtModel(modelIdOrFamily) {
         const s = String(modelIdOrFamily || '').trim().toLowerCase();
@@ -192,6 +256,9 @@
         /参考下面的翻译[^。\n]*/g,
         /将以下(?:日语)?文本准确?翻译为(?:简体)?中文[^。\n]*/g,
         /将下方【待翻译文本】准确翻译为(?:简体)?中文[^。\n]*/g,
+        /饮食语境[：:][^\n]*/g,
+        /上文参考（勿翻译）[：:]?[^\n]*/g,
+        /称呼沿用[：:][^\n]*/g,
         /【待翻译文本】/g,
         /【翻译任务】/g,
     ]);
@@ -205,6 +272,8 @@
         if (/我?会逐行将其翻译(?:成|为)中文/.test(t)) return true;
         if (/术语表(?:中的)?译名/.test(t) && /禁止臆造|创造角色名|禁臆造/.test(t)) return true;
         if (/【待翻译文本】|【翻译任务】/.test(t)) return true;
+        if (/^上文参考（勿翻译）/.test(t)) return true;
+        if (/^称呼沿用[：:]/.test(t)) return true;
         if (/行数与顺序必须与原文一致/.test(t)) return true;
         if (/注意翻译的风格要严格符合【|风格严格符合【/.test(t)) return true;
         if (/使役态和被动态|使役\/?被动/.test(t) && /主语|主宾/.test(t)) return true;
@@ -321,6 +390,8 @@
         prefs.push('忠实译全句语义；禁止摘要、半句、用省略号（…/...）/空白/拒答代替对白；须全简体中文，勿假名助词残片、半日半中或原文回声。');
         if (soft) {
             prefs.push(`风格严格符合【${HYMT_SOFT_STYLE_HINT}】。人称依上下文；勿混使役/被动主宾；勿添原文没有的代词/人名/旁白/性相关措辞；专名只用原文或术语表，禁臆造人名；纯拟声可短译，有语义须译全，禁只出语气词。`);
+            // Soft-AV meal / interview lines: keep culinary readings (MARR-class).
+            prefs.push('饮食语境：からみ→辣味/偏辣（勿译成吵架/纠缠）；レバー→肝脏；こんにゃく→魔芋；勿把菜名臆造成人名。');
         } else {
             prefs.push('先忠实还原语意再口语通顺；人称正确；不臆造人名；主宾勿颠倒；禁止为顺口漏译/改意；无成人语义的句子禁止译成性相关措辞。纯拟声可短译，有语义须译全。');
         }
@@ -336,6 +407,9 @@
     function resolveHyMtStyleHint(options = {}, chunkCues = null) {
         if (typeof options.hyMtStyleHint === 'string' && options.hyMtStyleHint.trim()) {
             return options.hyMtStyleHint.trim();
+        }
+        if (shouldUseYueToMandarinPrompt(options, chunkCues)) {
+            return HYMT_STYLE_YUE_TO_MANDARIN;
         }
         try {
             const styleCore = (typeof module !== 'undefined' && module.exports)
@@ -367,20 +441,43 @@
             : HYMT_STYLE_SOFT_MUNDANE;
     }
 
+    /** Lead-in clause for Hy-MT2 user prompts (yue→普通话 vs generic→简中). */
+    function resolveHyMtTranslateLeadIn(options = {}, { multi = false, chunkCues = null } = {}) {
+        if (shouldUseYueToMandarinPrompt(options, chunkCues)) {
+            return multi
+                ? '请将以下粤语书面语准确翻译为普通话简体中文（勿保留粤语用字，须改为普通话）。'
+                : '请将以下粤语书面语翻译为普通话简体中文（勿保留粤语用字，须改为普通话）。';
+        }
+        return multi
+            ? '请将以下文本准确翻译为简体中文。'
+            : '请将以下文本翻译为简体中文。';
+    }
+
+    /** Soft-AV meal lines: inject only when JA has culinary anchors (keeps official prompt short). */
+    function resolveCulinarySoftHint(options = {}, joinedText = '') {
+        if (!shouldUseSoftHyMtPrompt(options)) return '';
+        if (!/からみ|辛み|レバー|こんにゃく|味噌田楽|田楽/.test(String(joinedText || ''))) {
+            return '';
+        }
+        return '饮食语境：からみ→辣味/偏辣（勿译成吵架/纠缠）；レバー→肝脏；こんにゃく→魔芋；勿把菜名臆造成人名。';
+    }
+
     /**
      * Official Hy-MT2 Default / Terminology / Style (+ light Delimiters for multi-line).
      * @see https://huggingface.co/tencent/Hy-MT2-7B
      */
     function buildOfficialHyMtChatMessages(list, options = {}) {
-        const joined = list.map((c) => String(c?.text || '').trim()).join('\n');
         const n = Math.max(1, list.length);
+        const multi = n > 1;
+        const joinedPlain = list.map((c) => String(c?.text || '').trim()).join('\n');
+        const joined = multi ? packHyMtNumberedSource(list) : joinedPlain;
         const softChunk = shouldApplySoftHyMtStyle(options, list);
         const glossaryTerms = resolveHyMtGlossaryTerms({
             ...options,
             nsfwLexicon: softChunk ? options.nsfwLexicon : false,
             avGlossary: softChunk ? options.avGlossary : false,
             avActorGlossary: softChunk ? options.avActorGlossary : false,
-        }, joined);
+        }, joinedPlain);
         const terminology = formatHyMtTerminologyBlock(glossaryTerms, {
             maxTerms: Number(options.hyMtMaxTerminology) || HYMT_MAX_TERMINOLOGY,
             maxNoteChars: options.hyMtMaxTermNote ?? HYMT_MAX_TERM_NOTE,
@@ -391,19 +488,33 @@
             lines.push('参考下面的翻译：', terminology, '');
         }
         // Official Style (spoken natural) — better fidelity+自然 than bare Default for subtitles.
-        // Multi-line: fold Delimiters (换行) into one short clause.
-        if (n > 1) {
+        // Multi-line: numbered lines (1. 2. …) — safer than bare newline zip (SAME-250).
+        const lead = resolveHyMtTranslateLeadIn(options, { multi, chunkCues: list });
+        if (multi) {
             lines.push(
-                `请将以下文本准确翻译为简体中文。注意翻译的风格要严格符合【${style}】。`
-                + '你必须在译文中保留等量的换行分隔符，绝对不可遗漏、合并或跳过任一行，注意只需要输出翻译后的结果，不要额外解释：',
+                `${lead}注意翻译的风格要严格符合【${style}】。`
+                + `原文共${n}行并已编号；请按相同编号逐行输出译文（格式「1. 译文」），不可遗漏、合并或跳过任一行；`
+                + '注意只需要输出翻译后的结果，不要额外解释：',
             );
         } else {
             lines.push(
-                `请将以下文本翻译为简体中文。注意翻译的风格要严格符合【${style}】`,
+                `${lead}注意翻译的风格要严格符合【${style}】`,
             );
         }
+        const culinaryHint = resolveCulinarySoftHint(options, joinedPlain);
+        if (culinaryHint) lines.push(culinaryHint);
         lines.push(joined);
-        return [{ role: 'user', content: lines.join('\n') }];
+        const withCtx = prependHyMtContextLines(lines, list, options);
+        let content = withCtx.join('\n');
+        try {
+            const emoApi = (typeof module !== 'undefined' && module.exports)
+                ? require('./sensevoice-emotion-mt-style-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSensevoiceEmotionMtStyle : null);
+            if (emoApi?.appendEmotionHintToUserContent) {
+                content = emoApi.appendEmotionHintToUserContent(content, list, options);
+            }
+        } catch { /* optional */ }
+        return [{ role: 'user', content }];
     }
 
     /**
@@ -411,9 +522,11 @@
      * Keep short to avoid refusal; still ask for complete spoken ZH.
      */
     function buildMinimalHyMtChatMessages(list, options = {}) {
-        const joined = list.map((c) => String(c?.text || '').trim()).join('\n');
-        const soft = shouldApplySoftHyMtStyle(options, list);
         const n = Math.max(1, list.length);
+        const multi = n > 1;
+        const joinedPlain = list.map((c) => String(c?.text || '').trim()).join('\n');
+        const joined = multi ? packHyMtNumberedSource(list) : joinedPlain;
+        const soft = shouldApplySoftHyMtStyle(options, list);
         const glossaryTerms = resolveHyMtGlossaryTerms({
             ...options,
             hyMtMaxTerminology: Math.min(4, Number(options.hyMtMaxTerminology) || 4),
@@ -423,7 +536,7 @@
             nsfwLexicon: soft,
             avGlossary: soft ? options.avGlossary : false,
             avActorGlossary: soft ? options.avActorGlossary : false,
-        }, joined);
+        }, joinedPlain);
         const terminology = formatHyMtTerminologyBlock(glossaryTerms, {
             maxTerms: 4,
             maxNoteChars: 0,
@@ -435,8 +548,11 @@
         }
         // Official Default + compact style clause (retry path must stay short).
         if (n === 1) {
+            const yue = shouldUseYueToMandarinPrompt(options, list);
             lines.push(
-                `将以下文本翻译为简体中文，注意只需要输出翻译后的结果，不要额外解释。风格符合【${style}】：`,
+                yue
+                    ? `将以下粤语书面语翻译为普通话简体中文（勿照抄粤语），注意只需要输出翻译后的结果，不要额外解释。风格符合【${style}】：`
+                    : `将以下文本翻译为简体中文，注意只需要输出翻译后的结果，不要额外解释。风格符合【${style}】：`,
             );
             if (options._qualityRetry || options.hyMtQualityRetry) {
                 try {
@@ -447,20 +563,30 @@
                 }
             }
             if (options._ellipsisHardFail || options._ellipsisHardFailLong) {
+                // Short imperative tags — long prose is often echoed into cues (stripPromptLeak covers paraphrases).
                 lines.push(
                     options._ellipsisHardFailLong
-                        ? '上一版用省略号敷衍；本行日语有完整语义，必须逐句译出，严禁只输出省略号、空白或语气词。'
-                        : '禁止只用省略号（…/...）或空白代替本行译文；有字就译，不得拒答。',
+                        ? '【重译】须逐句译出完整语义；禁止省略号/空白/语气词敷衍。'
+                        : '【重译】禁止省略号或空白代替译文；有字须译。',
                 );
             }
             lines.push(joined);
         } else {
+            const yue = shouldUseYueToMandarinPrompt(options, list);
             lines.push(
-                `将以下文本翻译为简体中文，注意只需要输出翻译后的结果，不要额外解释。风格符合【${style}】；保留等量换行、不可漏行：`,
+                yue
+                    ? `将以下粤语书面语翻译为普通话简体中文（勿照抄粤语），注意只需要输出翻译后的结果，不要额外解释。风格符合【${style}】；按相同编号（1. 2. …）逐行输出、不可漏行：`
+                    : `将以下文本翻译为简体中文，注意只需要输出翻译后的结果，不要额外解释。风格符合【${style}】；按相同编号（1. 2. …）逐行输出、不可漏行：`,
                 joined,
             );
         }
-        return [{ role: 'user', content: lines.join('\n') }];
+        // Quality / ellipsis retries still benefit from 1-line neighbor context.
+        const withCtx = prependHyMtContextLines(lines, list, {
+            ...options,
+            // Keep blank-storm retries lean: previous only on quality / hard-fail.
+            _blankRetry: options._blankRetry && !options._qualityRetry && !options._ellipsisHardFail,
+        });
+        return [{ role: 'user', content: withCtx.join('\n') }];
     }
 
     /**
@@ -495,7 +621,7 @@
                 _hyMtHasTerminology: !!terminology,
                 _chunkSoftStyle: softChunk,
             }, list.length);
-            const user = [
+            let user = [
                 '【待翻译文本】',
                 joined,
                 '',
@@ -503,6 +629,14 @@
                 ...prefs.map((p, i) => `${i + 1}、${p}`),
                 `${prefs.length + 1}、将【待翻译文本】翻译为简体中文。`,
             ].join('\n');
+            try {
+                const emoApi = (typeof module !== 'undefined' && module.exports)
+                    ? require('./sensevoice-emotion-mt-style-core')
+                    : (typeof globalThis !== 'undefined' ? globalThis.TransubSensevoiceEmotionMtStyle : null);
+                if (emoApi?.appendEmotionHintToUserContent) {
+                    user = emoApi.appendEmotionHintToUserContent(user, list, options);
+                }
+            } catch { /* optional */ }
             return [{ role: 'user', content: user }];
         }
         // Default path: official Style (+ Terminology / Delimiters).
@@ -542,19 +676,140 @@
     }
 
     /**
-     * Modest windows; shrink further when glossary pressure is high.
+     * Normalize settings value: auto | 1..4 | numeric.
+     * @returns {'auto'|number}
+     */
+    function normalizeHyMtWindowLinesOption(value) {
+        if (value == null || value === '') return 'auto';
+        if (value === false) return 1;
+        const s = String(value).trim().toLowerCase();
+        if (!s || s === 'auto' || s === 'default') return 'auto';
+        if (s === 'off' || s === 'single' || s === '1') return 1;
+        const n = Number(value);
+        if (Number.isFinite(n) && n >= 1) {
+            return Math.max(1, Math.min(HYMT_WINDOW_LINES_MAX, Math.round(n)));
+        }
+        return 'auto';
+    }
+
+    /**
+     * Modest windows; shrink when glossary pressure / speed profile.
+     * Explicit `windowLines` wins; else `hyMtWindowLines` setting; else auto.
      * @param {object} [options]
      * @returns {number}
      */
     function resolveHyMtWindowLines(options = {}) {
+        if (options._blankRetry || options.hyMtMinimalPrompt) return 1;
         if (Number.isFinite(Number(options.windowLines)) && Number(options.windowLines) >= 1) {
-            return Math.max(1, Math.min(20, Math.round(Number(options.windowLines))));
+            return Math.max(1, Math.min(HYMT_WINDOW_LINES_MAX, Math.round(Number(options.windowLines))));
         }
+        const pref = normalizeHyMtWindowLinesOption(options.hyMtWindowLines);
+        if (pref !== 'auto') return pref;
+        const perf = String(options.perfProfile || '').trim().toLowerCase();
+        if (perf === 'speed' || perf === 'fast') return HYMT_WINDOW_LINES_SPEED;
         const soft = shouldUseSoftHyMtPrompt(options);
         const glossaryN = countGlossaryTermsForPrompt(options);
-        if (soft && glossaryN >= HYMT_MAX_TERMINOLOGY) return HYMT_WINDOW_LINES_TIGHT;
+        if (glossaryN >= HYMT_MAX_TERMINOLOGY) return HYMT_WINDOW_LINES_TIGHT;
         if (soft) return HYMT_WINDOW_LINES_SOFT;
         return HYMT_WINDOW_LINES_DEFAULT;
+    }
+
+    /**
+     * Pack cues as numbered lines for Hy-MT multi-window (1-based).
+     * @param {object[]} list
+     * @returns {string}
+     */
+    function packHyMtNumberedSource(list) {
+        const cues = Array.isArray(list) ? list : [];
+        return cues
+            .map((c, i) => {
+                const t = String(c?.text || '').trim();
+                return `${i + 1}. ${t}`;
+            })
+            .join('\n');
+    }
+
+    /**
+     * Parse Hy-MT numbered multi-line output back onto cue indexes.
+     * Falls back with lineCountMismatch when numbering is incomplete.
+     * @returns {{ ok: boolean, cues: object[], lineCountMismatch: boolean, numbered: boolean, error?: string }}
+     */
+    function parseHyMtNumberedOutput(content, expectedCues) {
+        const expected = Array.isArray(expectedCues) ? expectedCues : [];
+        const raw = String(content || '').replace(/\r\n/g, '\n').trim();
+        if (!raw) {
+            return {
+                ok: false,
+                error: '模型返回为空',
+                cues: [],
+                lineCountMismatch: false,
+                numbered: false,
+            };
+        }
+        let text = raw;
+        const fence = text.match(/^```(?:\w+)?\n([\s\S]*?)```$/);
+        if (fence) text = fence[1].trim();
+        try {
+            const sanitizeApi = require('./mt-sanitize-core');
+            if (typeof sanitizeApi?.stripLlmThinkWrappers === 'function') {
+                text = sanitizeApi.stripLlmThinkWrappers(text);
+            }
+        } catch { /* optional */ }
+
+        const byNum = new Map();
+        const lineRe = /^\s*(\d{1,3})[.、．:：)\]]\s*(.*)$/u;
+        for (const line of text.split('\n')) {
+            const m = String(line || '').match(lineRe);
+            if (!m) continue;
+            const num = Number(m[1]);
+            if (!Number.isInteger(num) || num < 1) continue;
+            let body = String(m[2] || '').trim();
+            try {
+                if (typeof stripHyMtLeak === 'function') body = stripHyMtLeak(body);
+            } catch { /* ignore */ }
+            // Later duplicate number wins (model rewrite).
+            byNum.set(num, body);
+        }
+
+        const n = expected.length;
+        if (n <= 1) {
+            return {
+                ok: false,
+                cues: [],
+                lineCountMismatch: false,
+                numbered: false,
+                error: 'not_multi',
+            };
+        }
+
+        let hit = 0;
+        for (let i = 1; i <= n; i += 1) {
+            if (byNum.has(i)) hit += 1;
+        }
+        // Require majority numbered hits; otherwise caller falls back to line-align.
+        if (hit < Math.ceil(n * 0.6)) {
+            return {
+                ok: false,
+                cues: [],
+                lineCountMismatch: false,
+                numbered: false,
+                error: 'numbered_sparse',
+            };
+        }
+
+        const cues = expected.map((c, i) => ({
+            index: c.index,
+            text: byNum.has(i + 1) ? String(byNum.get(i + 1) ?? '') : '',
+        }));
+        const lineCountMismatch = hit !== n;
+        return {
+            ok: true,
+            cues,
+            lineCountMismatch,
+            numbered: true,
+            gotLineCount: hit,
+            expectedLineCount: n,
+        };
     }
 
     /**
@@ -669,6 +924,8 @@
         en: '英语',
         ja: '日语',
         ko: '韩语',
+        yue: '粤语',
+        cantonese: '粤语',
         fr: '法语',
         de: '德语',
         es: '西班牙语',
@@ -712,9 +969,14 @@
             : (Array.isArray(chunkCuesList) ? chunkCuesList : []);
         const joined = list.map((c) => String(c?.text || '').trim()).join('\n');
         const targetLabel = resolveHunyuanTargetLangLabel(options);
-        const content = isHunyuanZhTarget(options)
-            ? `把下面的文本翻译成${targetLabel}，不要额外解释。\n\n${joined}`
-            : `Translate the following segment into ${targetLabel}, without additional explanation.\n\n${joined}`;
+        let content;
+        if (shouldUseYueToMandarinPrompt(options, list) && isHunyuanZhTarget(options)) {
+            content = `把下面的粤语书面语翻译成普通话${targetLabel}（须转换粤语特有用法，勿照抄原文），不要额外解释。\n\n${joined}`;
+        } else if (isHunyuanZhTarget(options)) {
+            content = `把下面的文本翻译成${targetLabel}，不要额外解释。\n\n${joined}`;
+        } else {
+            content = `Translate the following segment into ${targetLabel}, without additional explanation.\n\n${joined}`;
+        }
         return [{ role: 'user', content }];
     }
 
@@ -752,6 +1014,8 @@
         HYMT_WINDOW_LINES_SOFT,
         HYMT_WINDOW_LINES_DEFAULT,
         HYMT_WINDOW_LINES_TIGHT,
+        HYMT_WINDOW_LINES_SPEED,
+        HYMT_WINDOW_LINES_MAX,
         HYMT_MAX_TERMINOLOGY,
         HYMT_MAX_TERM_NOTE,
         HYMT_MAX_CAST_NAMES,
@@ -762,6 +1026,10 @@
         HYMT_STYLE_SPOKEN,
         HYMT_STYLE_SOFT_MUNDANE,
         HYMT_STYLE_SOFT_ADULT,
+        HYMT_STYLE_YUE_TO_MANDARIN,
+        isYueSourceLanguage,
+        cuesLookLikeWrittenCantonese,
+        shouldUseYueToMandarinPrompt,
         isHyMtModel,
         isHunyuanMtModel,
         shouldUseSoftHyMtPrompt,
@@ -778,11 +1046,15 @@
         formatHyMtTerminologyBlock,
         formatHyMtNsfwExampleHint,
         buildSoftPreferenceLines,
+        resolveCulinarySoftHint,
         buildMinimalHyMtChatMessages,
         buildOfficialHyMtChatMessages,
         buildHyMtChatMessages,
         resolveHyMtContextSize,
+        normalizeHyMtWindowLinesOption,
         resolveHyMtWindowLines,
+        packHyMtNumberedSource,
+        parseHyMtNumberedOutput,
         tryDeterministicBlankFill,
         resolveHyMtBlankRetryBatchSize,
         chunkBlankRetryCues,
@@ -798,6 +1070,30 @@
         collectHyMtQualityRetryIndexes: (...args) => {
             try { return require('./hymt-quality-guard-core').collectHyMtQualityRetryIndexes(...args); }
             catch { return { indexes: [], byReason: {} }; }
+        },
+        buildHyMtPreviousContext: (...args) => {
+            try { return require('./hymt-context-core').buildHyMtPreviousContext(...args); }
+            catch { return {}; }
+        },
+        formatHyMtPreviousBlock: (...args) => {
+            try { return require('./hymt-context-core').formatHyMtPreviousBlock(...args); }
+            catch { return ''; }
+        },
+        emptyHyMtRollingState: () => {
+            try { return require('./hymt-context-core').emptyRollingState(); }
+            catch { return { addresses: [], names: [] }; }
+        },
+        updateHyMtRollingState: (...args) => {
+            try { return require('./hymt-context-core').updateHyMtRollingState(...args); }
+            catch { return args[0] || { addresses: [], names: [] }; }
+        },
+        formatHyMtStateHint: (...args) => {
+            try { return require('./hymt-context-core').formatHyMtStateHint(...args); }
+            catch { return ''; }
+        },
+        maybeUpgradeHyMtModelId: (...args) => {
+            try { return require('./hymt-context-core').maybeUpgradeHyMtModelId(...args); }
+            catch { return String(args[0] || '').trim(); }
         },
     };
 }));

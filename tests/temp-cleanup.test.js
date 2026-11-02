@@ -7,6 +7,7 @@ const {
     clearEngineWorkTemp,
     cleanupAfterJob,
     getEngineWorkTempRoot,
+    getTimingPcmCacheRoot,
     sweepElectronJobTemps,
     ELECTRON_JOB_TEMP_PREFIXES,
 } = require('../electron/temp-cleanup');
@@ -15,12 +16,16 @@ describe('temp-cleanup', () => {
     it('applyEngineTempEnv redirects TEMP/TMP/TMPDIR to engine-work', () => {
         const env = applyEngineTempEnv({ PATH: 'C:\\x', FOO: '1' });
         const root = getEngineWorkTempRoot();
+        const timingRoot = getTimingPcmCacheRoot();
         assert.strictEqual(env.TEMP, root);
         assert.strictEqual(env.TMP, root);
         assert.strictEqual(env.TMPDIR, root);
         assert.strictEqual(env.TRANSUB_ENGINE_TEMP, root);
+        assert.strictEqual(env.TRANSUB_TIMING_PCM_CACHE, timingRoot);
         assert.strictEqual(env.FOO, '1');
         assert.ok(fs.existsSync(root));
+        assert.ok(fs.existsSync(timingRoot));
+        assert.ok(!timingRoot.includes(path.join('temp', 'engine-work')));
     });
 
     it('clearEngineWorkTemp removes children', () => {

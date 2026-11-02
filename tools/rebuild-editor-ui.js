@@ -44,6 +44,8 @@ const headStart = html.slice(0, html.indexOf('<style>'));
 const out = `${headStart}<style>\n${css}\n</style>\n</head>\n${shell}\n${modals}\n    <script src="js/subtitle-split-core.js"></script>
     <script src="js/subtitle-fluency-core.js"></script>
     <script src="js/subtitle-qc-core.js"></script>
+    <script src="js/sensevoice-rich-tags-core.js"></script>
+    <script src="js/sensevoice-emotion-mt-style-core.js"></script>
     <script src="js/subtitle-meta-core.js"></script>
     <script src="js/subtitle-glossary-core.js"></script>
     <script src="js/subtitle-editor/utils.js"></script>

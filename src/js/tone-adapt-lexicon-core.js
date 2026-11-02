@@ -119,6 +119,39 @@
     }
 
     /**
+     * Short climax stem いく/イク — too common as V-te+iku leave compounds (出ていく).
+     * After normalizeJaKey, イク/いくっ collapse to いく.
+     * @param {string} normForm
+     */
+    function isShortIkuMoanStem(normForm) {
+        return String(normForm || '') === 'いく';
+    }
+
+    /**
+     * True when every いく hit in normalized hay is a て/で+いく directional compound
+     * (出ていく / ついていく / していく), not bare climax いく.
+     * @param {string} normHay
+     */
+    function isOnlyTeIkuCompound(normHay) {
+        const hay = String(normHay || '');
+        const needle = 'いく';
+        let from = 0;
+        let sawTe = false;
+        while (from <= hay.length - needle.length) {
+            const idx = hay.indexOf(needle, from);
+            if (idx < 0) break;
+            const before = idx > 0 ? hay[idx - 1] : '';
+            if (before === 'て' || before === 'で') {
+                sawTe = true;
+            } else {
+                return false;
+            }
+            from = idx + 1;
+        }
+        return sawTe;
+    }
+
+    /**
      * Reject glossary hits that only appear inside a longer same-script JA word
      * (セックス must not match セックスレス; セックスしたい is OK).
      * @param {string} hay
@@ -175,6 +208,9 @@
             for (const form of forms) {
                 const f = String(form || '').trim();
                 if (!f) continue;
+                const nf = normalizeJaKey(f);
+                // 出ていく / ついていく：ていく compound ≠ climax いく→去了
+                if (isShortIkuMoanStem(nf) && isOnlyTeIkuCompound(normSrc)) continue;
                 if (
                     (raw.includes(f) || rawLower.includes(f.toLowerCase()))
                     && (looseToken || isWholeGlossaryTokenMatch(raw, f))
@@ -182,7 +218,6 @@
                     hit = f;
                     break;
                 }
-                const nf = normalizeJaKey(f);
                 if (
                     nf.length >= 2
                     && normSrc.includes(nf)
@@ -266,11 +301,14 @@
             (a, b) => Math.max(...(b.ja || []).map((x) => x.length), 0)
                 - Math.max(...(a.ja || []).map((x) => x.length), 0),
         );
+        const normSrc = normalizeJaKey(src);
         for (const entry of ranked) {
             for (const form of entry.ja || []) {
                 const f = String(form || '').trim();
                 if (f.length < 2) continue;
-                if (!src.includes(f) && !normalizeJaKey(src).includes(normalizeJaKey(f))) continue;
+                const nf = normalizeJaKey(f);
+                if (isShortIkuMoanStem(nf) && isOnlyTeIkuCompound(normSrc)) continue;
+                if (!src.includes(f) && !normSrc.includes(nf)) continue;
                 if (!cur.includes(f)) continue;
                 cur = cur.split(f).join(entry.zh);
                 hits.push(f);
@@ -282,7 +320,12 @@
 
     /** Compact examples for system prompt (keep short). */
     function formatPromptExamples(limit = 12) {
-        const moan = NSFW_LEXICON_ENTRIES.filter((e) => e.kind === 'moan').slice(0, 4);
+        // Prefer longer moan forms (イッちゃう) over bare いく→去了 — avoids teaching
+        // leave-verb 出ていく as climax in every NSFW system prompt.
+        const moan = NSFW_LEXICON_ENTRIES
+            .filter((e) => e.kind === 'moan')
+            .filter((e) => !isShortIkuMoanStem(normalizeJaKey(String(e.ja?.[0] || ''))))
+            .slice(0, 4);
         const sfx = NSFW_LEXICON_ENTRIES.filter((e) => e.kind === 'sfx').slice(0, 5);
         const body = NSFW_LEXICON_ENTRIES.filter((e) => e.kind === 'body').slice(0, 3);
         const pick = [...moan, ...sfx, ...body].slice(0, limit);

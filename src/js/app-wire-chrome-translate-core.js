@@ -60,6 +60,9 @@
                 engineModelsUi: h.engineModelsUi || (g && g.TransubEngineModelsUi) || {},
                 startReadinessApi,
                 getAdvancedEntitled: () => entitled(h),
+                getAdvancedEntitlementKnown: () => (typeof h.getAdvancedEntitlementKnown === 'function'
+                    ? !!h.getAdvancedEntitlementKnown()
+                    : !!h.advancedEntitlementKnown),
                 getCachedEngineModels: () => (typeof h.getCachedEngineModels === 'function'
                     ? h.getCachedEngineModels()
                     : h.cachedEngineModels),
@@ -328,6 +331,7 @@
                 syncAdvancedFeaturesGate: late(h, 'syncAdvancedFeaturesGate'),
                 syncBilingualChipUi: late(h, 'syncBilingualChipUi'),
                 updateModelSelectHint: late(h, 'updateModelSelectHint'),
+                toQuickTargetLang: (...a) => h.toQuickTargetLang(...a),
             }),
         );
         Object.assign(h, bindApiMethods(h.getBilingualTaskUi, [
@@ -336,6 +340,8 @@
             'readDualLineOrderFromForm',
             'applyDualLineOrderToForm',
             'syncMergeBilingualUi',
+            'applyQuickTargetChipValue',
+            'syncQuickTargetChipFromTask',
         ], {
             readDualLineOrderFromForm: (v) => v || 'target-first',
         }));

@@ -36,17 +36,33 @@ function pickSourceMetaPath(outPaths = {}, options = {}) {
     return candidates[0] ? path.resolve(String(candidates[0])) : '';
 }
 
+function runPreMtQcHandoff({
+    sourceCues,
+    outPaths = {},
+    options = {},
+    onLog,
+    onProgress,
+} = {}) {
+    return runPreMtQcHandoffAsync({
+        sourceCues,
+        outPaths,
+        options,
+        onLog,
+        onProgress,
+    });
+}
+
 /**
- * @returns {{
+ * @returns {Promise<{
  *   active: boolean,
  *   holdIndexes: number[],
  *   bandResult: object|null,
  *   gate: object|null,
  *   frozen: boolean,
  *   logs: string[],
- * }}
+ * }>}
  */
-function runPreMtQcHandoff({
+async function runPreMtQcHandoffAsync({
     sourceCues,
     outPaths = {},
     options = {},
@@ -105,12 +121,38 @@ function runPreMtQcHandoff({
         onLog?.(`译前门闸：红窗/结构异常 ${holdIndexes.length} 条本轮不送译，稍后闭环补译`);
     }
 
+    // Soft edge: yellow cues near red — Laya Choice hold vs allow_mt (tiny quota)
+    let finalHold = [...holdIndexes];
+    try {
+        const yellow = bandResult.yellowIndexes || [];
+        const softEdge = yellow
+            .filter((idx) => !finalHold.includes(idx))
+            .slice(0, 8)
+            .map((idx) => ({
+                index: idx,
+                text: String(sourceCues[idx]?.text ?? ''),
+                band: 'yellow',
+                reasons: (bandResult.bands?.[idx]?.reasons || []).join(','),
+                id: `h${idx}`,
+            }))
+            .filter((r) => r.text);
+        if (softEdge.length >= 2) {
+            const { runPreMtSoftHold } = require('./jev-laya-pipelines');
+            const decided = await runPreMtSoftHold(softEdge, merged, { onLog });
+            for (const row of decided.hold || []) {
+                const idx = Number(row.index);
+                if (Number.isInteger(idx) && !finalHold.includes(idx)) finalHold.push(idx);
+            }
+            // allow_mt: if somehow in hold from elsewhere, leave as-is (red stays held)
+        }
+    } catch { /* soft-fail */ }
+
     let frozen = false;
     if (metaPath) {
         try {
             const read = readSubtitleMeta(metaPath);
             const next = freezeCore.applySourceFreeze(read.meta || { entries: [] }, sourceCues, {
-                holdIndexes,
+                holdIndexes: finalHold,
                 bandSummary: bandResult.summary,
             });
             // Persist bands on sidecar for polish / post-QC loop
@@ -128,9 +170,9 @@ function runPreMtQcHandoff({
 
     return {
         active: true,
-        holdIndexes,
+        holdIndexes: finalHold,
         bandResult,
-        gate,
+        gate: { ...gate, holdIndexes: finalHold },
         frozen,
         logs,
     };
@@ -186,6 +228,7 @@ function shouldSplitBeforeMtForQualityPipeline(options = {}) {
 
 module.exports = {
     runPreMtQcHandoff,
+    runPreMtQcHandoffAsync,
     seedCueRiskBandsAfterConfidence,
     shouldSplitBeforeMtForQualityPipeline,
     annotationsFromSidecar,

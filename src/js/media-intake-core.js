@@ -371,13 +371,39 @@
                 await applyOptionsToForm(patch, { applyUiMode: false });
             } catch (_) { /* ignore */ }
 
-            if (els.quickLanguageSelect && els.languageSelect) {
-                els.quickLanguageSelect.value = els.languageSelect.value || 'auto';
+            {
+                const liveQuick = typeof document !== 'undefined'
+                    ? document.getElementById('quickLanguageSelect')
+                    : null;
+                if (liveQuick) els.quickLanguageSelect = liveQuick;
+                const liveLang = typeof document !== 'undefined'
+                    ? document.getElementById('languageSelect')
+                    : null;
+                if (liveLang) els.languageSelect = liveLang;
+                const qLang = String(liveQuick?.value || els.quickLanguageSelect?.value || '').trim();
+                if (qLang && els.languageSelect) {
+                    const hasOpt = [...(els.languageSelect.options || [])]
+                        .some((o) => o.value === qLang);
+                    if (hasOpt) els.languageSelect.value = qLang;
+                }
             }
-            if (els.quickTargetLangSelect && els.chineseSubtitleVariantSelect) {
-                els.quickTargetLangSelect.value = toQuickTargetLang(
-                    els.chineseSubtitleVariantSelect.value || 'simplified',
-                );
+            if (els.quickTargetLangSelect) {
+                const liveTask = typeof document !== 'undefined'
+                    ? document.getElementById('taskSelect')
+                    : null;
+                if (liveTask) els.taskSelect = liveTask;
+                const taskNow = String(
+                    patch.task || els.taskSelect?.value || 'translate',
+                ).trim();
+                const chip = String(els.quickTargetLangSelect.value || '').trim();
+                const chipIsSource = chip === 'source' || chip === 'original' || chip === 'transcribe';
+                if (taskNow === 'transcribe') {
+                    els.quickTargetLangSelect.value = 'source';
+                } else if (chipIsSource || !chip) {
+                    els.quickTargetLangSelect.value = toQuickTargetLang(
+                        els.chineseSubtitleVariantSelect?.value || 'simplified',
+                    );
+                }
             }
 
             const summary = (() => {

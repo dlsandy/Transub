@@ -2,6 +2,7 @@
  * Run polish / QC / 简繁 / preset for one batch item before emitting phase=done.
  * Keeps the next file from starting until this item's post-task chain finishes.
  */
+const fs = require('fs');
 const path = require('path');
 const { remapBridgeProgress } = require('./engine-job-progress');
 const itemPaths = require('../src/js/item-posttask-paths-core');
@@ -48,6 +49,7 @@ function buildItemRecord(outPaths = {}, mediaPath = '') {
         sourceSubtitlePath: outPaths.sourceSubtitlePath || '',
         targetSubtitlePath: outPaths.targetSubtitlePath || '',
         bilingualSubtitlePath: outPaths.bilingualSubtitlePath || '',
+        timingAudioPath: String(outPaths.timingAudioPath || '').trim(),
     };
 }
 
@@ -322,13 +324,35 @@ async function runItemQcAutoFix({
                     llmSplit: options.qcSmartLlmSplit !== false,
                     retranscribeConnected: options.qcSmartRetranscribe !== false,
                     smartFix: true,
-                    pairPath: pairPath || undefined,
+                    pairPath: pairPath || srcSidecar || undefined,
+                    sourcePath: pairPath || srcSidecar || undefined,
                     sourceSubtitlePath: sourceForAsr,
                     subtitlePath: subPath,
                     semanticReview: options.qcSmartSemanticReview !== false && !!pairPath,
                     intensity: options.qcSmartIntensity || preset.intensity || 'light',
                     maxRetranscribeRanges: Number(options.qcSmartMaxRetranscribeRanges) || 8,
                     qcSilenceSplitChars: silenceMax,
+                    // Waveform edge-snap / valley split / Laya Score triage
+                    waveformTiming: options.waveformTiming !== false && options.qcWaveformTiming !== false,
+                    qcWaveformTiming: options.qcWaveformTiming !== false,
+                    waveformTimingLaya: options.waveformTimingLaya !== false,
+                    waveformEdgeSnap: options.waveformEdgeSnap !== false,
+                    waveformValleySplit: options.waveformValleySplit !== false,
+                    maxEdgeSnaps: Number(options.maxEdgeSnaps) || 16,
+                    maxCandidates: Number(options.maxCandidates || options.waveformMaxCandidates) || 28,
+                    waveformMaxCandidates: Number(options.waveformMaxCandidates || options.maxCandidates) || 28,
+                    timingAudioPath: options.timingAudioPath
+                        || item?.timingAudioPath
+                        || '',
+                    waveformAudioPath: options.waveformAudioPath
+                        || options.timingAudioPath
+                        || item?.timingAudioPath
+                        || '',
+                    outputDir: options.outputDir
+                        || (mediaPath ? require('path').dirname(String(mediaPath)) : ''),
+                    jevDecisionMode: options.jevDecisionMode,
+                    jevDecisionEndpoint: options.jevDecisionEndpoint,
+                    jevDecisionMinConfidence: options.jevDecisionMinConfidence,
                     backupMode: 'off',
                     subtitleTargetLang: options.subtitleTargetLang || options.targetLang,
                     targetLang: options.targetLang || options.subtitleTargetLang,
@@ -838,6 +862,10 @@ async function runFinalPostBatchPolish(paths, item, options = {}, {
         const { applyPostBatchPipeline } = require('./post-batch-pipeline');
         applyPostBatchPipeline(list, {
             ...options,
+            engineTask,
+            sourceSubtitlePath: options.sourceSubtitlePath
+                || item?.sourceSubtitlePath
+                || '',
             // CPS already ran earlier / in QC; avoid re-splitting recovered cues.
             postBatchCpsSplit: false,
         }, {
@@ -865,12 +893,14 @@ async function runFinalPostBatchPolish(paths, item, options = {}, {
                 if (jaDoc?.ok) jaCues = jaDoc.cues || [];
             }
             if (jaCues.length && typeof mtSanitize.fillBlankZhSlotsFromJa === 'function') {
+                let anyFilled = false;
                 for (const zhPath of uniqueZh) {
                     if (jaPath && path.resolve(jaPath) === path.resolve(zhPath)) continue;
                     const zhDoc = readSubtitleDocument(zhPath);
                     if (!zhDoc?.ok) continue;
                     const filled = mtSanitize.fillBlankZhSlotsFromJa(zhDoc.cues || [], jaCues);
                     if (!(filled?.filled > 0)) continue;
+                    anyFilled = true;
                     const written = writeSubtitleDocument(zhPath, {
                         cues: filled.cues,
                         format: zhDoc.format,
@@ -879,6 +909,21 @@ async function runFinalPostBatchPolish(paths, item, options = {}, {
                     });
                     if (written?.ok) {
                         onLog?.(`空白补译 · ${path.basename(zhPath)} · 润色后确定性补全 ${filled.filled} 条`);
+                    }
+                }
+                // Det-fill can reintroduce「…」/顿号；再跑一轮观影清标点。
+                if (anyFilled) {
+                    try {
+                        applyPostBatchPipeline(uniqueZh, {
+                            ...options,
+                            engineTask,
+                            sourceSubtitlePath: jaPath || options.sourceSubtitlePath || '',
+                            postBatchCpsSplit: false,
+                            postBatchRemoveNoise: false,
+                            postBatchCompressRepetition: false,
+                        }, { onLog });
+                    } catch (err2) {
+                        onLog?.(`补全后观影精简跳过：${err2.message || err2}`);
                     }
                 }
             }
@@ -916,6 +961,57 @@ async function runFinalPostBatchPolish(paths, item, options = {}, {
             }
         } catch (err) {
             onLog?.(`清除语气/拟声跳过：${err.message || err}`);
+        }
+    }
+
+    // Opening content-shift repair (IENF-450): hy-MT first pass skips whole-track
+    // rotate; head-only shift still needs a late pass after sanitize/compact.
+    if (options.skipDialogueHeadShiftRepair !== true) {
+        try {
+            const creditCore = require('../src/js/subtitle-software-credit-core');
+            const { readSubtitleDocument, writeSubtitleDocument } = require('./extensions-bridge');
+            const uniqueZh = batchPostprocessPlan.collectUniqueZhSubtitlePaths(item, {
+                resolve: path.resolve,
+                existsSync: (p) => require('fs').existsSync(p),
+            });
+            const jaPath = String(item?.sourceSubtitlePath || '').trim();
+            if (jaPath && fs.existsSync(jaPath)) {
+                const jaDoc = readSubtitleDocument(jaPath);
+                if (jaDoc?.ok && Array.isArray(jaDoc.cues)) {
+                    for (const zhPath of uniqueZh) {
+                        if (path.resolve(jaPath) === path.resolve(zhPath)) continue;
+                        if (!fs.existsSync(zhPath)) continue;
+                        const zhDoc = readSubtitleDocument(zhPath);
+                        if (!zhDoc?.ok || !Array.isArray(zhDoc.cues)) continue;
+                        const fixed = creditCore.repairDetectedDialogueContentShift(
+                            zhDoc.cues,
+                            jaDoc.cues,
+                            {
+                                // Allow head repair even when whole-track was skipped earlier.
+                                skipDialogueContentShiftRepair: false,
+                                skipDialogueHeadShiftRepair: false,
+                            },
+                        );
+                        if (fixed?.changed && Array.isArray(fixed.cues)) {
+                            const written = writeSubtitleDocument(zhPath, {
+                                cues: fixed.cues,
+                                format: zhDoc.format,
+                                header: zhDoc.header,
+                                backupMode: 'off',
+                            });
+                            if (written?.ok) {
+                                const scope = fixed.scope || fixed.detected?.scope || 'shift';
+                                onLog?.(
+                                    `对白错位回正 · ${path.basename(zhPath)} · ${scope}`
+                                    + ` +${fixed.offset} · 改 ${fixed.repaired} 条`,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            onLog?.(`对白错位回正跳过：${err.message || err}`);
         }
     }
 
@@ -971,9 +1067,7 @@ async function runItemPostTaskHandoff(ctx = {}) {
     const {
         mediaPath,
         outPaths = {},
-        options = {},
         primaryAsr = '',
-        engineTask = options.task || 'transcribe',
         polishAlreadyDone = true,
         timingFallback = null,
         onProgress,
@@ -982,12 +1076,33 @@ async function runItemPostTaskHandoff(ctx = {}) {
         shouldStop = null,
         signal = null,
     } = ctx;
+    // Must be `let`: timing-audio merge reassigns below. Destructuring `const options`
+    // threw "Assignment to constant variable" and aborted the whole posttask (START-655
+    // left all-zero ZH after ASR wrote timing-16k.wav).
+    let options = { ...(ctx.options || {}) };
+    const engineTask = ctx.engineTask || options.task || 'transcribe';
     const stopCtx = { shouldStop, signal };
     if (isPostTaskStopRequested(stopCtx)) {
         return cancelledPostTaskResult({ issueCount: 0 });
     }
 
     const item = buildItemRecord(outPaths, mediaPath);
+    // Prefer engine mix timing PCM from the ASR job (role=timing-audio).
+    const timingAudioPath = String(
+        options.timingAudioPath
+        || outPaths?.timingAudioPath
+        || item.timingAudioPath
+        || '',
+    ).trim();
+    if (timingAudioPath) {
+        item.timingAudioPath = timingAudioPath;
+        options = {
+            ...options,
+            timingAudioPath,
+            waveformAudioPath: options.waveformAudioPath || timingAudioPath,
+            outputDir: options.outputDir || require('path').dirname(String(mediaPath || '')),
+        };
+    }
     const paths = itemPaths.collectPostBatchPaths(item);
     if (!paths.length) return { ok: true, skipped: true, issueCount: 0 };
 
@@ -1019,7 +1134,13 @@ async function runItemPostTaskHandoff(ctx = {}) {
         });
         try {
             const { applyPostBatchPipeline } = require('./post-batch-pipeline');
-            applyPostBatchPipeline(paths, options, {
+            applyPostBatchPipeline(paths, {
+                ...options,
+                engineTask,
+                sourceSubtitlePath: options.sourceSubtitlePath
+                    || item.sourceSubtitlePath
+                    || '',
+            }, {
                 onProgress: (info) => {
                     emitProgress(onProgress, engineTask, {
                         stage: 'cleanup',
@@ -1175,11 +1296,11 @@ async function runItemPostTaskHandoff(ctx = {}) {
                     blankRecovered: Number(direct?.filled) || 0,
                 });
             }
-            blankMeta = {
-                recovered: Number(direct?.filled) || 0,
-                left: Number(direct?.left) || 0,
-                blankRounds: 1,
-            };
+                    blankMeta = {
+                        recovered: Number(direct?.filled) || 0,
+                        left: Number(direct?.left) || 0,
+                        blankRounds: Math.max(1, Number(direct?.rounds) || 1),
+                    };
         } else {
             // Final delivery blank pass: ignore main-MT exhausted indexes so leftover
             // lexical …… get another LLM / deterministic recover (avoid 漏翻).
@@ -1224,17 +1345,22 @@ async function runItemPostTaskHandoff(ctx = {}) {
     // Final viewing polish AFTER QC / blank re-MT — earlier post-batch can be undone by
     // retranscribe or recovered MT text (punctuation, repetition, fillers).
     // Ends with delivery underfill QC (bare「哈」/欠译「舔」) after viewing punct.
-    const polishMeta = await runFinalPostBatchPolish(paths, item, options, {
+    // Prefer cues that QC-loop / blank-MT just filled (esp. former red holds).
+    const polishOptions = { ...options };
+    if ((Number(qcLoopMeta.retranslated) || 0) > 0 || (Number(blankMeta?.recovered) || 0) > 0) {
+        try {
+            const { loadBandMeta } = require('./engine-post-qc-loop-handoff');
+            const srcPath = String(item?.sourceSubtitlePath || '').trim();
+            const holds = loadBandMeta(srcPath)?.holdIndexes || [];
+            if (holds.length) polishOptions.preferFilledHoldIndexes = holds;
+        } catch { /* optional */ }
+    }
+    const polishMeta = await runFinalPostBatchPolish(paths, item, polishOptions, {
         engineTask,
         translateLike,
         onProgress,
         onLog,
     }) || {};
-
-    // 简繁放在观影后处理之后，避免空白重译补回的简体字漏转。
-    if (translateLike && chineseVariant !== 'simplified') {
-        await runChineseConvert(paths, chineseVariant, { engineTask, onProgress, onLog });
-    }
 
     if (presetGroupId) {
         await runTextPresetInsert(paths, presetGroupId, { engineTask, onProgress, onLog });
@@ -1254,6 +1380,8 @@ async function runItemPostTaskHandoff(ctx = {}) {
     // Guard: restore timeline if post-batch/credit left a mass t≈0 debris pile.
     // Prefer pre-QC disk snapshot; if that was already corrupted (polish ran earlier in
     // the batch loop), fall back to in-memory jobResult cues (seconds → ms).
+    // NOTE: this may rewrite ZH text from pre-OpenCC engine snaps (Simplified) — OpenCC
+    // must run AFTER this block (issue #72).
     {
         try {
             const keep = require('./transcript-keep');
@@ -1262,7 +1390,7 @@ async function runItemPostTaskHandoff(ctx = {}) {
 
             const fallbackFromEngine = (list) => {
                 if (!Array.isArray(list) || !list.length) return [];
-                return list.map((c, i) => {
+                const mapped = list.map((c, i) => {
                     const startSec = Number(c.start ?? c.startSec);
                     const endSec = Number(c.end ?? c.endSec);
                     let startMs = Number(c.startMs);
@@ -1270,7 +1398,7 @@ async function runItemPostTaskHandoff(ctx = {}) {
                     if (!Number.isFinite(startMs) || (startMs <= 0 && Number.isFinite(startSec) && startSec > 0.05)) {
                         startMs = Number.isFinite(startSec) ? Math.round(startSec * 1000) : NaN;
                     }
-                    if (!Number.isFinite(endMs) || (endMs <= startMs && Number.isFinite(endSec))) {
+                    if (!Number.isFinite(endMs) || (endMs <= startMs && Number.isFinite(endSec) && endSec > 0.05)) {
                         endMs = Number.isFinite(endSec) ? Math.round(endSec * 1000) : NaN;
                     }
                     if (!Number.isFinite(startMs)) startMs = 0;
@@ -1284,6 +1412,13 @@ async function runItemPostTaskHandoff(ctx = {}) {
                 });
                 // Keep blank ZH slots — filtering empty text desyncs JA↔ZH index pairs
                 // (NAAC ちゅく→"" then prune-by-index shifts the whole restore snap).
+                // Refuse all-zero / early-pile snaps — padding endMs must not launder them.
+                try {
+                    if (keep.cuesLackValidTiming?.(mapped) || keep.cuesHaveBrokenTimeline?.(mapped)) {
+                        return [];
+                    }
+                } catch { /* keep mapped */ }
+                return mapped;
             };
 
             const zhFallback = fallbackFromEngine(timingFallback?.zh || timingFallback?.target);
@@ -1326,6 +1461,21 @@ async function runItemPostTaskHandoff(ctx = {}) {
             const srcPath = String(item?.sourceSubtitlePath || '').trim();
             if (srcPath) targets.push(srcPath);
 
+            // A snap is only safe to write back when it still looks like a real media timeline.
+            // All-zero / QC-packed engine ZH used to pass brokenHead (maxStart≈0) and then
+            // force-overwrite good (or rematerializable) delivery files (SAN-494 timing-16k).
+            const timingSnapSafe = (list) => {
+                if (!Array.isArray(list) || list.length < 4) return false;
+                try {
+                    if (keep.cuesLackValidTiming?.(list)) return false;
+                    if (keep.cuesHaveBrokenTimeline?.(list)) return false;
+                    if (keep.cuesHaveBrokenHeadTimeline?.(list)) return false;
+                } catch {
+                    return false;
+                }
+                return true;
+            };
+
             // Decide once for the JA↔ZH pair — restoring only one side leaves startMs skew.
             let pairNeedsRestore = false;
             const resolvedTargets = [];
@@ -1337,11 +1487,13 @@ async function runItemPostTaskHandoff(ctx = {}) {
                 const isSource = !!(srcPath && path.resolve(srcPath) === key);
                 const engineFb = isSource ? jaEngineSnap : zhEngineSnap;
                 const preSnap = timingSnapshots.get(key) || [];
-                const brokenHead = keep.cuesHaveBrokenHeadTimeline(doc.cues);
-                const divergesFromPre = preSnap.length
+                const brokenHead = keep.cuesHaveBrokenHeadTimeline(doc.cues)
+                    || keep.cuesHaveBrokenTimeline?.(doc.cues)
+                    || keep.cuesLackValidTiming?.(doc.cues);
+                const divergesFromPre = preSnap.length && timingSnapSafe(preSnap)
                     ? keep.cuesHeadDivergesFromSnapshot(doc.cues, preSnap)
                     : false;
-                const divergesFromEngine = engineFb.length
+                const divergesFromEngine = engineFb.length && timingSnapSafe(engineFb)
                     ? keep.cuesHeadDivergesFromSnapshot(doc.cues, engineFb)
                     : false;
                 if (brokenHead || divergesFromPre || divergesFromEngine) pairNeedsRestore = true;
@@ -1354,19 +1506,29 @@ async function runItemPostTaskHandoff(ctx = {}) {
                     preSnap,
                 });
             }
-            // Prefer cleaned engine pair whenever timingFallback exists — postprocess / credit /
-            // refreshKept can leave JA↔ZH unpaired even when heads still look fine (NAAC-076).
-            if (zhEngineSnap.length >= 8 && jaEngineSnap.length >= 8) {
-                pairNeedsRestore = true;
+            // Only force engine-pair restore when delivery *count* drifted (unpaired risk).
+            // Blind restore whenever a healthy engine snap exists used to overwrite
+            // viewing-punct / inline-filler polished ZH with pre-polish「…」text (XVSR/GVH batch).
+            if (
+                timingSnapSafe(zhEngineSnap)
+                && timingSnapSafe(jaEngineSnap)
+                && zhEngineSnap.length >= 8
+                && jaEngineSnap.length >= 8
+            ) {
+                const zhRow = resolvedTargets.find((r) => !r.isSource);
+                const zhLen = Array.isArray(zhRow?.doc?.cues) ? zhRow.doc.cues.length : 0;
+                const drift = zhLen >= 8 && Math.abs(zhLen - zhEngineSnap.length) >= 2;
+                if (drift) pairNeedsRestore = true;
             }
 
+            let restoredAny = false;
             for (const row of resolvedTargets) {
                 if (!pairNeedsRestore) continue;
-                const { subPath, isSource, engineFb } = row;
-                // Always prefer cleaned engine pair when available — text_match borrow is unsafe.
-                const snap = (engineFb.length && !keep.cuesHaveBrokenHeadTimeline(engineFb))
+                const { subPath, engineFb } = row;
+                // Prefer cleaned engine pair only when its timeline is still trustworthy.
+                const snap = timingSnapSafe(engineFb)
                     ? engineFb
-                    : (row.preSnap || []);
+                    : (timingSnapSafe(row.preSnap) ? row.preSnap : []);
                 if (!snap.length) continue;
 
                 let cues = snap.map((c, i) => ({
@@ -1392,6 +1554,7 @@ async function runItemPostTaskHandoff(ctx = {}) {
                     backupMode: 'off',
                 });
                 if (written?.ok) {
+                    restoredAny = true;
                     onLog?.(
                         `时间轴护栏 · ${path.basename(subPath)} · 已从`
                         + (snap === engineFb ? '任务结果' : '收尾前快照')
@@ -1399,19 +1562,150 @@ async function runItemPostTaskHandoff(ctx = {}) {
                     );
                 }
             }
+
+            // Restore writes pre-polish text — re-apply viewing polish on ZH so「…」不回流。
+            if (restoredAny && translateLike) {
+                try {
+                    const { applyPostBatchPipeline } = require('./post-batch-pipeline');
+                    const zhOnly = resolvedTargets
+                        .filter((r) => !r.isSource)
+                        .map((r) => r.subPath)
+                        .filter(Boolean);
+                    if (zhOnly.length) {
+                        applyPostBatchPipeline(zhOnly, {
+                            ...options,
+                            engineTask,
+                            sourceSubtitlePath: srcPath || options.sourceSubtitlePath || '',
+                            postBatchCpsSplit: false,
+                        }, { onLog });
+                        onLog?.('时间轴护栏后 · 已重跑观影精简');
+                    }
+                } catch (err) {
+                    onLog?.(`护栏后观影精简跳过：${err.message || err}`);
+                }
+            }
+
+            // Last resort: dead ZH + healthy JA → positional rematerialize (keeps ZH text).
+            try {
+                const { rematerializeSubtitlePairFiles } = require('./mt-pair-rematerialize');
+                const jaTarget = resolvedTargets.find((r) => r.isSource)
+                    || (srcPath ? { subPath: srcPath } : null);
+                for (const row of resolvedTargets) {
+                    if (row.isSource) continue;
+                    if (!jaTarget?.subPath) continue;
+                    const zhDoc = readSubtitleDocument(row.subPath);
+                    const jaDoc = readSubtitleDocument(jaTarget.subPath);
+                    if (!zhDoc?.ok || !jaDoc?.ok) continue;
+                    if (!keep.cuesHaveBrokenTimeline?.(zhDoc.cues)
+                        && !keep.cuesLackValidTiming?.(zhDoc.cues)) {
+                        continue;
+                    }
+                    if (keep.cuesHaveBrokenTimeline?.(jaDoc.cues)
+                        || keep.cuesLackValidTiming?.(jaDoc.cues)) {
+                        continue;
+                    }
+                    const rem = rematerializeSubtitlePairFiles(row.subPath, jaTarget.subPath, {
+                        force: true,
+                        preferPositional: true,
+                        backupMode: 'off',
+                    });
+                    if (rem?.written) {
+                        onLog?.(
+                            `时间轴护栏 · ${path.basename(row.subPath)} · 已按原文重铺（译文轴失效）`,
+                        );
+                    }
+                }
+            } catch { /* optional */ }
         } catch (err) {
-            onLog?.(`时间轴护栏跳过：${err.message || err}`);
+            // Fail-closed signal: do not silently stamp a broken ZH timeline as ok.
+            onLog?.(`时间轴护栏失败：${err.message || err}`);
+            try {
+                const keepChk = require('./transcript-keep');
+                const { readSubtitleDocument: readSubDoc } = require('./extensions-bridge');
+                const zhCheck = String(
+                    item?.targetSubtitlePath
+                    || item?.subtitlePath
+                    || outPaths?.targetSubtitlePath
+                    || outPaths?.subtitlePath
+                    || '',
+                ).trim();
+                if (zhCheck) {
+                    const doc = readSubDoc(zhCheck);
+                    if (doc?.ok && (
+                        keepChk.cuesHaveBrokenTimeline?.(doc.cues)
+                        || keepChk.cuesLackValidTiming?.(doc.cues)
+                    )) {
+                        onLog?.(`时间轴护栏 · ${path.basename(zhCheck)} · 译文时间轴仍异常，请检查成片`);
+                        if (item && typeof item === 'object') {
+                            item.timingGuardFailed = true;
+                            item.timingGuardError = String(err.message || err);
+                        }
+                    }
+                }
+            } catch { /* best-effort diagnostics only */ }
         }
     }
 
-    // Absolute last file mutation: timing restore / credit re-write from engine snaps can
-    // reintroduce bare「…」that runDropUselessEllipsisPass already cleared earlier.
+    // Absolute last file mutation before script convert: timing restore / credit re-write
+    // from engine snaps can reintroduce bare「…」that runDropUselessEllipsisPass already
+    // cleared earlier.
     if (translateLike) {
         await runDropUselessEllipsisPass(item, options, {
             engineTask,
             onProgress,
             onLog,
         });
+        // Belt-and-suspenders: det-fill any leftover bare「…」via shared short-fill
+        // (りがとう truncation / Xです) even when earlier blank-LLM skipped.
+        try {
+            const mtSanitize = require('../src/js/mt-sanitize-core');
+            const { readSubtitleDocument, writeSubtitleDocument } = require('./extensions-bridge');
+            const batchPostprocessPlan = require('./engine-batch-postprocess-plan');
+            const uniqueZh = batchPostprocessPlan.collectUniqueZhSubtitlePaths(item, {
+                resolve: path.resolve,
+                existsSync: (p) => require('fs').existsSync(p),
+            });
+            const jaPath = String(item?.sourceSubtitlePath || '').trim();
+            let jaCues = [];
+            if (jaPath) {
+                const jaDoc = readSubtitleDocument(jaPath);
+                if (jaDoc?.ok) jaCues = jaDoc.cues || [];
+            }
+            if (jaCues.length && typeof mtSanitize.fillBlankZhSlotsFromJa === 'function') {
+                let totalFilled = 0;
+                for (const zhPath of uniqueZh) {
+                    if (path.resolve(zhPath) === path.resolve(jaPath)) continue;
+                    const zhDoc = readSubtitleDocument(zhPath);
+                    if (!zhDoc?.ok) continue;
+                    const filled = mtSanitize.fillBlankZhSlotsFromJa(zhDoc.cues || [], jaCues);
+                    if (!(filled?.filled > 0)) continue;
+                    totalFilled += filled.filled;
+                    writeSubtitleDocument(zhPath, {
+                        cues: filled.cues,
+                        format: zhDoc.format,
+                        header: zhDoc.header,
+                        backupMode: 'off',
+                    });
+                }
+                if (totalFilled > 0) {
+                    onLog?.(`收尾确定性补全省略号 ${totalFilled} 条`);
+                }
+            }
+        } catch (err) {
+            onLog?.(`收尾确定性补全跳过：${err.message || err}`);
+        }
+    }
+
+    // OpenCC AFTER timing restore + ellipsis. GalTransl / force pair-restore rewrites ZH
+    // from Simplified engine snaps; converting earlier leaves 成片 stuck in 简体 (#72).
+    // Yue/zh 听写选繁体时也要跑（task=transcribe，无 MT）。
+    const scriptSourceNeedsVariant = (() => {
+        const lang = String(options.language || options.sourceLanguage || '').trim().toLowerCase();
+        return lang === 'yue' || lang === 'zh-yue' || lang === 'cantonese'
+            || lang === 'zh' || lang === 'zh-cn' || lang === 'zh-hans';
+    })();
+    if ((translateLike || scriptSourceNeedsVariant) && chineseVariant !== 'simplified') {
+        await runChineseConvert(paths, chineseVariant, { engineTask, onProgress, onLog });
     }
 
     const underfillStats = polishMeta.underfillStats || {};

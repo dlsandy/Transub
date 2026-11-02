@@ -6,11 +6,13 @@ describe('film audio / free audio options persistence', () => {
     it('mergeTransWithAiOptions keeps film/audio flags from input', () => {
         const merged = mergeTransWithAiOptions({
             filmAudioEnhance: true,
+            enhanceForVadOnly: true,
             vadAggressive: true,
             audioLightDenoise: true,
             smartTranslate: true,
         });
         assert.strictEqual(merged.filmAudioEnhance, true);
+        assert.strictEqual(merged.enhanceForVadOnly, true);
         assert.strictEqual(merged.vadAggressive, true);
         assert.strictEqual(merged.audioLightDenoise, true);
         assert.strictEqual(merged.smartTranslate, true);
@@ -19,6 +21,7 @@ describe('film audio / free audio options persistence', () => {
     it('normalize/save path preserves filmAudioEnhance and free audio toggles', () => {
         const normalized = buildTransWithAiOptionsFromPayload({
             filmAudioEnhance: true,
+            enhanceForVadOnly: true,
             vadAggressive: true,
             audioLightDenoise: true,
             smartTranslate: true,
@@ -26,10 +29,19 @@ describe('film audio / free audio options persistence', () => {
             task: 'translate',
         }, {});
         assert.strictEqual(normalized.filmAudioEnhance, true);
+        assert.strictEqual(normalized.enhanceForVadOnly, true);
         assert.strictEqual(normalized.vadAggressive, true);
         assert.strictEqual(normalized.audioLightDenoise, true);
         assert.strictEqual(normalized.smartTranslate, true);
         assert.strictEqual(normalized.smartTranslateFaithfulTone, true);
+    });
+
+    it('normalize clears enhanceForVadOnly when film enhance off', () => {
+        const normalized = buildTransWithAiOptionsFromPayload({
+            filmAudioEnhance: false,
+            enhanceForVadOnly: true,
+        }, {});
+        assert.strictEqual(normalized.enhanceForVadOnly, false);
     });
 
     it('keeps faithful tone for all translate modes even when smart translate is off', () => {
@@ -70,6 +82,7 @@ describe('film audio / free audio options persistence', () => {
     it('preserves engine extras (filmVadPreset, glossaryMt, words/karaoke)', () => {
         const normalized = buildTransWithAiOptionsFromPayload({
             filmVadPreset: true,
+            filmAudioEnhance: false,
             neuralDiarize: true,
             glossaryMtEnabled: false,
             includeWords: true,
@@ -145,7 +158,7 @@ describe('film audio / free audio options persistence', () => {
         assert.strictEqual(roundTrip.qwenAsrBatchMode, 'aggressive');
 
         const junk = buildTransWithAiOptionsFromPayload({ qwenAsrBatchMode: 'nope' }, {});
-        assert.strictEqual(junk.qwenAsrBatchMode, 'auto');
+        assert.strictEqual(junk.qwenAsrBatchMode, 'aggressive');
     });
 
     it('migrates legacy silero VAD alias to silero-vad on save', () => {
@@ -288,7 +301,7 @@ describe('film audio / free audio options persistence', () => {
         assert.strictEqual(defaults.smartTranslatePlotPolish, true);
         assert.strictEqual(defaults.smartTranslateFaithfulVerify, true);
         assert.strictEqual(defaults.smartTranslateAddressConsistency, true);
-        assert.strictEqual(defaults.asrSecondOpinion, 'off');
+        assert.strictEqual(defaults.asrSecondOpinion, 'auto');
         assert.strictEqual(defaults.smartTranslatePolishSampleLimit, 36);
 
         // Hybrid preference is always on; polish false still overwrites prior true.

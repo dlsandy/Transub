@@ -4,6 +4,9 @@
 const core = require('../src/js/sakura-translate-core');
 const hymtCore = require('../src/js/hymt-translate-core');
 const tgCore = require('../src/js/translategemma-translate-core');
+const murasakiCore = require('../src/js/murasaki-translate-core');
+const orionCore = require('../src/js/orion-translate-core');
+const indexCore = require('../src/js/index-translate-core');
 const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
 const sakuraMt = require('./sakura-mt');
 const {
@@ -15,6 +18,9 @@ const { chatCompletions, isMockMode } = require('./advanced-llm-client');
 const llamaServer = require('./advanced-llama-server');
 const { asPlainObject, asString, asNumber } = require('./ipc-validate');
 const mtSanitize = require('../src/js/mt-sanitize-core');
+const longTrackPolicy = require('../src/js/mt-long-track-policy-core');
+const softViewing = require('../src/js/av-soft-viewing-policy-core');
+const { recoverSakuraChunkAfterFailure } = require('./sakura-chunk-resilient');
 
 /** Default llama.cpp / OpenAI-compat anti-loop for Sakura batches. */
 const SAKURA_REPETITION_PENALTY = 1.18;
@@ -157,9 +163,12 @@ async function translateCueBatch(cues, ctx) {
         nsfwLexicon: ctx.nsfwLexicon,
         _blankRetry: !!ctx._blankRetry,
         _qualityRetry: !!ctx._qualityRetry,
+        _glossaryRetry: !!ctx._glossaryRetry,
         _ellipsisHardFail: !!ctx._ellipsisHardFail,
         _ellipsisHardFailLong: !!ctx._ellipsisHardFailLong,
         _ellipsisQuickDirect: !!ctx._ellipsisQuickDirect,
+        murasakiPreset: ctx.murasakiPreset,
+        enableThinking: ctx.enableThinking,
         hyMtMinimalPrompt: !!ctx.hyMtMinimalPrompt,
         hyMtQualityRetry: !!ctx.hyMtQualityRetry,
         qualityReasons: ctx.qualityReasons,
@@ -173,9 +182,6 @@ async function translateCueBatch(cues, ctx) {
             })),
         };
     }
-    const maxTokens = Number.isFinite(Number(ctx.maxTokens))
-        ? Math.max(32, Math.min(1024, Math.round(Number(ctx.maxTokens))))
-        : core.estimateMaxTokens(cues);
     const family = ctx.promptFamily || sakuraMt.resolvePromptFamily?.(ctx.modelId) || 'sakura';
     const isHyMt = family === 'hymt' || hymtCore.isHyMtModel(ctx.modelId);
     const isHunyuan = family === 'hunyuan' || hymtCore.isHunyuanMtModel?.(ctx.modelId);
@@ -184,6 +190,9 @@ async function translateCueBatch(cues, ctx) {
         || family === 'translategemma'
         || tgCore.isTranslateGemmaOfficialModel?.(ctx.modelId)
         || (!isTgSub && tgCore.isTranslateGemmaModel(ctx.modelId));
+    const isMurasaki = family === 'murasaki' || murasakiCore.isMurasakiModel?.(ctx.modelId);
+    const isOrion = family === 'orion' || orionCore.isOrionModel?.(ctx.modelId);
+    const isIndex = family === 'index' || indexCore.isIndexTranslateModel?.(ctx.modelId);
     const hyInf = isHyMt ? hymtCore.resolveHyMtInferenceOptions(ctx) : null;
     const hunyuanInf = isHunyuan ? hymtCore.resolveHunyuanMtInferenceOptions?.(ctx) : null;
     const tgInf = isTg ? tgCore.resolveTranslateGemmaInferenceOptions({
@@ -191,6 +200,17 @@ async function translateCueBatch(cues, ctx) {
         promptFamily: isTgSub ? 'translategemmasub' : ctx.promptFamily,
         modelId: ctx.modelId,
     }) : null;
+    const murasakiInf = isMurasaki ? murasakiCore.resolveMurasakiInferenceOptions(ctx) : null;
+    const orionInf = isOrion ? orionCore.resolveOrionInferenceOptions(ctx) : null;
+    const indexInf = isIndex ? indexCore.resolveIndexInferenceOptions(ctx) : null;
+    const tokenCap = isMurasaki
+        ? (murasakiInf?.maxTokensCap || 2048)
+        : (isOrion ? (orionInf?.maxTokensCap || 1024) : 1024);
+    const maxTokens = Number.isFinite(Number(ctx.maxTokens))
+        ? Math.max(32, Math.min(tokenCap, Math.round(Number(ctx.maxTokens))))
+        : (isMurasaki
+            ? murasakiCore.estimateMaxTokens(cues, ctx)
+            : (isOrion ? orionCore.estimateMaxTokens(cues) : core.estimateMaxTokens(cues)));
     const llm = await chatCompletions({
         apiKey: ctx.apiKey,
         baseUrl: ctx.baseUrl,
@@ -199,31 +219,58 @@ async function translateCueBatch(cues, ctx) {
             ? hyInf.temperature
             : (isHunyuan
                 ? (hunyuanInf?.temperature ?? 0.5)
-                : (isTg ? tgInf.temperature : 0.2)),
+                : (isIndex
+                    ? indexInf.temperature
+                    : (isTg ? tgInf.temperature : (orionInf
+                        ? orionInf.temperature
+                        : (murasakiInf ? murasakiInf.temperature : 0.2))))),
         top_p: isHyMt
             ? hyInf.top_p
             : (isHunyuan
                 ? hunyuanInf?.top_p
-                : (isTg ? tgInf.top_p : undefined)),
+                : (isIndex
+                    ? indexInf.top_p
+                    : (isTg ? tgInf.top_p : (orionInf
+                        ? orionInf.top_p
+                        : (murasakiInf ? murasakiInf.top_p : undefined))))),
         timeoutMs: ctx.timeoutMs,
         signal: ctx.signal,
         messages,
         max_tokens: maxTokens,
+        enableThinking: murasakiInf
+            ? murasakiInf.enableThinking === true
+            : ((orionInf || indexInf) ? false : undefined),
         repetition_penalty: isHyMt
             ? hyInf.repetition_penalty
             : (isHunyuan
                 ? (hunyuanInf?.repetition_penalty ?? 1.05)
-                : (isTg ? tgInf.repetition_penalty : SAKURA_REPETITION_PENALTY)),
-        frequency_penalty: (isHyMt || isHunyuan || isTg) ? undefined : SAKURA_FREQUENCY_PENALTY,
+                : (isIndex
+                    ? indexInf.repetition_penalty
+                    : (isTg ? tgInf.repetition_penalty : (orionInf
+                        ? orionInf.repetition_penalty
+                        : (murasakiInf ? murasakiInf.repetition_penalty : SAKURA_REPETITION_PENALTY))))),
+        frequency_penalty: (isHyMt || isHunyuan || isIndex || isTg || murasakiInf || orionInf)
+            ? undefined
+            : SAKURA_FREQUENCY_PENALTY,
         stop: isHyMt
             ? hyInf.stop
-            : (isHunyuan ? hunyuanInf?.stop : (isTg ? tgInf.stop : undefined)),
-        // Hy-MT soft-AV prefixes are stable across batches — allow llama.cpp prompt cache.
+            : (isHunyuan
+                ? hunyuanInf?.stop
+                : (isIndex
+                    ? indexInf.stop
+                    : (isTg
+                        ? tgInf.stop
+                        : (murasakiInf?.stop || undefined)))),
+        // Hy-MT / Index prefixes are stable across batches — allow llama.cpp prompt cache.
         cachePrompt: isHyMt
             ? hyInf.cachePrompt !== false
             : (isHunyuan
                 ? hunyuanInf?.cachePrompt !== false
-                : (isTg ? tgInf.cachePrompt !== false : false)),
+                : (isIndex
+                    ? indexInf.cachePrompt !== false
+                    : (isTg ? tgInf.cachePrompt !== false : ((murasakiInf || orionInf)
+                        ? (murasakiInf || orionInf).cachePrompt !== false
+                        : false)))),
     });
     if (!llm.ok) {
         return { ok: false, error: llm.error || '本地推理失败', cues: [], code: llm.code };
@@ -246,7 +293,21 @@ async function translateCueBatch(cues, ctx) {
             applyNsfwLexicon: true,
         });
     }
-    const parsed = core.parseLineAlignedOutput(llm.content, cues);
+    let parsed = null;
+    if (isOrion && typeof orionCore.parseOrionJsonlineOutput === 'function') {
+        parsed = orionCore.parseOrionJsonlineOutput(llm.content, cues);
+    }
+    // Hy-MT multi-cue: prefer numbered parse (1. 2. …) before bare newline zip.
+    if (
+        !parsed
+        && isHyMt
+        && cues.length > 1
+        && typeof hymtCore.parseHyMtNumberedOutput === 'function'
+    ) {
+        const numbered = hymtCore.parseHyMtNumberedOutput(llm.content, cues);
+        if (numbered?.ok) parsed = numbered;
+    }
+    if (!parsed) parsed = core.parseLineAlignedOutput(llm.content, cues);
     if (!parsed.ok) return parsed;
 
     const sanitizeOpts = {
@@ -346,9 +407,9 @@ async function translateCueBatch(cues, ctx) {
         }
     }
 
-    // GalTransl: skip mid-chunk deep sanitize (final whole-track pass still runs).
+    // GalTransl / Murasaki: skip mid-chunk deep sanitize (final whole-track pass still runs).
     // Invent-as-blank heuristics here used to wipe good paraphrases → blank-retry storms.
-    const skipMidSanitize = !!(ctx._skipMtSanitize || family === 'galtransl');
+    const skipMidSanitize = !!(ctx._skipMtSanitize || family === 'galtransl' || isMurasaki);
     const cleaned = skipMidSanitize
         ? { cues: parsed.cues }
         : mtSanitize.sanitizeMtCues(parsed.cues, cues, sanitizeOpts);
@@ -363,11 +424,21 @@ async function translateCueBatch(cues, ctx) {
             };
         });
     }
+    if (isMurasaki && typeof murasakiCore.finalizeMurasakiCue === 'function') {
+        outCues = cues.map((c) => {
+            const hit = (outCues || []).find((u) => Number(u.index) === Number(c.index));
+            return {
+                index: c.index,
+                text: murasakiCore.finalizeMurasakiCue(c.text, hit?.text ?? ''),
+            };
+        });
+    }
     // Exact line count but many blanks/leaks wiped by sanitize — still collapse the window.
     // Prefer blank-only retry over full-window per-cue fallback (GalTransl window=8 storm).
-    // GalTransl mid-pass: only literal empty/ellipsis counts as blank (no invent heuristics).
+    // GalTransl / Murasaki mid-pass: only literal empty/ellipsis counts as blank.
     if (cues.length > 1 && !ctx._lineAlignFallback && !ctx._skipBlankRetry) {
-        const blankIndexes = (family === 'galtransl' && typeof core.collectLiteralBlankTranslationIndexes === 'function')
+        const blankIndexes = ((family === 'galtransl' || isMurasaki)
+            && typeof core.collectLiteralBlankTranslationIndexes === 'function')
             ? core.collectLiteralBlankTranslationIndexes(cues, outCues)
             : core.collectBlankTranslationIndexes(cues, outCues);
         const blankRatio = blankIndexes.length / cues.length;
@@ -520,9 +591,15 @@ async function fillLiteralEllipsisQuickDirect({
     }
 
     const maxCountRaw = Number(batchCtx?.quickDirectMaxCount);
+    const isMurasakiQuick = promptFamily === 'murasaki'
+        || murasakiCore.isMurasakiModel?.(batchCtx?.modelId);
+    // Final pass: do not leave leftover「…」capped below what the editor can
+    // batch-retranslate. Explicit quickDirectMaxCount still wins when set.
     const maxCount = Number.isFinite(maxCountRaw) && maxCountRaw > 0
         ? Math.round(maxCountRaw)
-        : Math.max(24, Math.min(80, Math.ceil(src.length * 0.1)));
+        : (isMurasakiQuick
+            ? Math.max(1, src.length)
+            : Math.max(24, Math.min(120, Math.ceil(src.length * 0.12))));
     let shouldSkip = null;
     if (promptFamily === 'hymt' || hymtCore.isHyMtModel?.(batchCtx?.modelId)) {
         try {
@@ -557,29 +634,69 @@ async function fillLiteralEllipsisQuickDirect({
     let filled = 0;
     const attemptedIndexes = [];
     const failedIndexes = [];
-    // 直译 = one JA line per request, never pack sparse blanks.
+    // Serial 1-cue: batching neighboring blanks still collapsed to「…」on Murasaki.
+    // Carry previous JA/ZH like the main Script path / editor retranslate.
     const windowSize = 1;
     const batches = [];
     for (let i = 0; i < todo.length; i += windowSize) {
         batches.push(todo.slice(i, i + windowSize));
     }
+    const resolvePrevForBatch = (batch) => {
+        if (!isMurasakiQuick || typeof murasakiCore.buildMurasakiPreviousContext !== 'function') {
+            return {};
+        }
+        return murasakiCore.buildMurasakiPreviousContext({
+            sourceCues: src,
+            translatedByIndex: byOut,
+            currentChunkCues: batch,
+            maxLines: 2,
+        });
+    };
+    const acceptQuickText = (cue, raw) => {
+        let text = String(raw ?? '');
+        if (typeof tgCore.finalizeTranslateGemmaCue === 'function') {
+            text = tgCore.finalizeTranslateGemmaCue(cue.text, text);
+        }
+        if (isMurasakiQuick && typeof murasakiCore.finalizeMurasakiCue === 'function') {
+            text = murasakiCore.finalizeMurasakiCue(cue.text, text);
+        }
+        const unusable = isMurasakiQuick && murasakiCore.isMurasakiUnusableZh?.(text);
+        if (unusable || (typeof core.isLiteralBlankTranslation === 'function'
+            ? core.isLiteralBlankTranslation(text)
+            : !String(text || '').trim())) {
+            return '';
+        }
+        return text;
+    };
     for (const batch of batches) {
         if (signal?.aborted || batchCtx?.signal?.aborted) break;
         for (const cue of batch) {
             const idx = Number(cue.index);
             if (Number.isInteger(idx)) attemptedIndexes.push(idx);
         }
+        const prevCtx = resolvePrevForBatch(batch);
         const one = await translateCueBatch(batch, {
             ...batchCtx,
+            ...prevCtx,
+            // HyMT still uses blank-retry short; Murasaki uses Script (via
+            // _ellipsisQuickDirect) — same shape as editor batch retranslate.
             _blankRetry: promptFamily === 'hymt',
             _lineAlignFallback: promptFamily === 'hymt',
             _skipBlankRetry: true,
             _skipMtSanitize: true,
             _ellipsisQuickDirect: true,
+            _ellipsisHardFail: isMurasakiQuick || promptFamily === 'hymt',
+            murasakiPreset: isMurasakiQuick ? 'script' : batchCtx?.murasakiPreset,
             hyMtMinimalPrompt: promptFamily === 'hymt',
             maxTokens: Math.max(
                 96,
-                core.estimateMaxTokens?.(batch) || (64 * Math.max(1, batch.length)),
+                isMurasakiQuick
+                    ? (murasakiCore.estimateMaxTokens?.(batch, {
+                        ...batchCtx,
+                        _ellipsisQuickDirect: true,
+                        murasakiPreset: 'script',
+                    }) || 160)
+                    : (core.estimateMaxTokens?.(batch) || (64 * Math.max(1, batch.length))),
             ),
         });
         if (!one?.ok) {
@@ -591,15 +708,33 @@ async function fillLiteralEllipsisQuickDirect({
         }
         for (const cue of batch) {
             const idx = Number(cue.index);
-            let text = '';
             const hit = (one.cues || []).find((u) => Number(u.index) === Number(cue.index));
-            text = hit ? String(hit.text ?? '') : '';
-            if (typeof tgCore.finalizeTranslateGemmaCue === 'function') {
-                text = tgCore.finalizeTranslateGemmaCue(cue.text, text);
+            let text = acceptQuickText(cue, hit ? hit.text : '');
+            // One salvage like editor: short collapse → Script with prev again
+            // (explicit preset; slightly cooler) if first return was blank.
+            if (!text && isMurasakiQuick && !signal?.aborted && !batchCtx?.signal?.aborted) {
+                const salvage = await translateCueBatch([cue], {
+                    ...batchCtx,
+                    ...resolvePrevForBatch([cue]),
+                    _ellipsisQuickDirect: true,
+                    _skipBlankRetry: true,
+                    _skipMtSanitize: true,
+                    _ellipsisHardFail: true,
+                    murasakiPreset: 'script',
+                    enableThinking: false,
+                    maxTokens: Math.max(
+                        96,
+                        murasakiCore.estimateMaxTokens?.([cue], {
+                            ...batchCtx,
+                            _ellipsisQuickDirect: true,
+                            murasakiPreset: 'script',
+                        }) || 160,
+                    ),
+                });
+                const hit2 = (salvage?.cues || []).find((u) => Number(u.index) === Number(cue.index));
+                text = acceptQuickText(cue, hit2 ? hit2.text : '');
             }
-            if (typeof core.isLiteralBlankTranslation === 'function'
-                ? core.isLiteralBlankTranslation(text)
-                : !String(text || '').trim()) {
+            if (!text) {
                 if (Number.isInteger(idx)) failedIndexes.push(idx);
                 continue;
             }
@@ -676,12 +811,12 @@ async function runSakuraTranslateBody(payload = {}) {
         const route = mtRoute.resolveMtTargetRoute(p);
         if (!route.isZhTarget) {
             const modelId = String(p.modelId || p.engineMtModel || '').trim();
-            // Sakura / Gal / Hy-MT are JA→ZH only; general LLM (Qwen etc.) may serve intl.
+            // Sakura / Gal are JA→ZH; Hy-MT2 is multilingual→ZH only — not for intl 成片.
             if (!modelId || mtRoute.isSakuraOrGalMtId(modelId)) {
                 return {
                     ok: false,
                     error: route.reason
-                        || '非中文成片请改用智能翻译或通用推理模型（专训模型仅支持日→中）',
+                        || '非中文成片请改用智能翻译或通用推理模型（Hy-MT2 / Sakura 等仅支持译入中文）',
                     code: 'intl_target_unsupported',
                     cues: [],
                 };
@@ -737,7 +872,24 @@ async function runSakuraTranslateBody(payload = {}) {
         };
     }
 
-    const modelId = asString(p.modelId || sakuraMt.DEFAULT_MODEL_ID, 128).trim();
+    let modelId = asString(p.modelId || sakuraMt.DEFAULT_MODEL_ID, 128).trim();
+    // Soft-AV Hy-MT: prefer a larger installed sibling when VRAM allows (escape: preferLargerHyMt=false).
+    if (hymtCore.isHyMtModel?.(modelId) && typeof hymtCore.maybeUpgradeHyMtModelId === 'function') {
+        try {
+            const llmFs = require('./advanced-llm-fs');
+            const installed = [];
+            for (const entry of sakuraCatalog.listCatalog?.() || []) {
+                if (llmFs.isModelInstalled?.(entry)) installed.push(entry.id);
+            }
+            const upgraded = hymtCore.maybeUpgradeHyMtModelId(modelId, installed, {
+                contentProfile: p.contentProfile || p.senseProfile,
+                senseProfile: p.senseProfile || p.contentProfile,
+                vramGb: p.vramGb ?? p.vramGB,
+                preferLargerHyMt: p.preferLargerHyMt,
+            });
+            if (upgraded && upgraded !== modelId) modelId = upgraded;
+        } catch { /* keep original */ }
+    }
     const engineExternalMt = !!p._engineExternalMt;
     const send = (info) => {
         if (typeof p.onProgress === 'function') {
@@ -752,9 +904,18 @@ async function runSakuraTranslateBody(payload = {}) {
     const dryRun = !!p.dryRun || isMockMode();
 
     // Per-chunk timeout: keep batch responsive; full-job 180s was masking runaway generation.
-    // Engine external MT already sends small batches (≈8 cues) and may cold-start llama —
-    // allow a longer default so first-chunk load+infer is not a hard fail.
-    const chunkTimeoutFallback = p._engineExternalMt ? 180000 : 60000;
+    // Engine external MT / Murasaki / long tracks get more headroom before half-window recovery.
+    const trackSpanMsEarly = longTrackPolicy.resolveTrackSpanMs(
+        Array.isArray(p.cues) ? p.cues : [],
+    );
+    const trackCueCountEarly = Array.isArray(p.cues) ? p.cues.length : 0;
+    const chunkTimeoutFallback = longTrackPolicy.resolveLongTrackChunkTimeoutMs({
+        engineExternalMt: !!p._engineExternalMt,
+        murasaki: sakuraCatalog.resolvePromptFamily(modelId) === 'murasaki',
+        cueCount: trackCueCountEarly,
+        spanMs: trackSpanMsEarly,
+        timeoutMs: p.timeoutMs,
+    });
     const chunkTimeoutMs = asNumber(p.timeoutMs, {
         min: 15000,
         max: 300000,
@@ -785,14 +946,29 @@ async function runSakuraTranslateBody(payload = {}) {
                 || tgCore.isTranslateGemmaModel(modelId)
                 ? tgCore.resolveTranslateGemmaInferenceOptions({ ...p, modelId, promptFamily: fam })
                 : null;
+            const murasakiOpts = fam === 'murasaki' || murasakiCore.isMurasakiModel?.(modelId)
+                ? murasakiCore.resolveMurasakiInferenceOptions({ ...p, modelId })
+                : null;
+            const orionOpts = fam === 'orion' || orionCore.isOrionModel?.(modelId)
+                ? orionCore.resolveOrionInferenceOptions(p)
+                : null;
+            const indexOpts = fam === 'index' || indexCore.isIndexTranslateModel?.(modelId)
+                ? indexCore.resolveIndexInferenceOptions(p)
+                : null;
             endpoint = await resolveSentenceMtEndpoint({
                 modelId,
                 translateMode: p.translateMode || p.options?.translateMode,
                 onProgress: send,
                 signal: p.signal,
-                afterAsr: !!(p.afterAsr || p._engineExternalMt),
+                // Engine external MT already calls release_gpu (pre_mt) before POSTing batches.
+                afterAsr: !!p.afterAsr,
                 engineUrl,
-                contextSize: hyOpts?.contextSize || hunyuanOpts?.contextSize || tgOpts?.contextSize,
+                contextSize: hyOpts?.contextSize
+                    || hunyuanOpts?.contextSize
+                    || indexOpts?.contextSize
+                    || tgOpts?.contextSize
+                    || murasakiOpts?.contextSize
+                    || orionOpts?.contextSize,
             });
             if (!endpoint.ok) return endpoint;
             promptFamily = resolveSentenceMtPromptFamily(modelId, endpoint);
@@ -837,9 +1013,22 @@ async function runSakuraTranslateBody(payload = {}) {
             }
         }
         const glossaryTerms = extractGlossaryTerms(p.glossary);
+        try {
+            const richApi = require('../src/js/sensevoice-rich-tags-core');
+            const subPath = String(p.sourceSubtitlePath || p.subtitlePath || '').trim();
+            if (subPath && richApi.richTagsEnabled(p.sensevoiceRichTags)) {
+                const { readSubtitleMeta } = require('./subtitle-meta');
+                const doc = readSubtitleMeta(subPath);
+                if (Array.isArray(doc?.meta?.entries) && doc.meta.entries.length) {
+                    cues = richApi.attachRichFromSidecarEntries(cues, doc.meta.entries, p);
+                }
+            }
+        } catch { /* optional */ }
         const nsfwOn = core.shouldUseNsfwPrompt(p);
         const isHyMtRun = sakuraCatalog.resolvePromptFamily?.(modelId) === 'hymt'
             || hymtCore.isHyMtModel(modelId);
+        const isIndexRun = sakuraCatalog.resolvePromptFamily?.(modelId) === 'index'
+            || indexCore.isIndexTranslateModel?.(modelId);
         const isTgSubRun = sakuraCatalog.resolvePromptFamily?.(modelId) === 'translategemmasub'
             || tgCore.isTranslateGemmaSubModel?.(modelId);
         const isTgRun = isTgSubRun
@@ -849,16 +1038,34 @@ async function runSakuraTranslateBody(payload = {}) {
         // Blank-retry inputs are sparse/non-adjacent — packing them into one GalTransl
         // chat caused empty zip + whole-track 对位审计 mass-clear storms. Force 1 there.
         // Main pass: GalTransl/Sakura default to multi-line windows (core DEFAULT=8);
-        // Hy-MT / TranslateGemma keep serial 1 unless caller sets windowLines.
-        const isGalOrSakuraFamily = promptFamily === 'galtransl' || promptFamily === 'sakura';
+        // Hy-MT uses numbered multi-cue windows (resolveHyMtWindowLines); Index/TG stay 1.
+        const isGalOrSakuraFamily = promptFamily === 'galtransl'
+            || promptFamily === 'sakura'
+            || promptFamily === 'murasaki';
         let windowLines = 1;
         if (p._blankRetry) {
             windowLines = 1;
         } else if (Number.isFinite(Number(p.windowLines)) && Number(p.windowLines) > 0) {
             windowLines = Math.max(1, Math.min(20, Math.round(Number(p.windowLines))));
-        } else if (isGalOrSakuraFamily && !isHyMtRun && !isTgRun) {
+        } else if (isHyMtRun) {
+            windowLines = hymtCore.resolveHyMtWindowLines?.({
+                ...p,
+                modelId,
+                promptFamily,
+            }) || hymtCore.HYMT_WINDOW_LINES_DEFAULT || 3;
+        } else if (promptFamily === 'murasaki') {
+            windowLines = murasakiCore.resolveMurasakiInferenceOptions({ ...p, modelId }).windowLines || 6;
+        } else if (promptFamily === 'orion') {
+            windowLines = orionCore.resolveOrionInferenceOptions(p).windowLines || 6;
+        } else if (isGalOrSakuraFamily && !isIndexRun && !isTgRun) {
             windowLines = core.DEFAULT_WINDOW_LINES || 8;
         }
+        // Soft-AV: tighten multi-cue reasoning windows (watchability / less scramble).
+        windowLines = softViewing.resolveAvSoftMtWindowLines({
+            promptFamily,
+            windowLines,
+            options: p,
+        });
         const chunks = core.chunkCues(cues, { windowLines });
         // Engine external MT uses 0-based cue ids; shift for human "第 N 条".
         const cueRangeOpts = p._engineExternalMt ? { oneBasedDisplay: true } : {};
@@ -871,6 +1078,10 @@ async function runSakuraTranslateBody(payload = {}) {
             promptFamily,
             glossaryTerms,
             glossary: p.glossary,
+            glossaryPromptInjectMode: p.glossaryPromptInjectMode,
+            glossaryAlwaysCharacterMax: p.glossaryAlwaysCharacterMax,
+            sensevoiceRichTags: p.sensevoiceRichTags,
+            sensevoiceEmotionMtStyle: p.sensevoiceEmotionMtStyle,
             nameMap: p.nameMap,
             sakuraNsfwPrompt: p.sakuraNsfwPrompt,
             nsfwPrompt: p.nsfwPrompt,
@@ -905,11 +1116,17 @@ async function runSakuraTranslateBody(payload = {}) {
             _skipMtSanitize: !!p._skipMtSanitize,
             _skipBlankRetry: !!p._skipBlankRetry,
             _ellipsisQuickDirect: !!p._ellipsisQuickDirect,
+            murasakiPreset: p.murasakiPreset,
+            enableThinking: p.enableThinking,
         };
         if (nsfwOn) {
             const promptHint = promptFamily === 'galtransl'
                 ? 'GalTransl 提示词已启用'
-                : promptFamily === 'hymt'
+                : promptFamily === 'murasaki'
+                    ? 'Murasaki 剧本模式提示词已启用'
+                    : promptFamily === 'orion'
+                    ? 'Orion JSONLINE 提示词已启用'
+                    : promptFamily === 'hymt'
                     ? 'Hy-MT2 提示词已启用'
                     : promptFamily === 'hunyuan'
                         ? 'Hunyuan MT 提示词已启用'
@@ -929,33 +1146,97 @@ async function runSakuraTranslateBody(payload = {}) {
         let blankRetried = 0;
         let blankLeft = 0;
         let qualityRetried = 0;
+        let murasakiGlossaryRetried = 0;
+        let murasakiRepetitionRetried = 0;
         /** Indexes that already received in-chunk blank / quality / align LLM retry. */
         const blankAttemptedIndexes = new Set();
-        /** GalTransl in-chunk blank-retry budget (~5% of track, capped). */
+        const isMurasakiRun = promptFamily === 'murasaki'
+            || murasakiCore.isMurasakiModel?.(modelId);
+        /** GalTransl blank-retry budget; Murasaki shares one budget across blank+glossary+rep. */
         const galBlankRetryBudget = promptFamily === 'galtransl'
             ? Math.max(16, Math.min(48, Math.ceil(allCues.length * 0.05)))
-            : 0;
+            : (isMurasakiRun && typeof murasakiCore.resolveMurasakiRetryBudget === 'function'
+                ? murasakiCore.resolveMurasakiRetryBudget(allCues.length)
+                : (promptFamily === 'murasaki'
+                    ? Math.max(48, Math.min(160, Math.ceil(allCues.length * 0.14)))
+                    : 0));
         let galBlankRetryUsed = 0;
         const startedAt = Date.now();
         // Soft Hy-MT + parallel slots on 12GB often truncates / blanks whole windows.
+        // Murasaki Script Mode shows the same pattern: parallel×2 → missing lines →
+        // 「有 N 条空白」storm (XVSR-898). Prefer serial; wall-clock still wins via window=6.
         // Translate Gemma Sub needs serial chunks so PREVIOUS_TRANSLATION is available.
         const softHyMt = isHyMtRun && !!hymtCore.shouldUseSoftHyMtPrompt?.(p);
         const preferTgSubSerial = isTgSubRun
             || !!tgCore.resolveTranslateGemmaInferenceOptions?.({ modelId })?.preferSerialChunks;
-        const clientConcurrency = (softHyMt || preferTgSubSerial)
+        const preferMurasakiSerial = isMurasakiRun && p.preferParallelChunks !== true;
+        const clientConcurrency = (softHyMt || preferTgSubSerial || preferMurasakiSerial)
             ? 1
             : resolveSakuraClientConcurrency(endpoint);
         let completedChunks = 0;
-        /** Running cue translations for Translate Gemma Sub previous-context prompts. */
+        /** Running cue translations for TG Sub / Murasaki / Hy-MT previous-context prompts. */
         const translatedByIndex = new Map();
+        let hyMtRollingState = isHyMtRun && typeof hymtCore.emptyHyMtRollingState === 'function'
+            ? hymtCore.emptyHyMtRollingState()
+            : { addresses: [], names: [] };
+        // Ellipsis / subset retranslate: prev lines must come from the full track,
+        // not only the blank todo list (otherwise Script has no real neighbors).
+        const murasakiContextSourceCues = (
+            Array.isArray(p.contextSourceCues) && p.contextSourceCues.length
+                ? p.contextSourceCues
+                : allCues
+        );
+        const hyMtContextSourceCues = murasakiContextSourceCues;
+        if (Array.isArray(p.contextTranslatedCues) && p.contextTranslatedCues.length) {
+            for (const u of p.contextTranslatedCues) {
+                const idx = Number(u?.index);
+                if (!Number.isInteger(idx)) continue;
+                const t = String(u?.text ?? '');
+                if (!t.trim()) continue;
+                if (isMurasakiRun && murasakiCore.isMurasakiUnusableZh?.(t)) continue;
+                translatedByIndex.set(idx, t);
+            }
+        }
 
         const resolveTgSubPrevCtx = (chunkCuesList) => {
             if (!isTgSubRun || !tgCore.buildPreviousContextFromCues) return {};
             return tgCore.buildPreviousContextFromCues({
-                sourceCues: cues,
+                sourceCues: Array.isArray(p.contextSourceCues) && p.contextSourceCues.length
+                    ? p.contextSourceCues
+                    : cues,
                 translatedByIndex,
                 currentChunkCues: chunkCuesList,
             });
+        };
+
+        const resolveMurasakiPrevCtx = (chunkCuesList) => {
+            if (!isMurasakiRun || !murasakiCore.buildMurasakiPreviousContext) return {};
+            return murasakiCore.buildMurasakiPreviousContext({
+                sourceCues: murasakiContextSourceCues,
+                translatedByIndex,
+                currentChunkCues: chunkCuesList,
+                maxLines: 2,
+            });
+        };
+
+        const resolveHyMtPrevCtx = (chunkCuesList) => {
+            if (!isHyMtRun || typeof hymtCore.buildHyMtPreviousContext !== 'function') return {};
+            const prev = hymtCore.buildHyMtPreviousContext({
+                sourceCues: hyMtContextSourceCues,
+                translatedByIndex,
+                currentChunkCues: chunkCuesList,
+                // Multi-cue windows: keep 2 prior lines for continuity (fragile-short still strips ZH).
+                maxLines: windowLines > 1 ? 2 : 1,
+            });
+            const joined = (chunkCuesList || []).map((c) => String(c?.text || '')).join('\n');
+            const stateHint = typeof hymtCore.formatHyMtStateHint === 'function'
+                ? hymtCore.formatHyMtStateHint(hyMtRollingState, joined)
+                : '';
+            return {
+                ...prev,
+                hyMtRollingState,
+                hyMtStateHint: stateHint || undefined,
+            };
         };
 
         const processChunkIndex = async (i) => {
@@ -981,7 +1262,17 @@ async function runSakuraTranslateBody(payload = {}) {
             });
 
             const tgPrevCtx = resolveTgSubPrevCtx(chunkCues);
-            let batch = await translateCueBatch(chunkCues, { ...batchCtx, ...tgPrevCtx });
+            const muraPrevCtx = resolveMurasakiPrevCtx(chunkCues);
+            const hyPrevCtx = resolveHyMtPrevCtx(chunkCues);
+            let batch = await translateCueBatch(chunkCues, {
+                ...batchCtx,
+                ...tgPrevCtx,
+                ...muraPrevCtx,
+                ...hyPrevCtx,
+                glossaryPromptInjectMode: isMurasakiRun
+                    ? 'hitOnly'
+                    : batchCtx.glossaryPromptInjectMode,
+            });
             const batchErr = String(batch?.error || '');
             const isUserCancel = !!(
                 p.signal?.aborted
@@ -1030,7 +1321,7 @@ async function runSakuraTranslateBody(payload = {}) {
                             translateMode: p.translateMode || p.options?.translateMode,
                             onProgress: send,
                             signal: p.signal,
-                            afterAsr: !!(p.afterAsr || p._engineExternalMt),
+                            afterAsr: !!p.afterAsr,
                             engineUrl,
                             contextSize: hyOpts?.contextSize,
                         });
@@ -1046,7 +1337,12 @@ async function runSakuraTranslateBody(payload = {}) {
                 } else {
                     await sleep(200);
                 }
-                batch = await translateCueBatch(chunkCues, { ...batchCtx, ...tgPrevCtx });
+                batch = await translateCueBatch(chunkCues, {
+                    ...batchCtx,
+                    ...tgPrevCtx,
+                    ...muraPrevCtx,
+                    ...hyPrevCtx,
+                });
                 if (p.signal?.aborted || batch?.code === 'cancelled') {
                     return { ok: false, error: '已取消', code: 'cancelled', modelId };
                 }
@@ -1062,10 +1358,40 @@ async function runSakuraTranslateBody(payload = {}) {
                 if (p.signal?.aborted) {
                     return { ok: false, error: '已取消', code: 'cancelled', modelId };
                 }
-                batch = await translateCueBatch(chunkCues, { ...batchCtx, ...tgPrevCtx });
+                batch = await translateCueBatch(chunkCues, {
+                    ...batchCtx,
+                    ...tgPrevCtx,
+                    ...muraPrevCtx,
+                    ...hyPrevCtx,
+                });
                 if (p.signal?.aborted || batch?.code === 'cancelled') {
                     return { ok: false, error: '已取消', code: 'cancelled', modelId };
                 }
+            }
+
+            // Multi-cue window still failing → half-window then per-cue (avoid blank bands).
+            if (
+                !batch.ok
+                && longTrackPolicy.shouldAttemptChunkSplitRecovery(chunkCues, {
+                    aborted: !!(p.signal?.aborted),
+                })
+            ) {
+                const recovered = await recoverSakuraChunkAfterFailure({
+                    chunkCues,
+                    batchCtx: { ...batchCtx, ...tgPrevCtx, ...muraPrevCtx, ...hyPrevCtx },
+                    translateCueBatch,
+                    priorBatch: batch,
+                    send,
+                    signal: p.signal,
+                    rangeParen,
+                    chunkIndex1Based: i + 1,
+                    totalChunks: chunks.length,
+                    pctStart,
+                });
+                if (recovered?.code === 'cancelled' || p.signal?.aborted) {
+                    return { ok: false, error: '已取消', code: 'cancelled', modelId };
+                }
+                if (recovered?.ok) batch = recovered;
             }
 
             if (!batch.ok) {
@@ -1075,6 +1401,8 @@ async function runSakuraTranslateBody(payload = {}) {
                     code: batch.code,
                     modelId,
                     cueCount: chunkCues.length,
+                    cueFrom: chunkCues[0]?.index,
+                    cueTo: chunkCues[chunkCues.length - 1]?.index,
                 };
             }
 
@@ -1090,21 +1418,25 @@ async function runSakuraTranslateBody(payload = {}) {
                     };
                 });
             }
-            const blankIndexesRaw = (promptFamily === 'galtransl'
+            // GalTransl / Murasaki: only literal empty/ellipsis — invent heuristics as
+            // "blank" burned dozens of 1-cue retries per film (XVSR-898 ~9min).
+            const blankIndexesRaw = ((promptFamily === 'galtransl' || isMurasakiRun)
                 && typeof core.collectLiteralBlankTranslationIndexes === 'function')
                 ? core.collectLiteralBlankTranslationIndexes(chunkCues, chunkUpdates)
                 : core.collectBlankTranslationIndexes(chunkCues, chunkUpdates);
             let blankIndexes = (blankIndexesRaw || []).filter(
                 (idx) => !blankAttemptedIndexes.has(Number(idx)),
             );
-            if (promptFamily === 'galtransl' && galBlankRetryBudget > 0) {
+            if ((promptFamily === 'galtransl' || isMurasakiRun) && galBlankRetryBudget > 0) {
                 const remain = Math.max(0, galBlankRetryBudget - galBlankRetryUsed);
                 if (remain <= 0) blankIndexes = [];
                 else if (blankIndexes.length > remain) blankIndexes = blankIndexes.slice(0, remain);
             }
             if (blankIndexes.length && !p.signal?.aborted && !p._skipBlankRetry) {
                 for (const idx of blankIndexes) blankAttemptedIndexes.add(Number(idx));
-                if (promptFamily === 'galtransl') galBlankRetryUsed += blankIndexes.length;
+                if (promptFamily === 'galtransl' || isMurasakiRun) {
+                    galBlankRetryUsed += blankIndexes.length;
+                }
                 const blankSet = new Set(blankIndexes);
                 let blankSourceCues = chunkCues.filter((c) => blankSet.has(c.index));
                 if (isHyMtRun) {
@@ -1136,17 +1468,27 @@ async function runSakuraTranslateBody(payload = {}) {
                 }
                 const retryCues = partitioned.retryCues || blankSourceCues;
                 // Hy-MT: quality uses small micro-batches (default 4); speed / override → 1.
+                // Murasaki: pack literal blanks (≤ window) — serial 1-cue was a major slowdown.
                 // Batch that yields 0 accepts falls back to per-cue once.
                 const blankBatchSize = isHyMtRun
                     ? (hymtCore.resolveHyMtBlankRetryBatchSize?.(batchCtx) || hymtCore.HYMT_BLANK_RETRY_BATCH || 4)
-                    : 1;
-                const retryBatches = isHyMtRun
+                    : (isMurasakiRun
+                        ? Math.max(1, Math.min(
+                            6,
+                            Number(batchCtx.blankRetryBatchSize) || windowLines || 3,
+                        ))
+                        : 1);
+                const retryBatches = blankBatchSize > 1
                     ? (hymtCore.chunkBlankRetryCues
                         ? hymtCore.chunkBlankRetryCues(retryCues, blankBatchSize)
-                        : retryCues.map((c) => [c]))
-                    : (hymtCore.chunkBlankRetryCues
-                        ? hymtCore.chunkBlankRetryCues(retryCues)
-                        : retryCues.map((c) => [c]));
+                        : (() => {
+                            const outBatches = [];
+                            for (let bi = 0; bi < retryCues.length; bi += blankBatchSize) {
+                                outBatches.push(retryCues.slice(bi, bi + blankBatchSize));
+                            }
+                            return outBatches;
+                        })())
+                    : retryCues.map((c) => [c]);
 
                 if (retryCues.length || partitioned.skipped) {
                     send({
@@ -1193,6 +1535,13 @@ async function runSakuraTranslateBody(payload = {}) {
                             }
                             return fin;
                         }
+                        if (isMurasakiRun) {
+                            const fin = typeof murasakiCore.finalizeMurasakiCue === 'function'
+                                ? murasakiCore.finalizeMurasakiCue(src, t)
+                                : t;
+                            if (!fin || murasakiCore.isMurasakiUnusableZh?.(fin)) return '';
+                            return fin;
+                        }
                         if (isHyMtRun) {
                             try {
                                 const ep = require('../src/js/hymt-ellipsis-policy-core');
@@ -1221,8 +1570,9 @@ async function runSakuraTranslateBody(payload = {}) {
                     let retry = await translateCueBatch(batchCues, {
                         ...batchCtx,
                         ...resolveTgSubPrevCtx(batchCues),
+                        ...resolveMurasakiPrevCtx(batchCues),
                         _blankRetry: true,
-                        _ellipsisHardFail: isHyMtRun,
+                        _ellipsisHardFail: isHyMtRun || isMurasakiRun,
                         hyMtMinimalPrompt: isHyMtRun,
                         ...(isTgRun ? {
                             faithfulTone: true,
@@ -1231,12 +1581,14 @@ async function runSakuraTranslateBody(payload = {}) {
                             nsfwPrompt: true,
                             applyNsfwLexicon: true,
                         } : {}),
-                        maxTokens: core.estimateMaxTokens(batchCues),
+                        maxTokens: isMurasakiRun
+                            ? murasakiCore.estimateMaxTokens(batchCues, batchCtx)
+                            : core.estimateMaxTokens(batchCues),
                     });
                     let accepted = applyBatchResult(retry, batchCues);
                     // Micro-batch collapsed → fall back to single-cue once per remaining blank.
                     if (
-                        isHyMtRun
+                        (isHyMtRun || isMurasakiRun)
                         && batchCues.length > 1
                         && accepted === 0
                         && !p.signal?.aborted
@@ -1254,12 +1606,47 @@ async function runSakuraTranslateBody(payload = {}) {
                             const oneRetry = await translateCueBatch([one], {
                                 ...batchCtx,
                                 ...resolveTgSubPrevCtx([one]),
+                                ...resolveMurasakiPrevCtx([one]),
                                 _blankRetry: true,
                                 _ellipsisHardFail: true,
                                 hyMtMinimalPrompt: true,
                                 maxTokens: Math.max(64, core.estimateMaxTokens([one])),
                             });
                             applyBatchResult(oneRetry, [one]);
+                        }
+                    }
+                    // Murasaki Short still blank → Script + prev (editor parity).
+                    if (isMurasakiRun && !p.signal?.aborted) {
+                        for (const [k, v] of map.entries()) {
+                            if (v && !murasakiCore.isMurasakiUnusableZh?.(v)) {
+                                translatedByIndex.set(Number(k), v);
+                            }
+                        }
+                        for (const cue0 of batchCues) {
+                            const cur = map.has(Number(cue0.index)) ? map.get(Number(cue0.index)) : '';
+                            const stillBlank = !cur
+                                || (typeof murasakiCore.isMurasakiUnusableZh === 'function'
+                                    && murasakiCore.isMurasakiUnusableZh(cur))
+                                || (typeof core.isLiteralBlankTranslation === 'function'
+                                    && core.isLiteralBlankTranslation(cur));
+                            if (!stillBlank) continue;
+                            const scriptRetry = await translateCueBatch([cue0], {
+                                ...batchCtx,
+                                ...resolveMurasakiPrevCtx([cue0]),
+                                _ellipsisQuickDirect: true,
+                                _ellipsisHardFail: true,
+                                murasakiPreset: 'script',
+                                enableThinking: false,
+                                maxTokens: Math.max(
+                                    96,
+                                    murasakiCore.estimateMaxTokens([cue0], {
+                                        ...batchCtx,
+                                        _ellipsisQuickDirect: true,
+                                        murasakiPreset: 'script',
+                                    }) || 160,
+                                ),
+                            });
+                            applyBatchResult(scriptRetry, [cue0]);
                         }
                     }
                     // Long lexical JA still blank → second hard fail pass (single cue).
@@ -1326,6 +1713,7 @@ async function runSakuraTranslateBody(payload = {}) {
             ) {
                 const qCollect = hymtCore.collectHyMtQualityRetryIndexes(chunkCues, chunkUpdates, {
                     maxRetry: Math.max(8, chunkCues.length),
+                    hyMtRollingState,
                 });
                 if (qCollect.indexes?.length) {
                     for (const idx of qCollect.indexes) blankAttemptedIndexes.add(Number(idx));
@@ -1345,10 +1733,12 @@ async function runSakuraTranslateBody(payload = {}) {
                         const cue = chunkCues.find((c) => Number(c.index) === Number(idx));
                         if (!cue) continue;
                         const prev = map.has(Number(idx)) ? map.get(Number(idx)) : '';
-                        const before = hymtCore.assessHyMtCueQuality?.(prev, cue.text, batchCtx)
+                        const qOpts = { ...batchCtx, hyMtRollingState };
+                        const before = hymtCore.assessHyMtCueQuality?.(prev, cue.text, qOpts)
                             || { ok: false, reasons: [] };
                         const retry = await translateCueBatch([cue], {
                             ...batchCtx,
+                            ...resolveHyMtPrevCtx([cue]),
                             _blankRetry: true,
                             _qualityRetry: true,
                             hyMtMinimalPrompt: true,
@@ -1381,6 +1771,104 @@ async function runSakuraTranslateBody(payload = {}) {
                 }
             }
 
+            // Murasaki v0.3: glossary coverage + repetition → shared retry budget with blanks.
+            let localGlossaryRetried = 0;
+            let localRepetitionRetried = 0;
+            if (
+                isMurasakiRun
+                && !p._skipQualityRetry
+                && !batchCtx._qualityRetry
+                && !batchCtx._glossaryRetry
+                && !p.signal?.aborted
+                && typeof murasakiCore.collectMurasakiQualityRetryIndexes === 'function'
+            ) {
+                const remainBudget = galBlankRetryBudget > 0
+                    ? Math.max(0, galBlankRetryBudget - galBlankRetryUsed)
+                    : Math.max(6, Math.min(12, chunkCues.length));
+                const qCollect = murasakiCore.collectMurasakiQualityRetryIndexes(
+                    chunkCues,
+                    chunkUpdates,
+                    {
+                        ...batchCtx,
+                        maxRetry: Math.min(
+                            remainBudget,
+                            Math.max(6, Math.min(12, chunkCues.length)),
+                        ),
+                    },
+                );
+                let qIndexes = (qCollect.indexes || []).filter(
+                    (idx) => !blankAttemptedIndexes.has(Number(idx)),
+                );
+                if (remainBudget <= 0) qIndexes = [];
+                else if (qIndexes.length > remainBudget) qIndexes = qIndexes.slice(0, remainBudget);
+                if (qIndexes.length) {
+                    for (const idx of qIndexes) blankAttemptedIndexes.add(Number(idx));
+                    galBlankRetryUsed += qIndexes.length;
+                    const map = new Map(
+                        (chunkUpdates || []).map((u) => [Number(u.index), String(u.text ?? '')]),
+                    );
+                    send({
+                        phase: 'chunk-retry',
+                        detail: `第 ${i + 1} 块${rangeParen}术语/复读重译 ${qIndexes.length} 条…`,
+                        percent: pctStart,
+                        pct: pctStart,
+                        chunk: i + 1,
+                        total: chunks.length,
+                    });
+                    for (const idx of qIndexes) {
+                        if (p.signal?.aborted) break;
+                        const cue = chunkCues.find((c) => Number(c.index) === Number(idx));
+                        if (!cue) continue;
+                        const prev = map.has(Number(idx)) ? map.get(Number(idx)) : '';
+                        const reasonList = qCollect.reasons?.get?.(Number(idx)) || [];
+                        const isGloss = reasonList.includes('glossary_miss');
+                        const retry = await translateCueBatch([cue], {
+                            ...batchCtx,
+                            _blankRetry: true,
+                            _qualityRetry: true,
+                            _glossaryRetry: isGloss,
+                            qualityReasons: reasonList,
+                            glossaryPromptInjectMode: 'hitOnly',
+                            maxTokens: murasakiCore.estimateMaxTokens?.([cue], {
+                                ...batchCtx,
+                                _blankRetry: true,
+                                _qualityRetry: true,
+                            }) || core.estimateMaxTokens([cue]),
+                        });
+                        if (!retry.ok) continue;
+                        const hit = (retry.cues || []).find((u) => Number(u.index) === Number(idx));
+                        let next = hit ? String(hit.text ?? '').trim() : '';
+                        if (typeof murasakiCore.finalizeMurasakiCue === 'function') {
+                            next = murasakiCore.finalizeMurasakiCue(cue.text, next);
+                        }
+                        if (!next || murasakiCore.isMurasakiUnusableZh?.(next)) continue;
+                        let improved = next !== String(prev || '').trim();
+                        if (isGloss) {
+                            const stillMiss = murasakiCore.collectMurasakiGlossaryMissIndexes?.(
+                                [cue],
+                                [{ index: cue.index, text: next }],
+                                batchCtx,
+                            );
+                            improved = !(stillMiss?.indexes?.length);
+                        } else if (reasonList.includes('repetition')) {
+                            improved = !murasakiCore.looksLikeMurasakiRepetition?.(next);
+                        }
+                        if (improved) {
+                            map.set(Number(idx), next);
+                            localQualityRetried += 1;
+                            if (isGloss) localGlossaryRetried += 1;
+                            else if (reasonList.includes('repetition')) localRepetitionRetried += 1;
+                        }
+                    }
+                    if (localQualityRetried) {
+                        chunkUpdates = chunkCues.map((c) => ({
+                            index: c.index,
+                            text: map.has(c.index) ? map.get(c.index) : '',
+                        }));
+                    }
+                }
+            }
+
             completedChunks += 1;
             const pctDone = Math.round((completedChunks / Math.max(1, chunks.length)) * 100);
             send({
@@ -1396,11 +1884,21 @@ async function runSakuraTranslateBody(payload = {}) {
                 elapsedMs: Date.now() - startedAt,
             });
 
-            if (isTgSubRun) {
+            if (isTgSubRun || isMurasakiRun || isHyMtRun) {
                 for (const u of chunkUpdates || []) {
                     const t = String(u.text ?? '');
-                    if (tgCore.looksLikeIdentityStubZh?.(t)) continue;
+                    if (isTgSubRun && tgCore.looksLikeIdentityStubZh?.(t)) continue;
+                    if (isMurasakiRun && murasakiCore.isMurasakiUnusableZh?.(t)) continue;
                     translatedByIndex.set(Number(u.index), t);
+                    if (isHyMtRun && typeof hymtCore.updateHyMtRollingState === 'function') {
+                        const srcCue = chunkCues.find((c) => Number(c.index) === Number(u.index));
+                        hyMtRollingState = hymtCore.updateHyMtRollingState(
+                            hyMtRollingState,
+                            srcCue?.text || '',
+                            t,
+                            batchCtx,
+                        );
+                    }
                 }
             }
 
@@ -1410,6 +1908,8 @@ async function runSakuraTranslateBody(payload = {}) {
                 blankRetried: localBlankRetried,
                 blankLeft: localBlankLeft,
                 qualityRetried: localQualityRetried,
+                murasakiGlossaryRetried: localGlossaryRetried || 0,
+                murasakiRepetitionRetried: localRepetitionRetried || 0,
             };
         };
 
@@ -1438,6 +1938,8 @@ async function runSakuraTranslateBody(payload = {}) {
             blankRetried += Number(res.blankRetried) || 0;
             blankLeft += Number(res.blankLeft) || 0;
             qualityRetried += Number(res.qualityRetried) || 0;
+            murasakiGlossaryRetried += Number(res.murasakiGlossaryRetried) || 0;
+            murasakiRepetitionRetried += Number(res.murasakiRepetitionRetried) || 0;
         }
 
         if (failedChunks.length) {
@@ -1455,10 +1957,12 @@ async function runSakuraTranslateBody(payload = {}) {
                 };
             }
             const successChunks = chunkResults.length - failedChunks.length;
-            // Near-complete runs (e.g. 1223/1231) must not discard all successful cues.
-            const failBudget = Math.max(2, Math.ceil(chunkResults.length * 0.05));
-            const salvageOk = successChunks > 0 && failedChunks.length <= failBudget;
-            if (!salvageOk) {
+            // Keep every successful chunk whenever any chunk succeeded.
+            // Murasaki (window≈3, serial) on large editor batch retranslate easily
+            // exceeds the old 5% fail budget from transient timeouts; hard-abort
+            // discarded all good cues and looked like「自动退出」. Only fail the
+            // whole job when nothing succeeded (or user cancelled above).
+            if (successChunks < 1) {
                 return {
                     ok: false,
                     error: firstFail?.error || `${chunkProgressLabel}失败`,
@@ -1466,7 +1970,7 @@ async function runSakuraTranslateBody(payload = {}) {
                     modelId,
                     stats: {
                         failedChunks: failedChunks.length,
-                        successChunks,
+                        successChunks: 0,
                     },
                 };
             }
@@ -1562,13 +2066,17 @@ async function runSakuraTranslateBody(payload = {}) {
         // Skip on blank-retry: input is a sparse subset of already-blank cues, not a contiguous
         // dialogue track — sliding-window audit false-positives and clears nearly everything
         // (then outer blank-retry loops for minutes with ~1/48 recovery).
+        // Long tracks (2.5h+ / high cue count): still audit, but cap per-cue LLM retries.
         let alignRetried = 0;
+        const alignBudget = longTrackPolicy.resolveAlignAuditBudget({
+            cues: allCues,
+            skipAlignAudit: p._skipAlignAudit,
+            blankRetry: p._blankRetry,
+        });
         if (
             typeof core.collectMisalignedCueIndexes === 'function'
-            && allCues.length >= 3
+            && alignBudget.run
             && !p.signal?.aborted
-            && !p._skipAlignAudit
-            && !p._blankRetry
         ) {
             const misRaw = core.collectMisalignedCueIndexes(allCues, out, { windowSize: 8 });
             // Skip blank-only hits — in-chunk blank retry already covered them; final
@@ -1576,7 +2084,7 @@ async function runSakuraTranslateBody(payload = {}) {
             const byOutPre = new Map(
                 (out || []).map((u) => [Number(u.index), String(u.text ?? '')]),
             );
-            const mis = (misRaw || []).filter((idx) => {
+            const misFiltered = (misRaw || []).filter((idx) => {
                 const n = Number(idx);
                 const cue = allCues.find((c) => Number(c.index) === n);
                 if (!cue) return false;
@@ -1589,12 +2097,16 @@ async function runSakuraTranslateBody(payload = {}) {
                     || mtSanitize.looksLikeSemanticMisattach?.(prior, cue.text)
                 );
             });
+            const capped = longTrackPolicy.capAlignAuditIndexes(misFiltered, alignBudget);
+            const mis = capped.indexes;
             if (mis.length) {
                 const misSet = new Set(mis.map((n) => Number(n)));
                 for (const idx of misSet) blankAttemptedIndexes.add(Number(idx));
                 send({
                     phase: 'chunk-retry',
-                    detail: `对位审计：发现 ${mis.length} 条疑似错位，逐条重译…`,
+                    detail: capped.truncated
+                        ? `对位审计：长轨限流，重译前 ${mis.length} 条（另有 ${capped.dropped} 条跳过）…`
+                        : `对位审计：发现 ${mis.length} 条疑似错位，逐条重译…`,
                     percent: 96,
                     pct: 96,
                 });
@@ -1735,12 +2247,30 @@ async function runSakuraTranslateBody(payload = {}) {
         if (dialogueShiftNote) summaryParts.push(dialogueShiftNote);
         if (blankLeft) summaryParts.push(`仍空白 ${blankLeft}`);
         if (qualityRetried) summaryParts.push(`质量重译 ${qualityRetried}`);
+        if (murasakiGlossaryRetried) summaryParts.push(`术语补译 ${murasakiGlossaryRetried}`);
+        if (murasakiRepetitionRetried) summaryParts.push(`复读重译 ${murasakiRepetitionRetried}`);
+        if (isMurasakiRun && galBlankRetryBudget > 0) {
+            summaryParts.push(`重试预算 ${galBlankRetryUsed}/${galBlankRetryBudget}`);
+        }
         if (cleaned.changed) summaryParts.push(`已清理 ${cleaned.changed} 条异常译文`);
         if (cleaned.flags?.name_unify) summaryParts.push(`人名统一 ${cleaned.flags.name_unify}`);
         if (creditPrefill.length || creditPrefixes.length) {
             summaryParts.push(`软件信息 ${(creditPrefill.length || 0) + (creditPrefixes.length || 0)}`);
         }
         if (chineseNorm.changed) summaryParts.push('已转为简体');
+        // All MT families: strip trailing 。／． before return (post-batch also runs this).
+        let trailingPeriodTouched = 0;
+        try {
+            const fluency = require('../src/js/subtitle-fluency-core');
+            if (typeof fluency.stripTrailingZhSentencePeriodInCues === 'function' && !p._skipTrailingPeriodStrip) {
+                const stripped = fluency.stripTrailingZhSentencePeriodInCues(out, {});
+                out = stripped.cues || out;
+                trailingPeriodTouched = Number(stripped.stats?.cueTouched) || 0;
+                if (trailingPeriodTouched) {
+                    summaryParts.push(`去句末句号 ${trailingPeriodTouched}`);
+                }
+            }
+        } catch (_) { /* optional */ }
         return {
             ok: true,
             cues: out,
@@ -1753,6 +2283,10 @@ async function runSakuraTranslateBody(payload = {}) {
                 blankExhaustedIndexes,
                 quickDirectFilled,
                 qualityRetried,
+                murasakiGlossaryRetried,
+                murasakiRepetitionRetried,
+                murasakiRetryBudget: isMurasakiRun ? galBlankRetryBudget : 0,
+                murasakiRetryUsed: isMurasakiRun ? galBlankRetryUsed : 0,
                 alignRetried,
                 chunks: chunks.length,
                 failedChunks: failedChunks.length,
@@ -1761,6 +2295,7 @@ async function runSakuraTranslateBody(payload = {}) {
                 nameRules: (cleaned.nameRules || []).length,
                 softwareCreditPrefill: creditPrefill.length,
                 softwareCreditPrefixes: creditPrefixes.length,
+                trailingPeriodTouched,
             },
         };
     } finally {

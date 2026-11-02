@@ -105,7 +105,10 @@ function updateItem(path, patch = {}) {
     const nowRunning = item.status === 'running';
     // Entering/leaving running must rebuild the card so `.task-card-run` pipeline exists.
     const structureChange = wasRunning !== nowRunning || terminal;
-    const throttleRow = nowRunning && state.running && !structureChange;
+    // Retranslate also hammers updateItem — throttle light DOM patches the same way.
+    const throttleRow = nowRunning
+        && (state.running || state.retranslateBusy)
+        && !structureChange;
     if (throttleRow) {
         const now = Date.now();
         const last = rowRefreshAtByPath.get(key) || 0;
@@ -134,6 +137,8 @@ function resetVideoProgress() {
     state.videoTotalSec = 0;
     state.lastProgressBumpAt = 0;
     state.lastProgressBumpPct = 0;
+    state.itemDetail = '';
+    state.translateStageStartedAt = 0;
     clearQwenIslandBatchSticky();
 }
 
@@ -225,9 +230,51 @@ function dismissLoadingOverlay() {
     }
 }
 
+function resolveMtEtaHints() {
+    const snap = typeof getSavedOptionsSnapshot === 'function' ? (getSavedOptionsSnapshot() || {}) : {};
+    const mtModelId = String(
+        snap.engineMtModel
+        || snap.sakuraMtModel
+        || snap.llmMtModel
+        || '',
+    ).trim();
+    const hints = { mtModelId, engineMtModel: mtModelId };
+    if (!mtModelId) return hints;
+    try {
+        let sakura = null;
+        if (typeof require === 'function') {
+            try { sakura = require('./sakura-mt-catalog-core'); } catch (_) { /* ignore */ }
+        }
+        if (!sakura && typeof globalThis !== 'undefined') {
+            sakura = globalThis.TransubSakuraMtCatalog || null;
+        }
+        const entry = sakura?.findCatalogEntry?.(mtModelId);
+        if (!entry) return hints;
+        if (Number.isFinite(Number(entry.weightGiB))) hints.mtWeightGiB = Number(entry.weightGiB);
+        if (Number.isFinite(Number(entry.paramBillion))) hints.mtParamBillion = Number(entry.paramBillion);
+        if (Number.isFinite(Number(entry.activeParamBillion))) {
+            hints.mtActiveParamBillion = Number(entry.activeParamBillion);
+        }
+        if (entry.moe === true) hints.moe = true;
+    } catch (_) { /* catalog optional */ }
+    return hints;
+}
+
+function noteTranslateStageTransition(nextStage) {
+    const stage = String(nextStage || '');
+    if (stage === 'translate') {
+        if (!state.translateStageStartedAt) state.translateStageStartedAt = Date.now();
+        return;
+    }
+    if (stage && stage !== 'qc_fix' && stage !== 'cleanup' && stage !== 'save') {
+        state.translateStageStartedAt = 0;
+    }
+}
+
 function computeEtaSec() {
     if (!etaApi?.estimateEtaSec || !state.running) return 0;
     const active = state.activePath ? findItem(state.activePath) : null;
+    const mtHints = resolveMtEtaHints();
     return etaApi.estimateEtaSec({
         items: state.items,
         activePath: state.activePath,
@@ -235,9 +282,12 @@ function computeEtaSec() {
         videoTotalSec: state.videoTotalSec,
         itemStage: state.itemStage,
         itemProgress: state.videoProgress,
+        itemDetail: state.itemDetail || active?.detail || '',
         activeStartedAt: active?.startedAt,
         lastProgressBumpAt: state.lastProgressBumpAt,
+        translateStageStartedAt: state.translateStageStartedAt,
         rate: state.etaRate,
+        ...mtHints,
     });
 }
 
@@ -248,6 +298,9 @@ function paintProgressUi() {
         paintIdleProgressUi();
         return;
     }
+    // Retranslate owns the strip via setRetranslateProgress — do not overwrite with
+    // batch computeDisplayProgress (videoProgress often still 0 → bar stuck at 0%).
+    if (state.retranslateBusy) return;
     const { pct, label } = computeDisplayProgress();
     if (els.progressBar) els.progressBar.style.width = `${pct}%`;
 
@@ -289,11 +342,15 @@ function updateProgressUi(opts = {}) {
 }
 
 function syncVideoProgressFromPayload(p) {
+    if (p.itemDetail != null || p.detail != null) {
+        state.itemDetail = String(p.itemDetail || p.detail || '');
+    }
     if (inferProgress.applyVideoProgressPayload) {
         const next = inferProgress.applyVideoProgressPayload(state, p);
         if (!next) return;
         state.itemDualPhase = next.itemDualPhase;
         state.itemStage = next.itemStage;
+        noteTranslateStageTransition(next.itemStage);
         state.videoProgress = next.videoProgress;
         if (next.videoTotalSec != null) state.videoTotalSec = next.videoTotalSec;
         if (next.videoCurrentSec != null) state.videoCurrentSec = next.videoCurrentSec;
@@ -304,9 +361,13 @@ function syncVideoProgressFromPayload(p) {
     if (p.itemDualPhase && p.itemDualPhase !== state.itemDualPhase) {
         state.itemDualPhase = p.itemDualPhase;
         state.itemStage = p.itemStage || 'starting';
+        noteTranslateStageTransition(state.itemStage);
     }
     const stage = p.itemStage || 'transcribe';
-    if (stageRank(stage) >= stageRank(state.itemStage)) state.itemStage = stage;
+    if (stageRank(stage) >= stageRank(state.itemStage)) {
+        state.itemStage = stage;
+        noteTranslateStageTransition(stage);
+    }
     if (Number.isFinite(Number(p.itemProgress))) {
         state.videoProgress = bumpProgress(state.videoProgress, Number(p.itemProgress));
     }
@@ -524,6 +585,10 @@ function onProgressImpl(p) {
                 stage = existing.stage;
                 state.itemStage = stage;
             }
+            noteTranslateStageTransition(stage);
+            if (p.itemDetail != null || p.detail != null) {
+                state.itemDetail = String(p.itemDetail || p.detail || state.itemDetail || '');
+            }
             const resumeTranslate = !switchedItem
                 && p.itemDualPhase === 'translate'
                 && (state.itemDualPhase === 'transcribe'
@@ -621,6 +686,12 @@ function onProgressImpl(p) {
                 donePatch.qcSummary = Number(p.qcIssueCount) > 0 ? `QC ${donePatch.qcIssueCount} 项` : '';
                 donePatch.qcError = '';
                 if (donePatch.qcIssueCount > 0) state.qcBannerDismissed = false;
+            }
+            if (p.ellipsisLeft != null) {
+                donePatch.ellipsisLeft = Number(p.ellipsisLeft) || 0;
+            }
+            if (p.underfillLeft != null) {
+                donePatch.underfillLeft = Number(p.underfillLeft) || 0;
             }
             const fixedMode = String(p.qcFixedMode || '').trim();
             if (fixedMode === 'fix' || fixedMode === 'smart') {

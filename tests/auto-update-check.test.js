@@ -11,9 +11,10 @@ describe('auto-update-check', () => {
         assert.strictEqual(normalizeAutoUpdateCheckInterval('daily'), 'daily');
         assert.strictEqual(normalizeAutoUpdateCheckInterval('WEEKLY'), 'weekly');
         assert.strictEqual(normalizeAutoUpdateCheckInterval('monthly'), 'monthly');
-        assert.strictEqual(normalizeAutoUpdateCheckInterval(''), 'off');
+        // Empty / missing → weekly (matches mergeTransWithAiOptions default).
+        assert.strictEqual(normalizeAutoUpdateCheckInterval(''), 'weekly');
+        assert.strictEqual(normalizeAutoUpdateCheckInterval(null), 'weekly');
         assert.strictEqual(normalizeAutoUpdateCheckInterval('hourly'), 'off');
-        assert.strictEqual(normalizeAutoUpdateCheckInterval(null), 'off');
     });
 
     it('treats missing last check as due when enabled', () => {

@@ -4,6 +4,43 @@
  */
 'use strict';
 
+const {
+    ensureEngineRunningWithColdInstallProgress,
+    coldInstallRestartFailMessage,
+    mustFailClosedOnRestart,
+} = require('./engine-cold-install-progress');
+
+/** @param {object|null|undefined} data */
+function isDeferredTorchCuda(data) {
+    if (!data || typeof data !== 'object') return false;
+    const nested = data.torchCuda && typeof data.torchCuda === 'object' ? data.torchCuda : null;
+    return !!(
+        data.restartRequired
+        || data.deferred
+        || data.code === 'TORCH_CUDA_DEFERRED'
+        || nested?.restartRequired
+        || nested?.deferred
+        || nested?.code === 'TORCH_CUDA_DEFERRED'
+    );
+}
+
+/** @param {object|null|undefined} data */
+function resolveDeferredTorchMode(data) {
+    if (!data || typeof data !== 'object') return '';
+    if (data.torchXpu || data.code === 'need_torch_xpu' || /xpu/i.test(String(data.message || ''))) {
+        if (data.restartRequired || data.deferred || data.torchXpu?.restartRequired || data.torchXpu?.deferred) {
+            return 'xpu';
+        }
+    }
+    if (data.torchRocm || data.code === 'need_torch_rocm' || /rocm/i.test(String(data.message || ''))) {
+        if (data.restartRequired || data.deferred || data.torchRocm?.restartRequired || data.torchRocm?.deferred) {
+            return 'rocm';
+        }
+    }
+    if (isDeferredTorchCuda(data)) return 'torch-cuda';
+    return '';
+}
+
 const REQUIRED_HOST_KEYS = [
     'getBatchRunning',
     'getDownloadBusy',
@@ -59,7 +96,6 @@ function createEngineDownloadJob(host) {
             readMergedOptions,
             stopEngineProcessAndPort,
             stopEngineProcess,
-            sleep,
             ensureEngineRunning,
             resolveEngineInstallPath,
             resolveEngineRuntimePython,
@@ -86,16 +122,38 @@ function createEngineDownloadJob(host) {
         setDownloadBusy(true);
         setDownloadAbort(new AbortController());
         const signal = getDownloadAbort().signal;
-        const kind = normalizeEngineDownloadKind(payload.kind);
+        const kindRaw = normalizeEngineDownloadKind(payload.kind);
+        // Manual UI uses kind torch-cuda; pip install shares the GPU ensure + CUDA torch chain.
+        // Without this remap, torch-cuda fell through to models →「未选择要下载的模型」.
+        const kind = kindRaw === 'torch-cuda' ? 'gpu' : kindRaw;
         const emit = (info) => {
-            broadcastEngineDownloadProgress({ ...(info || {}), kind });
+            broadcastEngineDownloadProgress({ ...(info || {}), kind: kindRaw });
+        };
+        const pause = async (ms) => {
+            if (signal.aborted) return false;
+            await new Promise((resolve) => {
+                const timer = setTimeout(resolve, ms);
+                const onAbort = () => {
+                    clearTimeout(timer);
+                    resolve();
+                };
+                signal.addEventListener('abort', onAbort, { once: true });
+            });
+            return !signal.aborted;
+        };
+        const cancelledResult = () => {
+            emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
+            return { ok: false, cancelled: true, error: 'cancelled' };
         };
         try {
             const options = await readMergedOptions(payload);
-            const hfEndpoint = payload.hfEndpoint != null
-                ? String(payload.hfEndpoint || '').trim().replace(/\/+$/, '')
-                : String(options.engineHfEndpoint || '').trim().replace(/\/+$/, '');
-            const hfToken = payload.hfToken != null
+            if (signal.aborted) return cancelledResult();
+            const { resolveHfEndpointForDownload } = require('./engine-download-urls');
+            const hfEndpoint = resolveHfEndpointForDownload(
+                payload.hfEndpoint,
+                options.engineHfEndpoint,
+            );
+            const hfToken = payload.hfToken != null && String(payload.hfToken).trim()
                 ? String(payload.hfToken || '').trim()
                 : String(options.engineHfToken || '').trim();
             const optionsWithHf = {
@@ -120,7 +178,7 @@ function createEngineDownloadJob(host) {
             } catch {
                 try { stopEngineProcess(); } catch { /* ignore */ }
             }
-            await sleep(1200);
+            if (!await pause(1200)) return cancelledResult();
 
             // ASR extras must install while the engine is stopped: a running
             // server already imports native wheels and Windows then denies
@@ -131,18 +189,27 @@ function createEngineDownloadJob(host) {
             const needWhisperExtras = !!payload.force || modelIdsNeedWhisperExtras(earlyModelIds);
             const needSensevoiceExtras = !!payload.force || modelIdsNeedSensevoiceExtras(earlyModelIds);
             const needQwenExtras = !!payload.force || modelIdsNeedQwenExtras(earlyModelIds);
+            // After a cold offline ensure, tell the live engine to skip in-process pip.
+            // Otherwise health/Whisper probes map numpy/torch and ensure_asr_* returns
+            // 「已加载于当前引擎，无法原地重装」even when wheels are already on disk.
+            let extrasPreflighted = false;
             const installPath = resolveEngineInstallPath(optionsWithHf.engineInstallPath);
             const pythonPath = resolveEngineRuntimePython(installPath);
 
-            if (kind === 'torch-rocm') {
-                const { ensureTorchRocmOffline } = require('./engine-runtime-extras');
+            if (kind === 'torch-rocm' || kind === 'torch-xpu') {
+                const isXpu = kind === 'torch-xpu';
+                const { ensureTorchRocmOffline, ensureTorchXpuOffline } = require('./engine-runtime-extras');
+                const ensureFn = isXpu ? ensureTorchXpuOffline : ensureTorchRocmOffline;
+                const label = isXpu ? 'XPU PyTorch' : 'ROCm PyTorch';
+                const mode = isXpu ? 'xpu' : 'rocm';
+                const manualKind = kind;
                 emit({
                     phase: 'progress',
                     stage: 'pip',
-                    message: '正在把 ROCm PyTorch 装进引擎运行时（系统 pip 无效）…',
+                    message: `正在把 ${label} 装进引擎运行时（系统 pip 无效）…`,
                     pct: 8,
                 });
-                const pre = await ensureTorchRocmOffline({
+                const pre = await ensureFn({
                     pythonPath,
                     cwd: installPath,
                     force: true,
@@ -150,11 +217,19 @@ function createEngineDownloadJob(host) {
                     ...offlineExtrasOpts,
                     onProgress: (ev) => {
                         const detail = String(ev?.detail || ev?.message || '').trim();
+                        const pyPct = Number(ev?.percent ?? ev?.pct);
+                        // Map engine JSONL percent into the pip band; never freeze the whole
+                        // multi-GB install on a hard-coded 30% (users read that as hung).
+                        const mappedPct = Number.isFinite(pyPct)
+                            ? Math.min(88, Math.max(12, Math.round(10 + (pyPct * 0.75))))
+                            : 30;
                         emit({
                             phase: 'progress',
                             stage: 'pip',
-                            message: detail ? `ROCm PyTorch · ${detail}` : '正在安装 ROCm PyTorch…',
-                            pct: 30,
+                            message: detail
+                                ? `${label} · ${detail}`
+                                : `正在安装 ${label}（约数 GB，可能需十余分钟）…`,
+                            pct: mappedPct,
                         });
                     },
                 });
@@ -163,7 +238,7 @@ function createEngineDownloadJob(host) {
                     return { ok: false, cancelled: true, error: 'cancelled' };
                 }
                 if (!pre.ok) {
-                    const err = pre.error || pre.message || 'ROCm PyTorch 安装失败';
+                    const err = pre.error || pre.message || `${label} 安装失败`;
                     emit({
                         phase: 'error',
                         ok: false,
@@ -178,13 +253,38 @@ function createEngineDownloadJob(host) {
                         logTail: pre.logTail,
                         pipCommand: pre.pipCommand || '',
                         suggestManual: true,
-                        manualKind: 'torch-rocm',
+                        manualKind,
                     };
                 }
-                emit({ phase: 'progress', message: 'ROCm PyTorch 已安装，正在重启引擎…', pct: 92 });
-                const ensure2 = await ensureEngineRunning({ ...optionsWithHf, forceRestart: true });
-                const message = pre.message || '已把 ROCm PyTorch 装进引擎运行时';
+                const ensure2 = await ensureEngineRunningWithColdInstallProgress({
+                    emit,
+                    ensureEngineRunning,
+                    ensureOptions: { ...optionsWithHf, forceRestart: true },
+                    mode,
+                });
+                const message = pre.message || `已把 ${label} 装进引擎运行时`;
                 if (!ensure2.ok) {
+                    if (mustFailClosedOnRestart({ mode })) {
+                        const err = coldInstallRestartFailMessage(
+                            ensure2.error || `${label} 安装后引擎重启失败`,
+                            { mode },
+                        );
+                        emit({
+                            phase: 'error',
+                            ok: false,
+                            message: err,
+                            pct: 92,
+                            suggestManual: true,
+                        });
+                        return {
+                            ok: false,
+                            error: err,
+                            code: ensure2.code || 'engine_restart_failed',
+                            restarted: false,
+                            suggestManual: true,
+                            manualKind,
+                        };
+                    }
                     emit({ phase: 'done', ok: true, message: `${message}（引擎重启失败，请重新检测）`, pct: 100 });
                     return { ok: true, restarted: false, message };
                 }
@@ -248,7 +348,10 @@ function createEngineDownloadJob(host) {
                 });
                 if (
                     !pre.ok
-                    && pre.code === 'EXTRAS_LOCKED_IN_PROCESS'
+                    && (
+                        pre.code === 'EXTRAS_LOCKED_IN_PROCESS'
+                        || pre.code === 'EXTRAS_REQUIRES_COLD_INSTALL'
+                    )
                     && !signal?.aborted
                 ) {
                     // Do NOT --force-reinstall the full Whisper stack: onnxruntime-gpu
@@ -263,7 +366,7 @@ function createEngineDownloadJob(host) {
                     try {
                         stopEngineProcessAndPort();
                     } catch { /* ignore */ }
-                    await sleep(1500);
+                    if (!await pause(1500)) return cancelledResult();
                     pre = await ensureFn({
                         pythonPath,
                         cwd: installPath,
@@ -285,6 +388,7 @@ function createEngineDownloadJob(host) {
             };
 
             if (kind === 'models' && (needWhisperExtras || needSensevoiceExtras || needQwenExtras)) {
+                extrasPreflighted = true;
                 if (needWhisperExtras) {
                     const pre = await runOfflineExtras({
                         need: true,
@@ -298,6 +402,12 @@ function createEngineDownloadJob(host) {
                     }
                     if (!pre.ok && pre.code !== 'SMART_APP_CONTROL' && !pre.skipped) {
                         const err = pre.error || pre.message || 'Whisper 运行库安装失败';
+                        let numpyBroken = pre.code === 'NUMPY_DLL_BROKEN'
+                            || pre.code === 'NUMPY_NUMBA_REPAIR_FAILED';
+                        try {
+                            const heal = require('../src/js/numpy-whl-heal-core');
+                            numpyBroken = numpyBroken || !!heal.isNumpyPinOrDllError(err);
+                        } catch (_) { /* ignore */ }
                         // Do not block SenseVoice repair when LID/Whisper extras fail first.
                         if (needSensevoiceExtras) {
                             emit({
@@ -306,8 +416,23 @@ function createEngineDownloadJob(host) {
                                 pct: 8,
                             });
                         } else {
-                            emit({ phase: 'error', ok: false, message: err, pct: 0 });
-                            return { ok: false, error: err, code: pre.code || '', logTail: pre.logTail };
+                            emit({
+                                phase: 'error',
+                                ok: false,
+                                message: err,
+                                pct: 0,
+                                suggestManual: numpyBroken || !!pre.suggestManual,
+                            });
+                            return {
+                                ok: false,
+                                error: err,
+                                code: pre.code || '',
+                                logTail: pre.logTail,
+                                suggestManual: numpyBroken || !!pre.suggestManual,
+                                manualKind: numpyBroken
+                                    ? 'whisper'
+                                    : (pre.manualKind || 'whisper'),
+                            };
                         }
                     } else if (pre.code === 'SMART_APP_CONTROL') {
                         emit({
@@ -330,21 +455,29 @@ function createEngineDownloadJob(host) {
                     }
                     if (!pre.ok && pre.code !== 'SMART_APP_CONTROL' && !pre.skipped) {
                         const err = pre.error || pre.message || 'SenseVoice 运行库安装失败';
-                        emit({
-                            phase: 'error',
-                            ok: false,
-                            message: err,
-                            pct: 0,
-                            suggestManual: !!pre.suggestManual,
-                        });
-                        return {
-                            ok: false,
-                            error: err,
-                            code: pre.code || '',
-                            logTail: pre.logTail,
-                            suggestManual: !!pre.suggestManual,
-                            manualKind: pre.manualKind || '',
-                        };
+                        if (needQwenExtras) {
+                            emit({
+                                phase: 'progress',
+                                message: `SenseVoice 运行库暂未装好：${err}；继续补齐 Qwen3-ASR…`,
+                                pct: 14,
+                            });
+                        } else {
+                            emit({
+                                phase: 'error',
+                                ok: false,
+                                message: err,
+                                pct: 0,
+                                suggestManual: !!pre.suggestManual,
+                            });
+                            return {
+                                ok: false,
+                                error: err,
+                                code: pre.code || '',
+                                logTail: pre.logTail,
+                                suggestManual: !!pre.suggestManual,
+                                manualKind: pre.manualKind || '',
+                            };
+                        }
                     }
                     if (pre.code === 'SMART_APP_CONTROL') {
                         emit({
@@ -367,23 +500,39 @@ function createEngineDownloadJob(host) {
                         emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
                         return { ok: false, cancelled: true, error: 'cancelled' };
                     }
+                    // Soft-continue on lock/cold codes: Hub weights can still download
+                    // with extrasPreflighted. Hard-failing here left users with
+                    // 「运行库已加载…无法下载」even when system check already passed.
+                    const qwenLockSoft = pre.code === 'EXTRAS_LOCKED_IN_PROCESS'
+                        || pre.code === 'EXTRAS_REQUIRES_COLD_INSTALL'
+                        || /已加载于当前引擎|无法原地重装|EXTRAS_LOCKED|EXTRAS_REQUIRES_COLD/i.test(
+                            String(pre.error || pre.message || ''),
+                        );
                     if (!pre.ok && pre.code !== 'SMART_APP_CONTROL' && !pre.skipped) {
-                        const err = pre.error || pre.message || 'Qwen3-ASR 运行库安装失败';
-                        emit({
-                            phase: 'error',
-                            ok: false,
-                            message: err,
-                            pct: 0,
-                            suggestManual: !!pre.suggestManual,
-                        });
-                        return {
-                            ok: false,
-                            error: err,
-                            code: pre.code || '',
-                            logTail: pre.logTail,
-                            suggestManual: !!pre.suggestManual,
-                            manualKind: pre.manualKind || 'torch-cuda',
-                        };
+                        if (qwenLockSoft) {
+                            emit({
+                                phase: 'progress',
+                                message: `Qwen3-ASR 运行库暂未原地装好（${pre.error || pre.message || pre.code}）；先继续下载模型权重…`,
+                                pct: qwenPctBase + 4,
+                            });
+                        } else {
+                            const err = pre.error || pre.message || 'Qwen3-ASR 运行库安装失败';
+                            emit({
+                                phase: 'error',
+                                ok: false,
+                                message: err,
+                                pct: 0,
+                                suggestManual: !!pre.suggestManual,
+                            });
+                            return {
+                                ok: false,
+                                error: err,
+                                code: pre.code || '',
+                                logTail: pre.logTail,
+                                suggestManual: !!pre.suggestManual,
+                                manualKind: pre.manualKind || 'torch-cuda',
+                            };
+                        }
                     }
                     if (pre.code === 'SMART_APP_CONTROL') {
                         emit({
@@ -420,8 +569,23 @@ function createEngineDownloadJob(host) {
             let baseUrl = ensure.baseUrl;
 
             if (kind === 'demucs') {
-                emit({ phase: 'progress', message: '正在安装 Demucs + CUDA PyTorch（若有 GPU）…', pct: 8 });
-                const res = await ensureAudioSeparateRuntimeStream(baseUrl, {
+                let demucsGpuVendor = '';
+                try {
+                    const gpuInfo = await require('./gpu-detect').detectGpuEnvironment();
+                    demucsGpuVendor = String(gpuInfo?.vendor || '').toLowerCase();
+                } catch (_) { /* ignore */ }
+                const demucsTorchLabel = demucsGpuVendor === 'intel'
+                    ? 'XPU PyTorch'
+                    : (demucsGpuVendor === 'amd' ? 'ROCm PyTorch' : 'CUDA PyTorch');
+                const demucsManualKind = demucsGpuVendor === 'intel'
+                    ? 'torch-xpu'
+                    : (demucsGpuVendor === 'amd' ? 'torch-rocm' : 'torch-cuda');
+                emit({
+                    phase: 'progress',
+                    message: `正在安装 Demucs + ${demucsTorchLabel}（若有 GPU）…`,
+                    pct: 8,
+                });
+                const runDemucsStream = async (url) => ensureAudioSeparateRuntimeStream(url, {
                     force: !!payload.force,
                     preferredPipMirror: preferredPipMirror || undefined,
                 }, {
@@ -438,6 +602,29 @@ function createEngineDownloadJob(host) {
                         });
                     },
                 });
+                let res = await runDemucsStream(baseUrl);
+                // Exit 75 = engine queued cold torch reinstall and exited; stream dies
+                // with ECONNREFUSED. Respawning once recovers the common CN mirror hang path.
+                const demucsErr = String(res.error || res.data?.message || '');
+                const coldHealDrop = !res.ok && !res.cancelled && !signal.aborted && (
+                    /退出码\s*75|exit(?:\s*code)?\s*75|torch_cold_heal|连接被拒绝|ECONNREFUSED/i.test(demucsErr)
+                );
+                if (coldHealDrop) {
+                    emit({
+                        phase: 'progress',
+                        message: `引擎正在冷安装 ${demucsTorchLabel}，正在重新拉起并续修…`,
+                        pct: 12,
+                    });
+                    if (!await pause(1200)) return cancelledResult();
+                    const ensureHeal = await ensureEngineRunning({
+                        ...optionsWithHf,
+                        forceRestart: true,
+                    });
+                    if (ensureHeal.ok) {
+                        baseUrl = ensureHeal.baseUrl;
+                        res = await runDemucsStream(baseUrl);
+                    }
+                }
                 if (res.cancelled || signal.aborted) {
                     emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
                     return { ok: false, cancelled: true, error: 'cancelled' };
@@ -447,25 +634,52 @@ function createEngineDownloadJob(host) {
                     emit({ phase: 'error', ok: false, message: err, pct: 0 });
                     return { ok: false, error: err, raw: res.data };
                 }
-                const deferredTorch = !!(
-                    res.data?.restartRequired
-                    || res.data?.deferred
-                    || res.data?.code === 'TORCH_CUDA_DEFERRED'
-                    || res.data?.torchCuda?.code === 'TORCH_CUDA_DEFERRED'
-                );
-                emit({
-                    phase: 'progress',
-                    message: deferredTorch
-                        ? 'CUDA PyTorch 将冷安装，正在重启引擎…'
-                        : '正在重启引擎…',
-                    pct: 92,
-                });
+                const deferredMode = resolveDeferredTorchMode(res.data)
+                    || (isDeferredTorchCuda(res.data) ? 'torch-cuda' : '');
+                const deferredTorch = !!deferredMode;
                 if (getEngineProc()) {
                     stopEngineProcess();
-                    await sleep(800);
+                    if (!await pause(800)) return cancelledResult();
                 }
-                const ensure2 = await ensureEngineRunning({ ...optionsWithHf, forceRestart: true });
+                const ensure2 = await ensureEngineRunningWithColdInstallProgress({
+                    emit,
+                    ensureEngineRunning,
+                    ensureOptions: { ...optionsWithHf, forceRestart: true },
+                    mode: deferredMode || 'generic',
+                    deferred: deferredTorch,
+                });
                 if (!ensure2.ok) {
+                    // Deferred / pending torch only lands on a clean respawn.
+                    // Reporting ok here left env-check failing with docstring poison
+                    // while the UI claimed「补齐成功」and users hammered 手动修复 at 92%.
+                    if (mustFailClosedOnRestart({
+                        deferred: deferredTorch,
+                        mode: deferredMode || 'torch-cuda',
+                    })) {
+                        const err = coldInstallRestartFailMessage(
+                            ensure2.error || `${demucsTorchLabel} 冷安装/引擎重启失败`,
+                            { deferred: deferredTorch, mode: deferredMode || 'torch-cuda' },
+                        );
+                        emit({
+                            phase: 'error',
+                            ok: false,
+                            message: err,
+                            pct: 92,
+                            suggestManual: true,
+                        });
+                        return {
+                            ok: false,
+                            error: err,
+                            code: ensure2.code || 'torch_cold_restart_failed',
+                            restarted: false,
+                            deferred: true,
+                            restartRequired: true,
+                            suggestManual: true,
+                            manualKind: demucsManualKind,
+                            message: err,
+                            raw: res.data || null,
+                        };
+                    }
                     const msg = (res.data?.message || 'Demucs 已安装') + '（引擎重启失败，请手动检测引擎）';
                     emit({ phase: 'done', ok: true, message: msg, pct: 100 });
                     return { ok: true, restarted: false, message: msg, ...(res.data || {}) };
@@ -518,18 +732,50 @@ function createEngineDownloadJob(host) {
                     emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
                     return { ok: false, cancelled: true, error: 'cancelled' };
                 }
-                if (!res.ok) {
+                const deferredTorch = isDeferredTorchCuda(res.data);
+                // Older finalize returned ok:false while torchCuda was TORCH_CUDA_DEFERRED + mismatch;
+                // still must cold-restart instead of hard-failing before wheels land.
+                if (!res.ok && !deferredTorch) {
                     const err = res.error || res.data?.message || 'GPU 支持安装失败';
                     emit({ phase: 'error', ok: false, message: err, pct: 0 });
                     return { ok: false, error: err, raw: res.data };
                 }
-                emit({ phase: 'progress', message: '正在重启引擎以加载运行库…', pct: 92 });
                 if (getEngineProc()) {
                     stopEngineProcess();
-                    await sleep(800);
+                    if (!await pause(800)) return cancelledResult();
                 }
-                const ensure2 = await ensureEngineRunning({ ...optionsWithHf, forceRestart: true });
+                const ensure2 = await ensureEngineRunningWithColdInstallProgress({
+                    emit,
+                    ensureEngineRunning,
+                    ensureOptions: { ...optionsWithHf, forceRestart: true },
+                    mode: deferredTorch ? 'torch-cuda' : 'gpu',
+                    deferred: deferredTorch,
+                });
                 if (!ensure2.ok) {
+                    // Pending CUDA torch cold-install after GPU ensure must not look "done".
+                    if (mustFailClosedOnRestart({ deferred: deferredTorch })) {
+                        const err = coldInstallRestartFailMessage(
+                            ensure2.error || 'GPU 运行库安装后引擎重启失败',
+                            { mode: 'torch-cuda', pendingTorch: true, deferred: deferredTorch },
+                        );
+                        emit({
+                            phase: 'error',
+                            ok: false,
+                            message: err,
+                            pct: 92,
+                            suggestManual: true,
+                        });
+                        return {
+                            ok: false,
+                            error: err,
+                            code: ensure2.code || 'torch_cold_restart_failed',
+                            restarted: false,
+                            suggestManual: true,
+                            manualKind: 'torch-cuda',
+                            message: err,
+                            raw: res.data || null,
+                        };
+                    }
                     const msg = (res.data?.message || 'GPU 支持已安装') + '（引擎重启失败，请手动检测引擎）';
                     emit({ phase: 'done', ok: true, message: msg, pct: 100 });
                     return { ok: true, restarted: false, message: msg, ...(res.data || {}) };
@@ -597,7 +843,8 @@ function createEngineDownloadJob(host) {
                             emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
                             return { ok: false, cancelled: true, error: 'cancelled' };
                         }
-                        if (!gpuRes.ok) {
+                        const gpuDeferred = isDeferredTorchCuda(gpuRes.data);
+                        if (!gpuRes.ok && !gpuDeferred) {
                             emit({
                                 phase: 'progress',
                                 message: `GPU 预装未完成（${gpuRes.error || gpuRes.data?.message || '继续下载模型'}），先继续模型/运行库…`,
@@ -606,12 +853,38 @@ function createEngineDownloadJob(host) {
                         } else {
                             if (getEngineProc()) {
                                 stopEngineProcess();
-                                await sleep(600);
+                                if (!await pause(600)) return cancelledResult();
                             }
-                            const ensureAfterGpu = await ensureEngineRunning({ ...optionsWithHf, forceRestart: true });
+                            const ensureAfterGpu = gpuDeferred
+                                ? await ensureEngineRunningWithColdInstallProgress({
+                                    emit,
+                                    ensureEngineRunning,
+                                    ensureOptions: { ...optionsWithHf, forceRestart: true },
+                                    mode: 'torch-cuda',
+                                    deferred: true,
+                                })
+                                : await ensureEngineRunning({ ...optionsWithHf, forceRestart: true });
                             if (!ensureAfterGpu.ok) {
-                                // Do not abort models/runtime download — one-click fix can continue
-                                // and a later round / ensure-gpu step can recover.
+                                if (mustFailClosedOnRestart({ deferred: gpuDeferred })) {
+                                    const err = coldInstallRestartFailMessage(
+                                        ensureAfterGpu.error || 'GPU 安装后引擎重启失败',
+                                        { deferred: gpuDeferred, mode: 'torch-cuda' },
+                                    );
+                                    emit({
+                                        phase: 'error',
+                                        ok: false,
+                                        message: err,
+                                        pct: 92,
+                                        suggestManual: true,
+                                    });
+                                    return {
+                                        ok: false,
+                                        error: err,
+                                        code: ensureAfterGpu.code || 'torch_cold_restart_failed',
+                                        suggestManual: true,
+                                        manualKind: 'torch-cuda',
+                                    };
+                                }
                                 emit({
                                     phase: 'progress',
                                     message: 'GPU 安装后引擎重启失败，仍继续下载模型/运行库…',
@@ -653,14 +926,17 @@ function createEngineDownloadJob(host) {
                         : `开始下载模型（档位 ${profile}）…`,
                     pct: 40,
                 });
-                const res = await downloadModelsStream(baseUrl, {
+                const downloadBodyBase = {
                     profile: profile || undefined,
                     modelIds: engineIds.length ? engineIds : undefined,
                     hfEndpoint,
                     hfToken: hfToken || undefined,
                     force: !!payload.force,
-                }, {
-                    timeoutMs: 1800000,
+                };
+                const streamDownloadOpts = {
+                    timeoutMs: 1200000,
+                    idleTimeoutMs: 1200000,
+                    maxTimeoutMs: 4 * 60 * 60 * 1000,
                     signal,
                     onEvent: (ev) => {
                         const stage = String(ev.stage || '').toLowerCase();
@@ -709,7 +985,80 @@ function createEngineDownloadJob(host) {
                             raw: ev,
                         });
                     },
-                });
+                };
+                const isExtrasLockError = (msg, code) => {
+                    const c = String(code || '');
+                    const m = String(msg || '');
+                    return c === 'EXTRAS_LOCKED_IN_PROCESS'
+                        || c === 'EXTRAS_REQUIRES_COLD_INSTALL'
+                        || /无法原地重装|文件被占用|已加载于当前引擎|EXTRAS_LOCKED|EXTRAS_REQUIRES_COLD/i.test(m);
+                };
+                let res = await downloadModelsStream(baseUrl, {
+                    ...downloadBodyBase,
+                    extrasPreflighted: !!extrasPreflighted,
+                }, streamDownloadOpts);
+                // Live-engine ensure still raced (old engine build / no preflight): cold
+                // re-ensure offline once, then retry Hub download with preflight flag.
+                if (
+                    !res.ok
+                    && !res.cancelled
+                    && !signal.aborted
+                    && pythonPath
+                    && isExtrasLockError(
+                        res.error || res.data?.message || res.data?.error,
+                        res.data?.code || res.code,
+                    )
+                ) {
+                    emit({
+                        phase: 'progress',
+                        stage: 'pip',
+                        message: '运行库被引擎占用，正在停止引擎并冷安装后重试下载…',
+                        pct: 42,
+                    });
+                    try {
+                        stopEngineProcessAndPort();
+                    } catch {
+                        try { stopEngineProcess(); } catch { /* ignore */ }
+                    }
+                    if (!await pause(1500)) return cancelledResult();
+                    if (needQwenExtras || modelIdsNeedQwenExtras(engineIds)) {
+                        const cold = await ensureAsrQwen3Offline({
+                            pythonPath,
+                            cwd: installPath,
+                            force: false,
+                            signal,
+                            ...offlineExtrasOpts,
+                            onProgress: (ev) => emitOfflineExtrasProgress(ev, 'Qwen3-ASR 运行库', 42, true),
+                        });
+                        if (cold.cancelled || signal.aborted) {
+                            emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
+                            return { ok: false, cancelled: true, error: 'cancelled' };
+                        }
+                        if (!cold.ok && cold.code !== 'SMART_APP_CONTROL' && !cold.skipped) {
+                            const err = cold.error || cold.message || 'Qwen3-ASR 运行库冷安装失败';
+                            emit({ phase: 'error', ok: false, message: err, pct: 0, suggestManual: !!cold.suggestManual });
+                            return {
+                                ok: false,
+                                error: err,
+                                code: cold.code || '',
+                                suggestManual: !!cold.suggestManual,
+                                manualKind: cold.manualKind || 'torch-cuda',
+                            };
+                        }
+                    }
+                    extrasPreflighted = true;
+                    emit({ phase: 'progress', message: '正在重新启动引擎并继续下载…', pct: 44 });
+                    const ensureRetry = await ensureEngineRunning(optionsWithHf);
+                    if (!ensureRetry.ok) {
+                        emit({ phase: 'error', ok: false, message: ensureRetry.error || '引擎未就绪', pct: 0 });
+                        return ensureRetry;
+                    }
+                    baseUrl = ensureRetry.baseUrl || baseUrl;
+                    res = await downloadModelsStream(baseUrl, {
+                        ...downloadBodyBase,
+                        extrasPreflighted: true,
+                    }, streamDownloadOpts);
+                }
                 if (res.cancelled || signal.aborted) {
                     emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
                     return { ok: false, cancelled: true, error: 'cancelled' };
@@ -786,7 +1135,7 @@ function createEngineDownloadJob(host) {
             emit({ phase: 'done', ok: true, message, pct: 100 });
             return { ok: true, message, results: doneIds.map((id) => ({ id, ok: true })) };
         } catch (err) {
-            const msg = err.message || String(err);
+            const msg = (err && err.message) || (err != null ? String(err) : '') || '下载失败';
             emit({ phase: 'error', ok: false, message: msg, pct: 0 });
             return { ok: false, error: msg };
         } finally {

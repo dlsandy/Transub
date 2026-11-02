@@ -34,6 +34,7 @@ const PRO_FEATURE_IDS = [
     'filmAudioEnhance',
     'bilingualSemanticReview',
     'asrSemanticRepair',
+    'jevDecision',
     'assStyleExport',
 ];
 

@@ -15,6 +15,21 @@ describe('engine-asr-semantic-handoff', () => {
         assert.strictEqual(body._checkpoint.sourceCues.length, 1);
     });
 
+    it('preserves mtLlama through translate checkpoint rebuild', () => {
+        const body = handoff.buildTranslateJobWithCheckpoint(
+            {
+                task: 'dual',
+                mediaPath: 'a.mp4',
+                mtBackend: 'llama',
+                mtLlama: { model: 'sakura-1.5b', ensure: { port: 8081 } },
+            },
+            [{ start: 0, end: 1, text: 'ja' }],
+        );
+        assert.strictEqual(body.mtBackend, 'llama');
+        assert.strictEqual(body.mtLlama.model, 'sakura-1.5b');
+        assert.strictEqual(body.mtLlama.ensure.port, 8081);
+    });
+
     it('resolveSkipAsrEntry maps shelf original / transcript', () => {
         const fromOriginal = handoff.resolveSkipAsrEntry({
             fileMerged: {
@@ -51,7 +66,12 @@ describe('engine-asr-semantic-handoff', () => {
         const jobs = [];
         try {
             const outcome = await handoff.runEngineJobFromExistingSource({
-                jobBody: { task: 'translate_mt', mediaPath: 'a.mp4' },
+                jobBody: {
+                    task: 'translate_mt',
+                    mediaPath: 'a.mp4',
+                    mtBackend: 'llama',
+                    mtLlama: { model: 'sakura-1.5b', ensure: { port: 8081 } },
+                },
                 engineTask: 'translate_mt',
                 fileMerged: { skipAsr: true, shelfEntryStage: 'translate' },
                 options: {},
@@ -73,6 +93,7 @@ describe('engine-asr-semantic-handoff', () => {
             assert.strictEqual(jobs.length, 1);
             assert.strictEqual(jobs[0]._checkpoint.stage, 'asr_done');
             assert.ok(jobs[0]._checkpoint.sourceCues.length >= 1);
+            assert.strictEqual(jobs[0].mtBackend, 'llama');
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
         }
@@ -225,7 +246,12 @@ describe('engine-asr-semantic-handoff', () => {
             const fresh = require('../electron/engine-asr-semantic-handoff');
             const outcome = await fresh.runEngineJobWithPreMtHandoffs({
                 engineTask: 'dual',
-                jobBody: { task: 'dual', mediaPath: 'C:\\tmp\\clip.mp4' },
+                jobBody: {
+                    task: 'dual',
+                    mediaPath: 'C:\\tmp\\clip.mp4',
+                    mtBackend: 'llama',
+                    mtLlama: { model: 'sakura-1.5b', ensure: { port: 8081 } },
+                },
                 fileMerged: { task: 'dual', asrSecondOpinion: 'off', asrSemanticRepair: 'off' },
                 options: { mediaPath: 'C:\\tmp\\clip.mp4', asrSecondOpinion: 'off', asrSemanticRepair: 'off' },
                 repairMeta: { mediaPath: 'C:\\tmp\\clip.mp4', primaryAsr: 'sensevoice-small' },
@@ -245,6 +271,8 @@ describe('engine-asr-semantic-handoff', () => {
                         };
                     }
                     assert.ok(body._checkpoint?.sourceCues?.length);
+                    assert.strictEqual(body.mtBackend, 'llama');
+                    assert.ok(body.mtLlama?.model);
                     assert.strictEqual(meta?.itemDualPhase, 'translate');
                     return {
                         ok: true,

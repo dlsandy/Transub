@@ -19,7 +19,8 @@ REM   build-win.bat -Target zip
 REM       other args forwarded to tools\build.ps1
 REM
 REM Publishes English *-win.zip only; CPU/CUDA full first-install packs discontinued.
-REM Packaging stages under %%LOCALAPPDATA%%\Transub\packaging.
+REM Staging defaults to a sibling folder ..\Transub-packaging\ (outside the Cursor
+REM workspace) to avoid EPERM on win-unpacked.tmp rename. Override: TRANSUB_PACKAGING_BASE.
 
 if /I "%~1"=="help" goto :help
 if /I "%~1"=="/?" goto :help
@@ -50,7 +51,12 @@ if not "%EXITCODE%"=="0" (
   echo.
   echo [build-win] failed, exit code %EXITCODE%
   echo Common fix: close running Transub.exe, then retry.
-  echo Staging is outside the repo: %LOCALAPPDATA%\Transub\packaging
+  echo If EPERM on win-unpacked.tmp: close Explorer on staging, retry (staging is outside repo).
+  if defined TRANSUB_PACKAGING_BASE (
+    echo Staging: %TRANSUB_PACKAGING_BASE%
+  ) else (
+    echo Staging: %~dp0..\Transub-packaging\
+  )
   echo Log: %~dp0dist\build-win.log
   if "%PAUSE_AT_END%"=="1" (
     echo.

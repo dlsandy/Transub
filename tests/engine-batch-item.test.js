@@ -4,6 +4,8 @@ const {
     interpretWaitJobResult,
     progressFieldsFromWaitEvent,
     resolveFileMtPlan,
+    resolveInferenceMtModelId,
+    assertTranslateJobMtFields,
     buildFailedItemResult,
     buildCancelledItemResult,
     buildSkippedItemResult,
@@ -190,6 +192,63 @@ describe('engine-batch-item', () => {
         assert.strictEqual(plan.useExternalMt, true);
         assert.strictEqual(plan.jobMtModel, null);
         assert.strictEqual(plan.engineTask, 'translate_mt');
+    });
+
+    it('resolveFileMtPlan fills empty 推理翻译 model and can use engine llama', () => {
+        const plan = resolveFileMtPlan(
+            { task: 'dual', translateMode: 'llm', engineMtModel: '' },
+            {
+                isLlmMtId: (id) => !!String(id || '').trim(),
+                usesExternalMt: ({ sakuraMt }) => !!sakuraMt,
+                mapTaskToEngineTask: (t) => (t === 'dual' ? 'dual' : t),
+                preferEngineLlamaMt: true,
+                canUseEngineLlamaMt: () => true,
+            },
+        );
+        assert.ok(String(plan.fileMerged?.engineMtModel || '').trim(), 'should resolve a model id');
+        assert.strictEqual(plan.useSakuraMt, true);
+        assert.strictEqual(plan.useLlamaMt, true);
+        assert.strictEqual(plan.blockedNativeOpus, false);
+    });
+
+    it('resolveFileMtPlan blocks dual with no MT backend when model cannot be resolved', () => {
+        const plan = resolveFileMtPlan(
+            { task: 'dual', translateMode: 'llm', engineMtModel: '' },
+            {
+                isLlmMtId: () => false,
+                usesExternalMt: () => false,
+                mapTaskToEngineTask: (t) => t,
+            },
+        );
+        assert.strictEqual(plan.blockedNativeOpus, true);
+        assert.ok(String(plan.intlMtError || '').length > 0);
+    });
+
+    it('assertTranslateJobMtFields catches missing mtLlama', () => {
+        assert.strictEqual(assertTranslateJobMtFields({ task: 'transcribe' }).ok, true);
+        assert.strictEqual(
+            assertTranslateJobMtFields({
+                task: 'dual',
+                mtBackend: 'llama',
+                mtLlama: { model: 'sakura-1.5b', ensure: {} },
+            }).ok,
+            true,
+        );
+        const bare = assertTranslateJobMtFields({ task: 'dual' });
+        assert.strictEqual(bare.ok, false);
+        assert.strictEqual(bare.code, 'MT_BACKEND_MISSING');
+        const llamaNoCfg = assertTranslateJobMtFields({ task: 'dual', mtBackend: 'llama' });
+        assert.strictEqual(llamaNoCfg.ok, false);
+        assert.strictEqual(llamaNoCfg.code, 'MT_LLAMA_CONFIG');
+    });
+
+    it('resolveInferenceMtModelId prefers engineMtModel then DEFAULT', () => {
+        assert.strictEqual(
+            resolveInferenceMtModelId({ engineMtModel: 'sakura-7b' }, () => true),
+            'sakura-7b',
+        );
+        const fallback = resolveInferenceMtModelId({}, (id) => id === 'sakura-1.5b');
+        assert.strictEqual(fallback, 'sakura-1.5b');
     });
 
     it('result builders', () => {

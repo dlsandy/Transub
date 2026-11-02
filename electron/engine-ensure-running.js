@@ -4,6 +4,7 @@
  */
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -31,6 +32,33 @@ const REQUIRED_HOST_KEYS = [
     'resetEngineLogFile',
     'attachEngineProcessLogs',
 ];
+
+const PENDING_TORCH_CUDA_MARKER = 'pending-torch-cuda-install.json';
+
+/**
+ * Path to the serve cold-install marker written by runtime_audio.mark_pending_torch_cuda_install.
+ * Must stay aligned with transub_engine.paths.get_data_root() / wheel-cache.
+ * @returns {string}
+ */
+function pendingTorchCudaMarkerPath() {
+    const override = String(process.env.TRANSUB_ENGINE_DATA || '').trim();
+    const root = override
+        || path.join(process.env.LOCALAPPDATA || process.env.HOME || process.cwd(), 'TransubEngine');
+    return path.join(root, 'wheel-cache', PENDING_TORCH_CUDA_MARKER);
+}
+
+/**
+ * True when the next serve spawn will cold-install CUDA torch before binding the port
+ * (can take many minutes for ~2.5GB wheels).
+ * @returns {boolean}
+ */
+function hasPendingTorchCudaInstall() {
+    try {
+        return fs.existsSync(pendingTorchCudaMarkerPath());
+    } catch {
+        return false;
+    }
+}
 
 /**
  * @param {object} host bridge bindings (mutable engineProc / engineBaseUrl / batchRunning via getters/setters)
@@ -294,8 +322,9 @@ function createEngineEnsureRunning(host) {
                 env.HF_HUB_DISABLE_XET = '1';
             }
             // huggingface_hub defaults to 10s; too short for mirror/CDN hops on large weights.
+            // 120s is still tight for a 10MB chunk on a flaky last-mile (Qwen 1.7B ~3.8GB).
             if (!env.HF_HUB_DOWNLOAD_TIMEOUT) {
-                env.HF_HUB_DOWNLOAD_TIMEOUT = '120';
+                env.HF_HUB_DOWNLOAD_TIMEOUT = '600';
             }
             if (!env.HF_HUB_ETAG_TIMEOUT) {
                 env.HF_HUB_ETAG_TIMEOUT = '30';
@@ -354,8 +383,16 @@ function createEngineEnsureRunning(host) {
             // port, so /v1/health can stay unreachable for well over 45s on first
             // launch. Killing a still-alive child then made the first「开始任务」
             // fail with opaque "HTTP 0" while the second click succeeded.
-            const SPAWN_HEALTH_TIMEOUT_MS = 120000;
-            const SPAWN_HEALTH_GRACE_MS = 60000;
+            // Pending CUDA torch cold-install (~2.5GB pip) can take 10–30+ minutes —
+            // a 3-minute health wait made「补齐 CUDA」appear stuck at 92% then fail.
+            const pendingTorch = hasPendingTorchCudaInstall();
+            const SPAWN_HEALTH_TIMEOUT_MS = pendingTorch ? 900000 : 120000;
+            const SPAWN_HEALTH_GRACE_MS = pendingTorch ? 300000 : 60000;
+            if (pendingTorch) {
+                appendEngineLogLine(
+                    '[engine] 检测到待冷安装的 CUDA PyTorch（约 2.5GB），拉长健康检查等待…',
+                );
+            }
             const healthWaitOpts = {
                 shouldStop,
                 isChildAlive: isEngineChildAlive,
@@ -366,7 +403,11 @@ function createEngineEnsureRunning(host) {
                 timeoutMs: SPAWN_HEALTH_TIMEOUT_MS,
             });
             if (!ready.ok && !ready.cancelled && isEngineChildAlive()) {
-                appendEngineLogLine('[engine] 冷启动尚未绑定端口，继续等待…');
+                appendEngineLogLine(
+                    pendingTorch
+                        ? '[engine] CUDA PyTorch 冷安装仍在进行，继续等待端口就绪…'
+                        : '[engine] 冷启动尚未绑定端口，继续等待…',
+                );
                 ready = await waitForHealth(engineBaseUrl(), {
                     ...healthWaitOpts,
                     timeoutMs: SPAWN_HEALTH_GRACE_MS,
@@ -418,12 +459,20 @@ function createEngineEnsureRunning(host) {
         };
 
         let result = await spawnOnce();
-        // Exit 75 = serve queued cold CUDA torch reinstall and exited for a clean respawn.
+        // Exit 75 = serve queued cold CUDA torch / numpy reinstall and exited for a clean respawn.
         if (!result.ok && result.code === 'torch_cold_heal_exit' && !options._torchHealRetried) {
-            appendEngineLogLine('[engine] Torch 冷修复退出，正在重新拉起引擎…');
-            await sleep(1000);
+            appendEngineLogLine('[engine] 运行库冷修复退出（Torch/NumPy），正在重新拉起引擎…');
+            await sleep(1500);
             result = await spawnOnce();
-            if (result.ok) result.torchHealed = true;
+            if (result.ok) {
+                result.torchHealed = true;
+            } else if (result.code === 'torch_cold_heal_exit') {
+                // Avoid UI hammering ensureEngineRunning forever when heal re-queues (e.g. bad RECORD probe).
+                result.code = 'torch_cold_heal_loop';
+                result.error = result.error
+                    ? `${result.error}（冷修复连续 exit 75，已停止自动重试）`
+                    : '运行库冷修复连续 exit 75，已停止自动重试';
+            }
         }
         return result;
     }
@@ -439,4 +488,7 @@ function createEngineEnsureRunning(host) {
 module.exports = {
     createEngineEnsureRunning,
     REQUIRED_HOST_KEYS,
+    pendingTorchCudaMarkerPath,
+    hasPendingTorchCudaInstall,
+    PENDING_TORCH_CUDA_MARKER,
 };

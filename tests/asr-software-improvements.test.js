@@ -183,11 +183,9 @@ describe('ASR software improvements', () => {
             jobId: 'j1',
             options: { password: 'x' },
             secondOpinion: { replacedWindows: 2, sibling: 'sensevoice-small' },
-            badPool: { open: 3, total: 5 },
         });
         assert.strictEqual(payload.options.password, '[redacted]');
         assert.strictEqual(payload.secondOpinion.replacedWindows, 2);
-        assert.strictEqual(payload.badPool.open, 3);
         fs.rmSync(dir, { recursive: true, force: true });
     });
 

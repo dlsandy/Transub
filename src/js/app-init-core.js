@@ -23,6 +23,8 @@
 
         const getIsStandaloneSettings = d.getIsStandaloneSettings || (() => false);
         const getIsStandaloneWizard = d.getIsStandaloneWizard || (() => false);
+        const getIsStandaloneEnvDoctor = d.getIsStandaloneEnvDoctor
+            || (() => String(pageQuery.get('envDoctor') || '') === '1');
         const getIsStandaloneChrome = d.getIsStandaloneChrome || (() => false);
         const getInitialSettingsTab = d.getInitialSettingsTab || (() => 'runtime');
         const getInitialOpenModelsLibrary = d.getInitialOpenModelsLibrary || (() => false);
@@ -31,6 +33,7 @@
         const cacheEls = d.cacheEls || (() => {});
         const syncQuickExtrasBar = d.syncQuickExtrasBar || (() => {});
         const fillAppVersionLabel = d.fillAppVersionLabel || (async () => {});
+        const bindAppUpdateBadge = d.bindAppUpdateBadge || (() => {});
         const bindEvents = d.bindEvents || (() => {});
         const bindFactoryShellChrome = d.bindFactoryShellChrome || (() => {});
         const syncDeviceOptionsForMode = d.syncDeviceOptionsForMode || (() => {});
@@ -148,6 +151,7 @@
             try {
                 const isStandaloneSettings = getIsStandaloneSettings();
                 const isStandaloneWizard = getIsStandaloneWizard();
+                const isStandaloneEnvDoctor = getIsStandaloneEnvDoctor();
                 const isStandaloneChrome = getIsStandaloneChrome();
 
                 if (isStandaloneSettings) {
@@ -170,6 +174,16 @@
                         }
                     } catch { /* ignore */ }
                     ensureStandaloneBootOverlay('正在打开设置向导…');
+                } else if (isStandaloneEnvDoctor) {
+                    try {
+                        if (typeof document !== 'undefined' && document.documentElement) {
+                            document.documentElement.classList.add('env-doctor-standalone');
+                        }
+                        if (typeof document !== 'undefined' && document.title != null) {
+                            document.title = '字幕工厂 环境检测';
+                        }
+                    } catch { /* ignore */ }
+                    ensureStandaloneBootOverlay('正在打开环境检测…');
                 }
 
                 try {
@@ -193,6 +207,7 @@
                 cacheEls();
                 syncQuickExtrasBar();
                 void fillAppVersionLabel();
+                if (!isStandaloneChrome) bindAppUpdateBadge();
                 bindEvents();
                 bindFactoryShellChrome();
                 syncDeviceOptionsForMode();
@@ -220,20 +235,33 @@
 
                 // Reveal chrome before heavy form apply so first paint is not blocked
                 // by hundreds of settings controls (main window only).
-                if (!isStandaloneChrome) {
+                // Env-doctor shows the language gate during fragment load, then waits
+                // on Continue while options load. The boot mask (z-index 6000) would
+                // sit on that dialog and swallow the click.
+                if (!isStandaloneChrome || isStandaloneEnvDoctor) {
                     setLoading(false);
                     finishBootOverlay();
                 } else {
-                    setLoading(true, isStandaloneWizard ? '正在打开设置向导…' : '正在加载配置…');
-                    ensureStandaloneBootOverlay(
-                        isStandaloneWizard ? '正在打开设置向导…' : '正在加载配置…',
-                    );
+                    const bootMsg = isStandaloneWizard ? '正在打开设置向导…' : '正在加载配置…';
+                    setLoading(true, bootMsg);
+                    ensureStandaloneBootOverlay(bootMsg);
+                }
+                // Doctor window is discarded after the gate. Do not apply the full
+                // settings form or run factory startup probes before the check.
+                if (isStandaloneEnvDoctor) {
+                    return;
                 }
                 try {
                     const optsRes = await electron?.transWithAiGetOptions?.();
                     if (optsRes?.options) {
+                        // Stash loaded options first so lazy settings controls (not in DOM yet)
+                        // do not wipe persist keys like timingAlignModel when rebuilding form.
+                        setSavedOptionsSnapshot(optsRes.options);
                         await applyOptionsToForm(optsRes.options);
-                        setSavedOptionsSnapshot(buildSavedOptionsFromForm());
+                        setSavedOptionsSnapshot({
+                            ...optsRes.options,
+                            ...buildSavedOptionsFromForm(),
+                        });
                         updateParamsSummary();
                         syncResourceUsageMonitor();
                     } else {
@@ -249,10 +277,10 @@
                     }
                 } finally {
                     setLoading(false);
-                    if (isStandaloneChrome) {
-                        ensureStandaloneBootOverlay(
-                            isStandaloneWizard ? '正在打开设置向导…' : '正在加载配置…',
-                        );
+                    // Do not put the boot mask back over the env-doctor language gate.
+                    if (isStandaloneChrome && !isStandaloneEnvDoctor) {
+                        const bootMsg = isStandaloneWizard ? '正在打开设置向导…' : '正在加载配置…';
+                        ensureStandaloneBootOverlay(bootMsg);
                     }
                 }
                 // Warm model catalog from disk so UI chips work without spawning the engine.

@@ -60,6 +60,7 @@ function saveShelfTranscriptAfterAsr(input = {}) {
 
 /**
  * After source phase is final (post ASR handoff / SO): ensure 原文 slot.
+ * Always refreshContent so re-ASR replaces a stale glued `.original` with the new transcript.
  */
 function saveShelfOriginalAfterSourceReady(input = {}) {
     const {
@@ -76,7 +77,7 @@ function saveShelfOriginalAfterSourceReady(input = {}) {
     return softCall(() => {
         const { ingestPipelineOriginal } = require('./subtitle-shelf');
         return ingestPipelineOriginal(
-            { mediaPath, transcriptPath: pathToSave, options },
+            { mediaPath, transcriptPath: pathToSave, options, refreshContent: true },
             { root },
         );
     }, onLog, { okMsg: '字幕库已保存原文', failMsg: '字幕库保存原文' });

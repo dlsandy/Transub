@@ -191,6 +191,16 @@
             }
             const title = els.modelsPickTitle || doc?.getElementById?.('modelsPickTitle');
             if (title) title.textContent = asrOn ? '识别' : '翻译';
+            const footHint = els.modelsPickFootHint || doc?.getElementById?.('modelsPickFootHint');
+            const comboBtn = els.comboPlanChipBtn || doc?.getElementById?.('comboPlanChipBtn');
+            if (footHint) {
+                footHint.hidden = true;
+                footHint.classList.add('hidden');
+            }
+            if (comboBtn) {
+                comboBtn.hidden = false;
+                comboBtn.classList.remove('hidden');
+            }
             asrChipEl()?.setAttribute?.('aria-expanded', modelsMenuOpen && asrOn ? 'true' : 'false');
             mtChipEl()?.setAttribute?.('aria-expanded', modelsMenuOpen && !asrOn ? 'true' : 'false');
             els.modelsChipBtn?.setAttribute?.('aria-expanded', modelsMenuOpen && asrOn ? 'true' : 'false');
@@ -596,13 +606,51 @@
             }
             const summary = `${deviceLabel} · ${taskLabel}${modelLabel} · ${formatLabel}${overwriteLabel}${mergeBiLabel}`;
             if (els.paramsSummary) els.paramsSummary.textContent = summary;
-            if (els.quickLanguageSelect && els.languageSelect) {
-                els.quickLanguageSelect.value = els.languageSelect.value || 'auto';
+            // Main-window 片源 chip is authoritative. Sync chip → hidden #languageSelect
+            // only; never backfill chip from hidden (stale/auto would snap the UI).
+            const doc = getDocument();
+            {
+                const liveQuick = doc?.getElementById?.('quickLanguageSelect') || null;
+                if (liveQuick) els.quickLanguageSelect = liveQuick;
+                const liveLang = doc?.getElementById?.('languageSelect') || null;
+                if (liveLang) els.languageSelect = liveLang;
+                const qLang = String(liveQuick?.value || els.quickLanguageSelect?.value || '').trim();
+                if (qLang && els.languageSelect) {
+                    const hasOpt = [...(els.languageSelect.options || [])]
+                        .some((o) => o.value === qLang);
+                    if (hasOpt) els.languageSelect.value = qLang;
+                }
             }
-            if (els.quickTargetLangSelect && els.chineseSubtitleVariantSelect) {
-                els.quickTargetLangSelect.value = toQuickTargetLang(
-                    els.chineseSubtitleVariantSelect.value || 'simplified',
-                );
+            if (els.quickTargetLangSelect) {
+                // Keep 原文 ↔ transcribe in sync, but do not erase a non-source chip
+                // when taskSelect is missing/stale (user just picked 简体/繁体).
+                const chip = String(els.quickTargetLangSelect.value || '').trim();
+                const chipIsSource = chip === 'source' || chip === 'original' || chip === 'transcribe';
+                const liveTask = doc?.getElementById?.('taskSelect') || null;
+                if (liveTask) els.taskSelect = liveTask;
+                const srcLang = String(
+                    els.quickLanguageSelect?.value || els.languageSelect?.value || '',
+                ).trim();
+                const tgtApi = (global && global.TransubSubtitleTargetLang) || null;
+                const yueZhNoMt = typeof tgtApi?.yueTargetSkipsMachineTranslate === 'function'
+                    ? !!tgtApi.yueTargetSkipsMachineTranslate(srcLang, chip || 'source')
+                    : false;
+                let effectiveTask = task;
+                // Non-原文 chip (incl. Yue+简/繁) heals stale transcribe → translate.
+                if (effectiveTask === 'transcribe' && !chipIsSource && chip && !yueZhNoMt) {
+                    if (liveTask) {
+                        const cur = String(liveTask.value || '').trim();
+                        liveTask.value = cur === 'dual' ? 'dual' : 'translate';
+                    }
+                    effectiveTask = 'translate';
+                }
+                if (effectiveTask === 'transcribe') {
+                    els.quickTargetLangSelect.value = 'source';
+                } else if (chipIsSource || !chip) {
+                    els.quickTargetLangSelect.value = toQuickTargetLang(
+                        els.chineseSubtitleVariantSelect?.value || 'simplified',
+                    );
+                }
             }
             if (els.quickFormatLabel) {
                 els.quickFormatLabel.textContent = formatLabel || 'srt';

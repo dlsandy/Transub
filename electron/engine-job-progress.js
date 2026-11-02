@@ -382,12 +382,17 @@ function extractOutputPaths(result) {
     const target = outputs.find((o) => (
         o?.role === 'zh' || o?.role === 'target' || o?.role === 'translation'
     )) || null;
+    const timingAudio = outputs.find((o) => {
+        const role = String(o?.role || '').toLowerCase();
+        return role === 'timing-audio' || role === 'timing_audio' || role === 'qc-audio';
+    }) || null;
     const any = outputs[0] || null;
     return {
         subtitlePath: dual?.path || target?.path || source?.path || any?.path || '',
         sourceSubtitlePath: source?.path || '',
         targetSubtitlePath: target?.path || '',
         bilingualSubtitlePath: dual?.path || '',
+        timingAudioPath: timingAudio?.path || '',
     };
 }
 

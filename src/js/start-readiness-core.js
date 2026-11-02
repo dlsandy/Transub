@@ -40,6 +40,23 @@
         }
         const probing = items.some((i) => i.selected && (i.status === 'probing' || i.status === 'pending'));
         if (probing) return '正在探测视频信息…';
+        // Auto-sense on: block selected rows that finished sensing but were neither
+        // adopted nor explicitly rejected (smoke #1 — no silent form fall-through).
+        if (state.autoSenseEnabled) {
+            const pendingSense = selectable.some((i) => {
+                const sense = i?.sense;
+                if (!sense || typeof sense !== 'object') return false;
+                const status = String(sense.status || '').toLowerCase();
+                if (status === 'sensing' || status === 'pending') return true;
+                if (sense.adopted || sense.userRejected) return false;
+                if (status === 'off' || status === 'skip') return false;
+                // Has a usable classification / overrides but not adopted yet.
+                return !!(sense.classification || sense.overrides || sense.action === 'suggest');
+            });
+            if (pendingSense) {
+                return '请先采纳或取消感知结果（或关闭智能感知）';
+            }
+        }
         return '';
     }
 

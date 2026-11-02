@@ -64,6 +64,45 @@ describe('subtitle-target-lang-core', () => {
         assert.ok(vals.includes('ko'));
         assert.ok(vals.includes('simplified'));
     });
+
+    it('source form value means 原文/仅转写 (not a persistable target lang)', () => {
+        assert.strictEqual(tgt.SOURCE_TARGET_FORM_VALUE, 'source');
+        assert.ok(tgt.isSourceTargetFormValue('source'));
+        assert.ok(tgt.isSourceTargetFormValue('original'));
+        assert.ok(tgt.isSourceTargetFormValue('transcribe'));
+        assert.ok(!tgt.isSourceTargetFormValue('simplified'));
+        assert.strictEqual(tgt.normalizeSubtitleTargetLang('source'), '');
+    });
+
+    it('yue + 原文 skips MT; yue + 简繁/en/ja/ko does not', () => {
+        assert.ok(tgt.yueTargetSkipsMachineTranslate('yue', 'source'));
+        assert.ok(!tgt.yueTargetSkipsMachineTranslate('yue', 'simplified'));
+        assert.ok(!tgt.yueTargetSkipsMachineTranslate('cantonese', 'traditional'));
+        assert.ok(!tgt.yueTargetSkipsMachineTranslate('yue', 'en'));
+        assert.ok(!tgt.yueTargetSkipsMachineTranslate('ja', 'simplified'));
+        assert.ok(tgt.isZhSubtitleFormValue('simplified'));
+        assert.ok(!tgt.isZhSubtitleFormValue('source'));
+        assert.ok(!tgt.isZhSubtitleFormValue('en'));
+    });
+
+    it('normalizeSourceLanguageCode keeps zh-yue as yue (not zh)', () => {
+        assert.strictEqual(tgt.normalizeSourceLanguageCode('yue'), 'yue');
+        assert.strictEqual(tgt.normalizeSourceLanguageCode('zh-yue'), 'yue');
+        assert.strictEqual(tgt.normalizeSourceLanguageCode('cantonese'), 'yue');
+        assert.strictEqual(tgt.normalizeSourceLanguageCode('zh-cn'), 'zh');
+        assert.strictEqual(tgt.normalizeSourceLanguageCode('ja'), 'ja');
+    });
+
+    it('shouldUseYueToMandarinPrompt uses cue heuristic when lang is zh', () => {
+        const cues = [
+            { text: '拥有呢个世界一切嘅' },
+            { text: '佢喺行刑前对大家' },
+        ];
+        assert.ok(tgt.cuesLookLikeWrittenCantonese(cues));
+        assert.ok(tgt.shouldUseYueToMandarinPrompt({ language: 'zh' }, cues));
+        assert.ok(tgt.shouldUseYueToMandarinPrompt('yue'));
+        assert.ok(!tgt.shouldUseYueToMandarinPrompt('ja', cues));
+    });
 });
 
 describe('sanitize target-lang short-circuit', () => {

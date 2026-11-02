@@ -242,13 +242,10 @@ async function runHyMtEllipsisPolicyPass(ctx = {}) {
             left: 0,
         });
     }
-    let skipLlmRecover = ctx.skipLlmRecover === true || options.hyMtEllipsisSkipLlm === true;
-    if (!skipLlmRecover) {
-        try {
-            const blankPolicy = require('../src/js/blank-mt-retry-policy-core');
-            skipLlmRecover = !!blankPolicy.isInferenceBlankDirectFinalize?.(options);
-        } catch { /* optional */ }
-    }
+    // Always allow LLM recover here for leftover lexical「…」.
+    // isInferenceBlankDirectFinalize only gates *generic* post-batch blank storms;
+    // applying it here left smart/Hy-MT films shipping bare「…」on real dialogue (YUJ-071).
+    const skipLlmRecover = ctx.skipLlmRecover === true || options.hyMtEllipsisSkipLlm === true;
     if (!skipLlmRecover) {
         const blankRetry = require('./engine-blank-mt-retry');
         // After hybrid sentence MT, do not burn dozens of dialog-LLM rounds on

@@ -41,6 +41,41 @@ describe('mt-delivery-policy-core', () => {
         }), false);
     });
 
+    it('hard-drops ん、ん→「嗯」when postBatchRemoveNoise is on', () => {
+        const zh = [
+            { index: 0, text: '请多指教' },
+            { index: 1, text: '嗯' },
+            { index: 2, text: '明白了' },
+        ];
+        const ja = [
+            { index: 0, text: 'よろしくお願いします。' },
+            { index: 1, text: 'ん、ん' },
+            { index: 2, text: 'わかりました' },
+        ];
+        const on = sanitize.pruneAsrDebrisCuePairs(zh, ja, {
+            postBatchRemoveNoise: true,
+            preserveSourceSlots: true,
+        });
+        assert.ok(on.dropped >= 1, `dropped=${on.dropped}`);
+        assert.ok(!on.cues.some((c) => String(c.text).trim() === '嗯'), on.cues);
+        // preserveSourceSlots keeps JA cue count; debris text may remain in the slot.
+        assert.strictEqual(on.sourceCues.length, 3);
+
+        const hard = sanitize.pruneAsrDebrisCuePairs(zh, ja, {
+            postBatchRemoveNoise: true,
+            preserveSourceSlots: false,
+        });
+        assert.ok(hard.dropped >= 1);
+        assert.ok(!hard.sourceCues.some((c) => /ん、ん/.test(String(c.text || ''))), hard.sourceCues);
+
+        const off = sanitize.pruneAsrDebrisCuePairs(zh, ja, {
+            postBatchRemoveNoise: false,
+            preserveSourceSlots: true,
+        });
+        assert.strictEqual(off.dropped, 0);
+        assert.ok(off.cues.some((c) => String(c.text).trim() === '嗯'));
+    });
+
     it('flags any Han on English and scrubs mixed lines', () => {
         assert.ok(sanitize.looksLikeHanLeakForIntlTarget('Thanks 好的', 'en'));
         assert.ok(sanitize.looksLikeHanLeakForIntlTarget('好的', 'en'));

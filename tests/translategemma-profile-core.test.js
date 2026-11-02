@@ -8,12 +8,19 @@ describe('translategemma-profile-core', () => {
         assert.strictEqual(profile.isTranslateGemmaProfileModel('translategemma-4b'), true);
         assert.strictEqual(profile.isTranslateGemmaProfileModel('translategemma-12b'), true);
         assert.strictEqual(profile.isTranslateGemmaProfileModel('translategemma-27b'), true);
+        assert.strictEqual(profile.isTranslateGemmaSubModel('translategemma-4-sub-e2b'), true);
         assert.strictEqual(profile.isTranslateGemmaSubModel('translategemma-4-sub-e4b'), true);
         assert.strictEqual(profile.isTranslateGemmaProfileModel('translategemma-4-sub-e4b'), true);
+        assert.strictEqual(
+            profile.isTranslateGemmaProfileModel('translate_gemma4_sub-E2B-Q4_K_XL.gguf'),
+            true,
+        );
         assert.strictEqual(
             profile.isTranslateGemmaProfileModel('translate_gemma4_sub-E4B-Q4_K_XL.gguf'),
             true,
         );
+        assert.strictEqual(profile.resolveTranslateGemmaParamBillion('translategemma-4-sub-e2b'), 2);
+        assert.strictEqual(profile.resolveTranslateGemmaParamBillion('translategemma-4-sub-e4b'), 4);
         assert.strictEqual(profile.isTranslateGemmaProfileModel('gemma3-4b'), false);
         assert.strictEqual(profile.isTranslateGemmaProfileModel('sakura-7b'), false);
         assert.strictEqual(profile.isTranslateGemmaProfileModel(''), false);
@@ -55,6 +62,7 @@ describe('translategemma-profile-core', () => {
         assert.ok(/ellipsis|……|\.\.\./i.test(sub));
         assert.ok(/refuse|boilerplate|sanitize/i.test(official));
         assert.ok(/refuse|boilerplate|sanitize/i.test(sub));
+        assert.ok(/Korean|Hangul|반말/i.test(sub));
         assert.strictEqual(profile.getTranslateGemmaPromptAddon('sakura-7b', 'official'), '');
         assert.strictEqual(profile.resolveTranslateGemmaTranslateProfile('qwen3-8b'), null);
         assert.strictEqual(

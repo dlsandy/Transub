@@ -7,6 +7,8 @@
 (function (global, factory) {
     let fluency = null;
     let mtSanitize = null;
+    let emotionStyle = null;
+    let splitCore = null;
     try {
         fluency = (typeof module !== 'undefined' && module.exports)
             ? require('./subtitle-fluency-core')
@@ -21,15 +23,30 @@
     } catch (_) {
         mtSanitize = null;
     }
-    const api = factory(fluency, mtSanitize);
+    try {
+        emotionStyle = (typeof module !== 'undefined' && module.exports)
+            ? require('./sensevoice-emotion-mt-style-core')
+            : (global && global.TransubSensevoiceEmotionMtStyle);
+    } catch (_) {
+        emotionStyle = null;
+    }
+    try {
+        splitCore = (typeof module !== 'undefined' && module.exports)
+            ? require('./subtitle-split-core')
+            : (global && global.TransubSubtitleSplit);
+    } catch (_) {
+        splitCore = null;
+    }
+    const api = factory(fluency, mtSanitize, emotionStyle, splitCore);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubSmartTranslatePolish = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function smartTranslatePolishCoreFactory(fluency, mtSanitize) {
-    const POLISH_SAMPLE_LIMIT = 36;
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function smartTranslatePolishCoreFactory(fluency, mtSanitize, emotionStyle, splitCore) {
+    /** Soft-AV films often have 1k+ cues; 36 made polish feel "not engaged". */
+    const POLISH_SAMPLE_LIMIT = 96;
     const POLISH_MIN_SAMPLE = 4;
 
     /**
@@ -224,6 +241,229 @@
         return bonus;
     }
 
+    function bareNeighborText(text) {
+        if (typeof fluency?.bareAsrEchoText === 'function') {
+            return fluency.bareAsrEchoText(text);
+        }
+        return String(text || '')
+            .replace(/[\s\u3000、。！？!?…・·\.\,，．｡『』「」"'“”‘’（）()【】\[\]~～ー−\-♪♫]+/g, '');
+    }
+
+    function sharedPrefixLen(a, b) {
+        const x = String(a || '');
+        const y = String(b || '');
+        const lim = Math.min(x.length, y.length);
+        let i = 0;
+        while (i < lim && x[i] === y[i]) i += 1;
+        return i;
+    }
+
+    /**
+     * Neighbor echo / 窜句 / paraphrase-bleed risk between adjacent cues.
+     * Reuses ASR echo heuristics when available (JA tail leftover + ZH echo).
+     * @returns {{ score: number, reasons: string[] }}
+     */
+    function scoreNeighborCueBleed(prevSrc, prevZh, curSrc, curZh) {
+        const ps = String(prevSrc || '').trim();
+        const pz = String(prevZh || '').trim();
+        const cs = String(curSrc || '').trim();
+        const cz = String(curZh || '').trim();
+        if (!ps || !cs || !pz || !cz) return { score: 0, reasons: [] };
+
+        const reasons = [];
+        let score = 0;
+        const jaEcho = typeof fluency?.isAsrEchoPair === 'function'
+            ? fluency.isAsrEchoPair(ps, cs)
+            : false;
+        const zhEcho = typeof fluency?.isAsrEchoPair === 'function'
+            ? fluency.isAsrEchoPair(pz, cz)
+            : false;
+        if (jaEcho) {
+            score += 8;
+            reasons.push('ja_echo');
+        }
+        if (zhEcho) {
+            score += 7;
+            reasons.push('zh_echo');
+        }
+
+        // Shared ZH prefix while JA diverges (GalTransl-style neighbor paraphrase bleed).
+        const zhPref = sharedPrefixLen(pz, cz);
+        if (zhPref >= 8 && pz.length >= 8 && cz.length >= 8) {
+            const jaPrevBare = bareNeighborText(ps);
+            const jaCurBare = bareNeighborText(cs);
+            const jaPref = sharedPrefixLen(jaPrevBare, jaCurBare);
+            if (jaPrevBare && jaCurBare && jaPrevBare !== jaCurBare && jaPref < 8) {
+                score += 6;
+                reasons.push('zh_prefix_bleed');
+            }
+        }
+
+        // Current ZH contains previous ZH while JA is only a short tail / divergent line.
+        const pzBare = bareNeighborText(pz);
+        const czBare = bareNeighborText(cz);
+        if (
+            pzBare.length >= 6
+            && czBare.length > pzBare.length + 1
+            && czBare.includes(pzBare)
+            && !bareNeighborText(cs).includes(bareNeighborText(ps).slice(-Math.min(6, bareNeighborText(ps).length)))
+        ) {
+            // prev glued into next ZH without JA support for that chunk
+            const csBare = bareNeighborText(cs);
+            const psBare = bareNeighborText(ps);
+            if (csBare !== psBare && !(psBare && csBare && psBare.endsWith(csBare))) {
+                score += 5;
+                reasons.push('zh_prev_in_next');
+            }
+        }
+
+        // Exact / near-exact ZH duplicate on non-identical JA (same sentence in two cues).
+        if (
+            pzBare.length >= 4
+            && czBare.length >= 4
+            && (pzBare === czBare || (pzBare.length >= 6 && (pzBare.includes(czBare) || czBare.includes(pzBare))))
+        ) {
+            const psBare = bareNeighborText(ps);
+            const csBare = bareNeighborText(cs);
+            if (psBare && csBare && psBare !== csBare) {
+                score += 5;
+                reasons.push('zh_dup_divergent_ja');
+            }
+        }
+
+        return { score, reasons: [...new Set(reasons)] };
+    }
+
+    /**
+     * Detect one cue packing two speakers / two turns (ASR island merge).
+     * Conservative: long enough + clear turn boundary signals.
+     * @returns {{ score: number, reasons: string[] }}
+     */
+    function scoreMultiSpeakerMix(srcText, zhText) {
+        const src = String(srcText || '').trim();
+        const zh = String(zhText || '').trim();
+        if (!src || textCharLen(src) < 12) return { score: 0, reasons: [] };
+
+        const reasons = [];
+        let score = 0;
+        const ja = src.replace(/\s+/g, '');
+        const cn = zh.replace(/\s+/g, '');
+
+        // Quoted dialogue then more spoken text outside the quote.
+        if (/「[^」]{2,}」/.test(src) && /」[^「」]{2,}/.test(src)) {
+            score += 7;
+            reasons.push('ja_quote_tail');
+        }
+        if (/“[^”]{2,}”/.test(zh) && /”[^\u201c\u201d“”]{2,}/.test(zh)) {
+            score += 5;
+            reasons.push('zh_quote_tail');
+        }
+
+        // Two strong clause ends mid-cue (。！？) then another substantive clause.
+        // Prefer the earliest mid-cue break that leaves both halves long enough
+        // (using the final 。 often leaves an empty tail when the cue ends with 。).
+        const jaEnds = [...ja.matchAll(/[。！？!?]/g)];
+        let jaBreak = null;
+        for (const m of jaEnds) {
+            const at = m.index;
+            const head = ja.slice(0, at + 1);
+            const tail = ja.slice(at + 1);
+            if (textCharLen(head) >= 5 && textCharLen(tail) >= 5) {
+                jaBreak = { head, tail };
+                break;
+            }
+        }
+        if (jaBreak) {
+            score += 5;
+            reasons.push('ja_mid_sentence_break');
+            const { head, tail } = jaBreak;
+            // Vocative / address switch across the break.
+            const headAddr = /(?:さん|くん|ちゃん|さま|様|先輩|お前|あなた|君|先生)/.test(head);
+            const tailAddr = /(?:さん|くん|ちゃん|さま|様|先輩|お前|あなた|君|先生|ねえ|あの)/.test(tail);
+            if (headAddr && tailAddr) {
+                score += 3;
+                reasons.push('ja_address_switch');
+            }
+            // Question then assertion (or reverse) across speakers.
+            if (/[？?]$/.test(head) && /[。！!]/.test(tail)) {
+                score += 2;
+                reasons.push('ja_q_then_statement');
+            }
+        }
+
+        // ZH: two sentence ends with both halves substantive.
+        const zhEnds = [...cn.matchAll(/[。！？!?]/g)];
+        if (textCharLen(zh) >= 14) {
+            for (const m of zhEnds) {
+                const head = cn.slice(0, m.index + 1);
+                const tail = cn.slice(m.index + 1);
+                if (textCharLen(head) >= 5 && textCharLen(tail) >= 5) {
+                    score += 4;
+                    reasons.push('zh_mid_sentence_break');
+                    break;
+                }
+            }
+        }
+
+        // Em-dash / long ellipsis bridging two turns.
+        if (/(?:——|──|\.{3}|…{2,}).{4,}/.test(ja) && textCharLen(ja) >= 16) {
+            score += 3;
+            reasons.push('ja_dash_bridge');
+        }
+
+        // Two quote blocks in one cue (A「…」B「…」 / repeated 「」).
+        const jaQuotes = [...src.matchAll(/「[^」]{2,}」/g)];
+        if (jaQuotes.length >= 2) {
+            score += 6;
+            reasons.push('ja_multi_quote');
+        }
+
+        // Comma / 、 / て／で mid-cue turn without 。！？ (spoken glue).
+        if (!jaBreak && textCharLen(ja) >= 16) {
+            const softBreaks = [...ja.matchAll(/[、，]|てね[。…]?|けど[。…]?|から[。…]?/g)];
+            for (const m of softBreaks) {
+                const at = m.index + m[0].length - 1;
+                const head = ja.slice(0, at + 1);
+                const tail = ja.slice(at + 1);
+                if (textCharLen(head) < 6 || textCharLen(tail) < 6) continue;
+                const headAddr = /(?:さん|くん|ちゃん|さま|様|先輩|お前|あなた|君|先生)/.test(head);
+                const tailTurn = /^(?:ねえ|あの|ちょっと|ほら|はい|うん|ええ|あっ|えっ)/.test(tail)
+                    || /(?:さん|くん|ちゃん|さま|様|先輩|お前|あなた|君|先生)/.test(tail);
+                if (headAddr && tailTurn) {
+                    score += 5;
+                    reasons.push('ja_soft_turn_break');
+                    break;
+                }
+                // Clause particle then new vocative / interjection.
+                if (/[、，]$/.test(head) && /^(?:ねえ|あのね|ちょっと|ほら)/.test(tail)) {
+                    score += 5;
+                    reasons.push('ja_soft_turn_break');
+                    break;
+                }
+            }
+        }
+
+        // Sentence-final よ／ね／わ／ぞ then more speech (speaker handoff without 。).
+        if (!reasons.includes('ja_mid_sentence_break') && textCharLen(ja) >= 14) {
+            const m = ja.match(/^(.{5,}?[よねわぞさ])([^よねわぞさ]{5,})$/u);
+            if (m) {
+                const head = m[1];
+                const tail = m[2];
+                if (/[ぁ-んァ-ヶ一-龥]/.test(tail[0] || '')) {
+                    score += 4;
+                    reasons.push('ja_particle_handoff');
+                    if (/(?:さん|くん|ちゃん|さま|様|先輩|お前|あなた|君)/.test(head)
+                        && /(?:さん|くん|ちゃん|さま|様|先輩|お前|あなた|君|ねえ|あの)/.test(tail)) {
+                        score += 2;
+                        reasons.push('ja_address_switch');
+                    }
+                }
+            }
+        }
+
+        return { score, reasons: [...new Set(reasons)] };
+    }
+
     /**
      * Score how much a cue needs plot-fitting polish (higher = more urgent).
      */
@@ -280,6 +520,27 @@
 
         score += productRiskBonus(src, zh, options);
 
+        // Neighbor echo / 窜句 / paraphrase bleed (hybrid polish priority).
+        const neighborBonus = Number(options.neighborBleedScore);
+        if (Number.isFinite(neighborBonus) && neighborBonus > 0) {
+            score += neighborBonus;
+        }
+
+        // Multi-speaker / two-turn packed into one cue.
+        const mixBonus = Number(options.multiSpeakerScore);
+        if (Number.isFinite(mixBonus) && mixBonus > 0) {
+            score += mixBonus;
+        } else {
+            const mix = scoreMultiSpeakerMix(src, zh);
+            if (mix.score >= 5) score += mix.score;
+        }
+
+        // hint+polish: prefer windows with non-neutral SenseVoice emotion
+        if (options.preferEmotionPolish) {
+            const emo = String(options.emotion || '').trim().toUpperCase();
+            if (emo && emo !== 'NEUTRAL' && emo !== 'EMO_UNKNOWN') score += 2.5;
+        }
+
         // Soft prior: mid-file dialogue gets a little weight so sample is not only head
         if (Number(options.cueIndex) >= 0) score += 0.01;
 
@@ -299,18 +560,89 @@
     }
 
     /**
+     * Raise polish sample budget when many neighbor echo/窜句 pairs are present
+     * (hybrid path needs polish LLM to clean residual ASR bleed that survived MT).
+     */
+    function suggestPolishSampleLimit(sourceCues, translatedCues, options = {}) {
+        const baseRaw = Number(options.limit);
+        const base = Number.isFinite(baseRaw)
+            ? Math.max(POLISH_MIN_SAMPLE, Math.min(POLISH_SAMPLE_LIMIT, Math.round(baseRaw)))
+            : POLISH_SAMPLE_LIMIT;
+        const srcList = Array.isArray(sourceCues) ? sourceCues : [];
+        const byZh = new Map(
+            (translatedCues || []).map((c) => [Number(c.index), String(c.text ?? '')]),
+        );
+        let bleedPairs = 0;
+        let mixHits = 0;
+        for (let i = 0; i < srcList.length; i += 1) {
+            const cur = srcList[i];
+            const curIdx = Number(cur?.index);
+            if (!Number.isInteger(curIdx)) continue;
+            const curSrc = String(cur.text || cur.sourceText || '').trim();
+            const curZh = String(byZh.get(curIdx) ?? '').trim();
+            if (scoreMultiSpeakerMix(curSrc, curZh).score >= 5) mixHits += 1;
+            if (i < 1) continue;
+            const prev = srcList[i - 1];
+            const prevIdx = Number(prev?.index);
+            if (!Number.isInteger(prevIdx)) continue;
+            const bleed = scoreNeighborCueBleed(
+                String(prev.text || prev.sourceText || '').trim(),
+                String(byZh.get(prevIdx) ?? '').trim(),
+                curSrc,
+                curZh,
+            );
+            if (bleed.score >= 5) bleedPairs += 1;
+        }
+        if (bleedPairs < 4 && mixHits < 3) return base;
+        // Reserve room: ~2 cues per bleed edge / mix hit, capped.
+        const boosted = Math.min(
+            POLISH_SAMPLE_LIMIT,
+            Math.max(base, 56, Math.min(96, 40 + bleedPairs * 2 + mixHits * 2)),
+        );
+        return boosted;
+    }
+
+    /**
      * Pick high-risk source+zh pairs for polish (paired rows).
-     * @returns {Array<{ index: number, sourceText: string, text: string, score: number }>}
+     * Neighbor echo / 窜句 pairs are force-preferred so hybrid polish can fix them.
+     * @returns {Array<{ index: number, sourceText: string, text: string, score: number, neighborReasons?: string[], prevSource?: string, prevText?: string, nextSource?: string, nextText?: string }>}
      */
     function selectCuesForPlotPolish(sourceCues, translatedCues, options = {}) {
         const limit = Math.max(
             POLISH_MIN_SAMPLE,
-            Math.min(POLISH_SAMPLE_LIMIT, Number(options.limit) || POLISH_SAMPLE_LIMIT),
+            Math.min(
+                POLISH_SAMPLE_LIMIT,
+                Number(options.limit)
+                    || suggestPolishSampleLimit(sourceCues, translatedCues, options)
+                    || POLISH_SAMPLE_LIMIT,
+            ),
         );
         const srcList = Array.isArray(sourceCues) ? sourceCues : [];
         const byZh = new Map(
             (translatedCues || []).map((c) => [Number(c.index), String(c.text ?? '')]),
         );
+        // Precompute neighbor bleed bonuses in list order.
+        const neighborByListPos = new Map();
+        for (let i = 1; i < srcList.length; i += 1) {
+            const prev = srcList[i - 1];
+            const cur = srcList[i];
+            const prevIdx = Number(prev?.index);
+            const curIdx = Number(cur?.index);
+            if (!Number.isInteger(prevIdx) || !Number.isInteger(curIdx)) continue;
+            const prevSrc = String(prev.text || prev.sourceText || '').trim();
+            const curSrc = String(cur.text || cur.sourceText || '').trim();
+            const prevZh = String(byZh.get(prevIdx) ?? '').trim();
+            const curZh = String(byZh.get(curIdx) ?? '').trim();
+            const bleed = scoreNeighborCueBleed(prevSrc, prevZh, curSrc, curZh);
+            if (bleed.score < 5) continue;
+            for (const [pos, half] of [[i - 1, bleed.score], [i, bleed.score]]) {
+                const prevHit = neighborByListPos.get(pos) || { score: 0, reasons: [] };
+                prevHit.score = Math.max(prevHit.score, half);
+                prevHit.reasons = [...new Set([...(prevHit.reasons || []), ...bleed.reasons])];
+                neighborByListPos.set(pos, prevHit);
+            }
+        }
+
         const scored = [];
         for (let i = 0; i < srcList.length; i += 1) {
             const c = srcList[i];
@@ -321,15 +653,34 @@
             if (!src || !zh) continue;
             const bandFromMap = lookupByIndex(options.bandByIndex, idx);
             const band = String(bandFromMap || c.band || c.riskBand || '').trim().toLowerCase();
-            // Red holds that never got MT this round: skip polish (empty / placeholder).
-            if (band === 'red' && (!zh || zh === '…' || zh === '...' || /^[….\s]+$/.test(zh))) {
+            // Red holds that never got MT this round: skip empty placeholders here.
+            // After QC-loop / blank-MT fills them, callers re-run polish with
+            // preferFilledHoldIndexes so those slots get a second polish pass.
+            const preferFilled = options.preferFilledHoldIndexes instanceof Set
+                ? options.preferFilledHoldIndexes
+                : new Set(
+                    (Array.isArray(options.preferFilledHoldIndexes) ? options.preferFilledHoldIndexes : [])
+                        .map((n) => Number(n))
+                        .filter((n) => Number.isInteger(n)),
+                );
+            if (
+                band === 'red'
+                && (!zh || zh === '…' || zh === '...' || /^[….\s]+$/.test(zh))
+                && !preferFilled.has(idx)
+            ) {
                 continue;
             }
             // Skip pure moan / SFX-like tiny lines (keep filler ZH if JA still has words)
             if (src.length <= 2 && zh.length <= 3 && !jaHasLexicalResidue(src)) continue;
             const qcFromMap = lookupByIndex(options.qcTypesByIndex, idx);
             const confFromMap = lookupByIndex(options.confidenceByIndex, idx);
-            const score = scoreCueForPlotPolish(src, zh, {
+            const preferEmotionPolish = emotionStyle?.shouldPreferEmotionForPolish
+                ? emotionStyle.shouldPreferEmotionForPolish(options)
+                : (String(options.sensevoiceEmotionMtStyle || '').toLowerCase() === 'hint+polish'
+                    && String(options.sensevoiceRichTags || 'sidecar') !== 'off');
+            const neighbor = neighborByListPos.get(i) || { score: 0, reasons: [] };
+            const mix = scoreMultiSpeakerMix(src, zh);
+            let score = scoreCueForPlotPolish(src, zh, {
                 glossaryTerms: options.glossaryTerms,
                 filmBrief: options.filmBrief,
                 cueIndex: i,
@@ -341,26 +692,70 @@
                 sanitizeResidual: c.sanitizeResidual || lookupByIndex(options.residualByIndex, idx),
                 residualHot: c.residualHot,
                 band,
+                preferEmotionPolish,
+                emotion: c.emotion || lookupByIndex(options.emotionByIndex, idx),
+                neighborBleedScore: neighbor.score,
+                multiSpeakerScore: mix.score,
             });
-            scored.push({
+            // Prefer cues that were red-holds / blank and got filled by QC loop / blank-MT.
+            if (preferFilled.has(idx) || c.blankRecovered || lookupByIndex(options.blankRecoveredByIndex, idx)) {
+                score = Math.max(score, 12);
+            }
+            const row = {
                 index: idx,
                 sourceText: src,
                 text: zh,
                 score,
-            });
+                emotion: c.emotion || lookupByIndex(options.emotionByIndex, idx) || null,
+                neighborReasons: neighbor.reasons?.length ? neighbor.reasons : undefined,
+                neighborBleedScore: neighbor.score || 0,
+                multiSpeakerScore: mix.score || 0,
+                multiSpeakerReasons: mix.reasons?.length ? mix.reasons : undefined,
+            };
+            // Attach adjacent context so polish LLM can un-bleed.
+            if (i > 0) {
+                const p = srcList[i - 1];
+                const pIdx = Number(p?.index);
+                if (Number.isInteger(pIdx)) {
+                    row.prevSource = String(p.text || p.sourceText || '').trim();
+                    row.prevText = String(byZh.get(pIdx) ?? '').trim();
+                }
+            }
+            if (i + 1 < srcList.length) {
+                const n = srcList[i + 1];
+                const nIdx = Number(n?.index);
+                if (Number.isInteger(nIdx)) {
+                    row.nextSource = String(n.text || n.sourceText || '').trim();
+                    row.nextText = String(byZh.get(nIdx) ?? '').trim();
+                }
+            }
+            scored.push(row);
         }
         scored.sort((a, b) => b.score - a.score || a.index - b.index);
+
+        // Force-prefer neighbor bleed/echo + multi-speaker mix, then fill by score.
+        const forced = scored.filter((r) => (r.neighborBleedScore || 0) >= 5
+            || (r.multiSpeakerScore || 0) >= 5);
+        const forcedCap = Math.min(limit, Math.max(12, Math.floor(limit * 0.55)));
+        const pickMap = new Map();
+        for (const r of forced.slice(0, forcedCap)) pickMap.set(r.index, r);
         const high = scored.filter((r) => r.score >= 2);
-        // Prefer high-risk rows; if few, still polish them (even 1–3) so Pro value shows.
-        let pick;
-        if (high.length >= 1) {
-            pick = high.slice(0, limit);
-        } else if (scored.length >= POLISH_MIN_SAMPLE) {
-            pick = scored.slice(0, Math.min(limit, Math.max(POLISH_MIN_SAMPLE, Math.floor(scored.length * 0.2))));
-        } else {
-            pick = [];
+        const pool = high.length >= 1 ? high : (
+            scored.length >= POLISH_MIN_SAMPLE
+                ? scored.slice(0, Math.max(POLISH_MIN_SAMPLE, Math.floor(scored.length * 0.2)))
+                : []
+        );
+        for (const r of pool) {
+            if (pickMap.size >= limit) break;
+            if (!pickMap.has(r.index)) pickMap.set(r.index, r);
         }
-        return pick.sort((a, b) => a.index - b.index);
+        // If still empty but we have forced leftovers beyond cap, keep at least those.
+        if (!pickMap.size && forced.length) {
+            for (const r of forced.slice(0, Math.min(limit, forced.length))) {
+                pickMap.set(r.index, r);
+            }
+        }
+        return [...pickMap.values()].sort((a, b) => a.index - b.index);
     }
 
     function formatNamesBlock(filmBrief, glossaryTerms) {
@@ -378,9 +773,11 @@
         for (const t of glossaryTerms || []) {
             const src = String(t.term || t.src || '').trim();
             const dst = String(t.translation || t.dst || '').trim();
-            if (src && dst && src !== dst) push(dst, `原文：${src}`);
-            else if (dst) push(dst, '人名');
-            else if (src) push(src, '人名');
+            const note = String(t.note || t.info || '').trim();
+            const roleTag = t.role === 'character' ? '角色' : '人名';
+            if (src && dst && src !== dst) push(dst, note ? `${note}；原文：${src}` : `原文：${src}`);
+            else if (dst) push(dst, note || roleTag);
+            else if (src) push(src, note || roleTag);
         }
         return lines.length ? `人物/专名（须沿用，禁止发明）：\n${lines.slice(0, 24).join('\n')}` : '';
     }
@@ -400,6 +797,9 @@
         modelId,
         smartTranslateModelId,
         model,
+        sensevoiceEmotionMtStyle,
+        sensevoiceRichTags,
+        emotionByIndex,
     } = {}) {
         const list = Array.isArray(pairs) ? pairs : [];
         const target = targetLanguage || '简体中文';
@@ -413,12 +813,20 @@
             '2）称呼统一：同一部里「先輩」只对应一种（学长/学姐/前辈，以简要与片中多数为准）；人名与简要一致；',
             '3）纠错：明显事实错译（职务、动作、专名）按原文改回；',
             '4）极小通顺修补：仅改明显病句/错字，保留草稿句式、语域与口语风格。',
+            '5）邻条回声 / 窜句（优先修）：payload 可能带 prevSource/prevText、nextSource/nextText。',
+            '   · 本条原文只是上条尾部回声（如「この勃起は…」接在「つまり、この勃起は…」后）→ 译文只保留本条原文对应的短译，去掉上句整段内容；',
+            '   · 本条译文把上一句内容粘进来、或与邻条近重复而原文并不相同 → 按本条原文改准，删掉窜入的邻句译文；',
+            '   · 相邻两条原文近重复时，信息更完整的一条保留完整译，另一条改成贴合其原文的短译（可「…」），禁止两条同译。',
+            '6）多人混句拆分（仅 flags 含 multi_speaker / ja_mid_sentence_break 等时）：一条字幕里两个人的话或两个话轮焊在一起时，必须拆开。',
+            '   · 输出 split 数组（2～3 段），每段含 source（日文切片）与 text（对应译文）；不要只改 text 却仍挤在一条。',
+            '   · 按话轮边界切（句末。！？、引号「」闭合后、称呼切换），禁止把同一人的半句话拆碎。',
+            '   · 各段 source 拼接应覆盖原 source 语义（可去多余标点），禁止发明原句没有的对白。',
             '禁止：同义整句换写、为「更好看/更顺口」改文风、把口语改成旁白腔或另一种翻译风格。',
-            '禁止：编造原文没有的情节、人物关系或对白；不要为文采加戏；合并/拆分条目；把有内容的条目改空；发明「××小姐」类乱称呼。',
+            '禁止：编造原文没有的情节、人物关系或对白；不要为文采加戏；把无关条目合并；把有内容的条目改空；发明「××小姐」类乱称呼。',
             '禁止：净化、和谐、医学化改写限制级题材或粗口内容（须忠实保留）。',
-            '草稿已通顺且无欠译/错译时，不要输出该 index。',
+            '草稿已通顺且无欠译/错译/邻条窜句/多人混句时，不要输出该 index。',
             '只返回需要修改的条目；无需改动的 index 不要输出。',
-            '只输出 JSON：{"cues":[{"index":0,"text":"润色后译文"}, ...]}；若无需修改则返回 {"cues":[]}。',
+            '只输出 JSON：{"cues":[{"index":0,"text":"润色后译文"}, {"index":1,"split":[{"source":"日文1","text":"译文1"},{"source":"日文2","text":"译文2"}]}, ...]}；若无需修改则返回 {"cues":[]}。',
             '禁止思考过程；直接输出 JSON。',
         ];
         if (faithfulTone) {
@@ -458,12 +866,63 @@
             userLines.push(`对白语气：${toneHint}`);
             userLines.push('');
         }
-        userLines.push('待润色（含原文 + 译文草稿）：');
-        userLines.push(JSON.stringify(list.map((p) => ({
-            index: p.index,
-            source: p.sourceText || p.source || '',
-            text: p.text,
-        })), null, 2));
+        try {
+            if (emotionStyle?.buildEmotionMtStyleBlock) {
+                const emoCues = list.map((p) => ({
+                    text: p.sourceText || p.source || '',
+                    emotion: p.emotion || lookupByIndex(emotionByIndex, p.index),
+                }));
+                const emoBlock = emotionStyle.buildEmotionMtStyleBlock(emoCues, {
+                    sensevoiceEmotionMtStyle,
+                    sensevoiceRichTags,
+                });
+                if (emoBlock) {
+                    userLines.push(emoBlock);
+                    userLines.push('');
+                }
+            }
+        } catch (_) { /* optional */ }
+        const bleedN = list.filter((p) => (p.neighborBleedScore || 0) >= 5
+            || (Array.isArray(p.neighborReasons) && p.neighborReasons.length)).length;
+        const mixN = list.filter((p) => (p.multiSpeakerScore || 0) >= 5
+            || (Array.isArray(p.multiSpeakerReasons) && p.multiSpeakerReasons.length)).length;
+        if (bleedN > 0) {
+            userLines.push(
+                `本批含 ${bleedN} 条邻条回声/窜句嫌疑：请对照 prev/next 字段优先按规则 5 修正，勿整句换写无关条目。`,
+            );
+            userLines.push('');
+        }
+        if (mixN > 0) {
+            userLines.push(
+                `本批含 ${mixN} 条多人/双话轮混句嫌疑：请用 split 按规则 6 拆开，勿继续挤在一条。`,
+            );
+            userLines.push('');
+        }
+        userLines.push('待润色（含原文 + 译文草稿；邻条/混句嫌疑带 flags 与 prev/next）：');
+        userLines.push(JSON.stringify(list.map((p) => {
+            const row = {
+                index: p.index,
+                source: p.sourceText || p.source || '',
+                text: p.text,
+            };
+            if (p.prevSource || p.prevText) {
+                row.prevSource = p.prevSource || '';
+                row.prevText = p.prevText || '';
+            }
+            if (p.nextSource || p.nextText) {
+                row.nextSource = p.nextSource || '';
+                row.nextText = p.nextText || '';
+            }
+            const flags = [
+                ...(Array.isArray(p.neighborReasons) ? p.neighborReasons : []),
+                ...(Array.isArray(p.multiSpeakerReasons) ? p.multiSpeakerReasons : []),
+            ];
+            if ((p.multiSpeakerScore || 0) >= 5 && !flags.includes('multi_speaker')) {
+                flags.push('multi_speaker');
+            }
+            if (flags.length) row.flags = [...new Set(flags)];
+            return row;
+        }), null, 2));
         userLines.push('/no_think');
         return [
             { role: 'system', content: system.join('\n') },
@@ -498,6 +957,7 @@
         const minOverlap = Number(options.minOverlap);
         const overlapFloor = Number.isFinite(minOverlap) ? minOverlap : 0.5;
         const sourceByIndex = options.sourceByIndex || null;
+        const echoBleedByIndex = options.echoBleedByIndex || null;
         const adultZhRe = /乳头|肉棒|湿漉|湿透|插进|射了|射精|高潮|做爱|性爱|口交|舔弄|内射|最里面|更深入|变硬|爱抚|胸部|再多吸/;
         const adultJaRe = /乳首|ちん|まん|ペニス|イッ|イキ|イク|いく|挿入|入れ|射精|セックス|せっくす|ぬるぬる|舐めて|咥|犯[しす]|おっぱい|奥まで|硬く|濡れ/;
         return (updates || []).filter((u) => {
@@ -514,6 +974,11 @@
             const src = sourceByIndex
                 ? String(lookupByIndex(sourceByIndex, idx) ?? '').trim()
                 : '';
+            const echoBleed = !!(
+                lookupByIndex(echoBleedByIndex, idx)
+                || (Array.isArray(u?.neighborReasons) && u.neighborReasons.length)
+                || Number(u?.neighborBleedScore) >= 5
+            );
             // Soft-AV contamination: adult ZH pasted onto non-adult JA (JUFE-625 greetings).
             if (src && adultZhRe.test(next) && !adultJaRe.test(src) && !adultZhRe.test(prev)) {
                 return false;
@@ -556,16 +1021,376 @@
                 }
                 return true;
             }
+            // Echo/窜句 fix often shortens a wrongly-glued draft → allow shrink + lower overlap.
+            const growCap = echoBleed ? Math.max(maxGrow, 1.85) : maxGrow;
+            const keepFloor = echoBleed ? Math.min(minKeep, 0.22) : minKeep;
+            const overlapNeed = echoBleed ? Math.min(overlapFloor, 0.28) : overlapFloor;
             if (pl >= 4) {
-                if (nl > Math.max(12, Math.ceil(pl * maxGrow))) return false;
-                if (nl < Math.max(1, Math.floor(pl * minKeep))) return false;
+                if (nl > Math.max(12, Math.ceil(pl * growCap))) return false;
+                if (nl < Math.max(1, Math.floor(pl * keepFloor))) return false;
             }
             // Too many new chars vs draft → style rewrite / full retranslation
             if (pl >= 6) {
-                if (draftOverlapRatio(prev, next) < overlapFloor) return false;
+                if (draftOverlapRatio(prev, next) < overlapNeed) return false;
             }
             return true;
         });
+    }
+
+    /**
+     * Split polish LLM updates: direct keep / Laya soft band / hard drop.
+     * Soft = passes relaxed length/overlap but not hard filter, OR substantial hard-keeps.
+     */
+    function classifyPlotPolishUpdates(updates, prevByIndex, options = {}) {
+        let pipe = null;
+        try {
+            pipe = require('./jev-laya-pipeline-core');
+        } catch {
+            pipe = null;
+        }
+        const hardOk = filterPlotPolishUpdates(updates, prevByIndex, options);
+        const softOk = filterPlotPolishUpdates(updates, prevByIndex, {
+            ...options,
+            maxGrow: Number(options.layaSoftMaxGrow) || 2.05,
+            minKeep: Number(options.layaSoftMinKeep) || 0.38,
+            minOverlap: Number(options.layaSoftMinOverlap) || 0.32,
+        });
+        const hardKey = new Set(hardOk.map((u) => `${Number(u.index)}::${String(u.text ?? '').trim()}`));
+        const softKey = new Set(softOk.map((u) => `${Number(u.index)}::${String(u.text ?? '').trim()}`));
+        const keep = [];
+        const soft = [];
+        const hardDrop = [];
+        const seen = new Set();
+        for (const u of updates || []) {
+            const idx = Number(u?.index);
+            const next = String(u?.text ?? '').trim();
+            if (!Number.isInteger(idx) || !next) continue;
+            const key = `${idx}::${next}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const prev = String(prevByIndex?.get?.(idx) ?? prevByIndex?.[idx] ?? '').trim();
+            if (hardKey.has(key)) {
+                const kind = pipe?.classifyPolishUpdateKind
+                    ? pipe.classifyPolishUpdateKind(prev, next, options)
+                    : 'keep';
+                if (kind === 'soft') {
+                    soft.push({ index: idx, text: next, before: prev, after: next, id: `p${idx}` });
+                } else {
+                    keep.push({ index: idx, text: next });
+                }
+                continue;
+            }
+            if (softKey.has(key)) {
+                soft.push({
+                    index: idx,
+                    text: next,
+                    before: prev,
+                    after: next,
+                    id: `p${idx}`,
+                    softReject: true,
+                });
+                continue;
+            }
+            hardDrop.push({ index: idx, text: next });
+        }
+        return { keep, soft, hardDrop };
+    }
+
+    function tryParseJsonObject(raw) {
+        const s = String(raw || '').trim();
+        if (!s) return null;
+        try {
+            return JSON.parse(s);
+        } catch {
+            const start = s.indexOf('{');
+            const end = s.lastIndexOf('}');
+            if (start >= 0 && end > start) {
+                try {
+                    return JSON.parse(s.slice(start, end + 1));
+                } catch {
+                    return null;
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Parse polish LLM JSON into text updates + multi-speaker splits.
+     * @returns {{ updates: Array<{index:number,text:string}>, splits: Array<{index:number,parts:Array<{source:string,text:string}>}> }}
+     */
+    function parsePlotPolishOps(content, expectedIndexes = []) {
+        const expected = new Set(
+            (expectedIndexes || []).map((n) => Number(n)).filter((n) => Number.isInteger(n)),
+        );
+        let raw = String(content || '').trim();
+        try {
+            if (mtSanitize?.stripLlmThinkWrappers) {
+                raw = mtSanitize.stripLlmThinkWrappers(raw);
+            }
+        } catch { /* optional */ }
+        const parsed = tryParseJsonObject(raw);
+        const rows = Array.isArray(parsed?.cues) ? parsed.cues : [];
+        const updates = [];
+        const splits = [];
+        for (const row of rows) {
+            const idx = Number(row?.index);
+            if (!Number.isInteger(idx)) continue;
+            if (expected.size && !expected.has(idx)) continue;
+            const splitRaw = row?.split || row?.parts || row?.texts;
+            if (Array.isArray(splitRaw) && splitRaw.length >= 2) {
+                const parts = [];
+                for (const p of splitRaw.slice(0, 3)) {
+                    if (p && typeof p === 'object') {
+                        const source = String(p.source || p.src || p.ja || '').trim();
+                        const text = String(p.text || p.zh || p.translation || '').trim();
+                        if (source || text) parts.push({ source, text });
+                    } else if (typeof p === 'string' && p.trim()) {
+                        parts.push({ source: '', text: p.trim() });
+                    }
+                }
+                if (parts.length >= 2) {
+                    splits.push({ index: idx, parts });
+                    continue;
+                }
+            }
+            const text = String(row?.text ?? '').trim();
+            if (text) updates.push({ index: idx, text });
+        }
+        return { updates, splits };
+    }
+
+    function validateMultiSpeakerSplit(srcText, parts) {
+        const src = String(srcText || '').trim();
+        const list = Array.isArray(parts) ? parts : [];
+        if (!src || list.length < 2 || list.length > 3) return false;
+        const sources = list.map((p) => String(p?.source || '').trim()).filter(Boolean);
+        const texts = list.map((p) => String(p?.text || '').trim()).filter(Boolean);
+        if (texts.length < 2) return false;
+        // Prefer explicit JA slices; if missing, allow ZH-only and fill JA later.
+        if (sources.length >= 2) {
+            const joined = sources.join('');
+            const srcBare = bareNeighborText(src);
+            const joinBare = bareNeighborText(joined);
+            if (srcBare.length >= 8 && joinBare.length >= 6) {
+                const overlap = draftOverlapRatio(srcBare, joinBare);
+                if (overlap < 0.45 && !srcBare.includes(joinBare.slice(0, Math.min(6, joinBare.length)))) {
+                    return false;
+                }
+            }
+            if (sources.some((s) => textCharLen(s) < 2)) return false;
+        }
+        if (texts.some((t) => textCharLen(t) < 1)) return false;
+        return true;
+    }
+
+    /**
+     * Proportionally fill missing JA slices from the full source by ZH part weights.
+     */
+    function fillMissingSourceParts(srcText, parts) {
+        const src = String(srcText || '');
+        const list = (parts || []).map((p) => ({
+            source: String(p?.source || '').trim(),
+            text: String(p?.text || '').trim(),
+        }));
+        if (list.every((p) => p.source)) return list;
+        const weights = list.map((p) => Math.max(1, textCharLen(p.text) || textCharLen(p.source) || 1));
+        const totalW = weights.reduce((a, b) => a + b, 0) || 1;
+        const chars = Array.from(src);
+        if (chars.length < 2) return list;
+        let cursor = 0;
+        return list.map((p, i) => {
+            if (p.source) {
+                cursor = Math.min(chars.length, cursor + Array.from(p.source).length);
+                return p;
+            }
+            const take = i === list.length - 1
+                ? chars.length - cursor
+                : Math.max(1, Math.round((weights[i] / totalW) * chars.length));
+            const slice = chars.slice(cursor, Math.min(chars.length, cursor + take)).join('');
+            cursor = Math.min(chars.length, cursor + take);
+            return { source: slice.trim() || p.text, text: p.text };
+        });
+    }
+
+    function buildTimedParts(startMs, endMs, texts, options = {}) {
+        const start = Math.round(Number(startMs) || 0);
+        const end = Math.max(start + 1, Math.round(Number(endMs) || (start + 1000)));
+        const minDurMs = Math.max(200, Math.round(Number(options.minDurMs) || 400));
+        let built = null;
+        if (typeof splitCore?.buildCuesFromTexts === 'function') {
+            built = splitCore.buildCuesFromTexts(start, end, texts, 'proportional', {
+                minDurMs,
+            });
+            if (!Array.isArray(built) || built.length !== (texts || []).length) built = null;
+        }
+        if (!built) {
+            const parts = (texts || []).map((t) => String(t || '').trim()).filter(Boolean);
+            if (!parts.length) return [];
+            const total = parts.reduce((s, t) => s + Math.max(1, textCharLen(t)), 0) || 1;
+            const out = [];
+            let cur = start;
+            let used = 0;
+            for (let i = 0; i < parts.length; i += 1) {
+                used += Math.max(1, textCharLen(parts[i]));
+                const cueEnd = i === parts.length - 1
+                    ? end
+                    : Math.max(cur + minDurMs, Math.round(start + (used / total) * (end - start)));
+                out.push({ startMs: cur, endMs: Math.min(end, cueEnd), text: parts[i] });
+                cur = out[out.length - 1].endMs;
+            }
+            if (out.length) out[out.length - 1].endMs = end;
+            built = out;
+        }
+        const intervals = options.silenceIntervals || options.intervals || null;
+        if (intervals && Array.isArray(intervals) && intervals.length
+            && typeof splitCore?.applySilenceEdgeBoundaries === 'function') {
+            try {
+                const refined = splitCore.applySilenceEdgeBoundaries(
+                    built,
+                    intervals,
+                    start,
+                    end,
+                    { minDurMs },
+                );
+                if (Array.isArray(refined) && refined.length === built.length) {
+                    built = refined.map((c, i) => ({
+                        startMs: c.startMs,
+                        endMs: c.endMs,
+                        text: built[i].text,
+                    }));
+                }
+            } catch { /* keep proportional */ }
+        }
+        return built;
+    }
+
+    /**
+     * Apply multi-speaker splits to JA+ZH cue lists (same expanded length / timing).
+     * @returns {{ sourceCues: object[], cues: object[], splitCount: number, replacedIndexes: number[] }}
+     */
+    function applyPlotPolishSplits(sourceCues, translatedCues, splits, options = {}) {
+        const srcList = Array.isArray(sourceCues) ? sourceCues : [];
+        const zhList = Array.isArray(translatedCues) ? translatedCues : [];
+        const zhByIndex = new Map(
+            zhList.map((c) => [Number(c.index), String(c.text ?? '')]),
+        );
+        const splitByIndex = new Map();
+        for (const s of splits || []) {
+            const idx = Number(s?.index);
+            if (!Number.isInteger(idx) || !Array.isArray(s.parts) || s.parts.length < 2) continue;
+            splitByIndex.set(idx, s.parts);
+        }
+        if (!splitByIndex.size) {
+            return {
+                sourceCues: srcList.map((c, i) => ({
+                    ...c,
+                    index: Number.isInteger(Number(c.index)) ? Number(c.index) : i,
+                    text: String(c.text ?? ''),
+                })),
+                cues: srcList.map((c, i) => {
+                    const idx = Number.isInteger(Number(c.index)) ? Number(c.index) : i;
+                    return {
+                        index: idx,
+                        startMs: c.startMs,
+                        endMs: c.endMs,
+                        text: zhByIndex.has(idx) ? zhByIndex.get(idx) : '',
+                    };
+                }),
+                splitCount: 0,
+                replacedIndexes: [],
+            };
+        }
+
+        const outSrc = [];
+        const outZh = [];
+        const replacedIndexes = [];
+        const splitPartIndexes = [];
+        const parentZhByNewIndex = new Map();
+        let splitCount = 0;
+        for (let i = 0; i < srcList.length; i += 1) {
+            const src = srcList[i];
+            const idx = Number.isInteger(Number(src?.index)) ? Number(src.index) : i;
+            const srcText = String(src?.text || src?.sourceText || '').trim();
+            const zhText = zhByIndex.has(idx) ? String(zhByIndex.get(idx) || '').trim() : '';
+            const rawParts = splitByIndex.get(idx);
+            if (!rawParts || !validateMultiSpeakerSplit(srcText, rawParts)) {
+                outSrc.push({
+                    ...src,
+                    index: idx,
+                    text: srcText,
+                });
+                outZh.push({
+                    index: idx,
+                    startMs: src?.startMs,
+                    endMs: src?.endMs,
+                    text: zhText,
+                });
+                continue;
+            }
+            const parts = fillMissingSourceParts(srcText, rawParts);
+            const jaTexts = parts.map((p) => p.source);
+            const zhTexts = parts.map((p) => p.text);
+            if (jaTexts.length !== zhTexts.length || jaTexts.length < 2) {
+                outSrc.push({ ...src, index: idx, text: srcText });
+                outZh.push({ index: idx, startMs: src?.startMs, endMs: src?.endMs, text: zhText });
+                continue;
+            }
+            const startMs = Number.isFinite(Number(src?.startMs))
+                ? Number(src.startMs)
+                : (Number.isFinite(Number(src?.start)) ? Math.round(Number(src.start) * 1000) : i * 1000);
+            const endMs = Number.isFinite(Number(src?.endMs))
+                ? Number(src.endMs)
+                : (Number.isFinite(Number(src?.end))
+                    ? Math.round(Number(src.end) * 1000)
+                    : startMs + Math.max(1000, textCharLen(srcText) * 120));
+            const silenceLookup = options.silenceByIndex || options.silenceIntervalsByIndex || null;
+            const silenceIntervals = silenceLookup
+                ? (lookupByIndex(silenceLookup, idx) || null)
+                : (options.silenceIntervals || null);
+            // Time from JA part weights; copy the same cuts onto ZH (keeps tracks aligned).
+            const jaBuilt = buildTimedParts(startMs, endMs, jaTexts, {
+                minDurMs: options.minDurMs,
+                silenceIntervals,
+            });
+            if (jaBuilt.length < 2 || jaBuilt.length !== zhTexts.length) {
+                outSrc.push({ ...src, index: idx, text: srcText });
+                outZh.push({ index: idx, startMs, endMs, text: zhText });
+                continue;
+            }
+            for (let k = 0; k < jaBuilt.length; k += 1) {
+                const newIdx = outSrc.length;
+                outSrc.push({
+                    ...src,
+                    index: newIdx,
+                    startMs: jaBuilt[k].startMs,
+                    endMs: jaBuilt[k].endMs,
+                    text: jaBuilt[k].text,
+                });
+                outZh.push({
+                    index: newIdx,
+                    startMs: jaBuilt[k].startMs,
+                    endMs: jaBuilt[k].endMs,
+                    text: zhTexts[k],
+                });
+                splitPartIndexes.push(newIdx);
+                parentZhByNewIndex.set(newIdx, zhText);
+            }
+            splitCount += 1;
+            replacedIndexes.push(idx);
+        }
+        // Renumber densely after expansion.
+        const sourceOut = outSrc.map((c, i) => ({ ...c, index: i }));
+        const zhOut = outZh.map((c, i) => ({ ...c, index: i }));
+        return {
+            sourceCues: sourceOut,
+            cues: zhOut,
+            splitCount,
+            replacedIndexes,
+            splitPartIndexes,
+            parentZhByNewIndex,
+            expandDelta: sourceOut.length - srcList.length,
+        };
     }
 
     return {
@@ -577,11 +1402,18 @@
         jaHasLexicalResidue,
         looksLikeInventedFact,
         productRiskBonus,
+        scoreNeighborCueBleed,
+        scoreMultiSpeakerMix,
+        suggestPolishSampleLimit,
         scoreCueForPlotPolish,
         selectCuesForPlotPolish,
         buildPlotPolishMessages,
         draftOverlapRatio,
         filterPlotPolishUpdates,
+        classifyPlotPolishUpdates,
+        parsePlotPolishOps,
+        validateMultiSpeakerSplit,
+        applyPlotPolishSplits,
         formatNamesBlock,
         looksLikePlotTopicInvent,
     };

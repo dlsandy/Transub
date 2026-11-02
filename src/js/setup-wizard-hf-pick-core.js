@@ -9,7 +9,7 @@
     const DEFAULT_MIRROR = 'https://hf-mirror.com';
 
     function formatHfPickStatus(pick) {
-        if (!pick) return '下载源将在应用前自动测速选择';
+        if (!pick) return '下载源默认国内镜像；可在设置 → 网络调整';
         if (pick.message) return String(pick.message);
         const label = pick.label || (pick.hfEndpoint ? pick.hfEndpoint : '官方 Hub');
         if (pick.fallback) return `测速失败，已回退${label}；可稍后在设置 → 网络调整`;
@@ -70,7 +70,12 @@
                     const payload = {
                         ...getProxyPayload(),
                     };
-                    if (electron?.transubPickHfEndpoint) {
+                    if (electron?.transubEnsureFirstRunHfEndpoint) {
+                        pick = await electron.transubEnsureFirstRunHfEndpoint({
+                            ...payload,
+                            force: !!force,
+                        });
+                    } else if (electron?.transubPickHfEndpoint) {
                         pick = await electron.transubPickHfEndpoint(payload);
                     }
                 } catch (err) {
@@ -92,8 +97,10 @@
                     hfEndpoint: String(pick.hfEndpoint || '').trim().replace(/\/+$/, ''),
                     label: pick.label || '',
                     latencyMs: pick.latencyMs,
-                    message: formatHfPickStatus(pick),
+                    message: pick.message || formatHfPickStatus(pick),
                     results: pick.results || [],
+                    preserved: !!pick.preserved,
+                    already: !!pick.already,
                 };
                 setStatus(cache.message);
                 return cache;

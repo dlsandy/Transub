@@ -181,6 +181,9 @@ describe('engine-spawn-utils', () => {
         });
         assert.strictEqual(parseHostPort('not-a-url').port, 8765);
         assert.strictEqual(mapDeviceForEngine('cuda_low_vram'), 'cuda');
+        assert.strictEqual(mapDeviceForEngine('amd'), 'cuda');
+        assert.strictEqual(mapDeviceForEngine('intel'), 'xpu');
+        assert.strictEqual(mapDeviceForEngine('xpu'), 'xpu');
         assert.strictEqual(mapDeviceForEngine('cpu'), 'cpu');
         assert.strictEqual(mapDeviceForEngine('auto'), 'auto');
     });

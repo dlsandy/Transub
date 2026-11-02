@@ -50,7 +50,7 @@ describe('transwithai-options', () => {
     it('normalizes autoUpdateCheckInterval preference', () => {
         assert.strictEqual(
             mergeTransWithAiOptions({}).autoUpdateCheckInterval,
-            'off',
+            'weekly',
         );
         assert.strictEqual(
             mergeTransWithAiOptions({ autoUpdateCheckInterval: 'daily' }).autoUpdateCheckInterval,

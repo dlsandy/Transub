@@ -88,8 +88,57 @@
         const setMoreMenuOpen = d.setMoreMenuOpen || (() => {});
         const setTranslateModeMenuOpen = d.setTranslateModeMenuOpen || (() => {});
         const setPostBatchQcFixMenuOpen = d.setPostBatchQcFixMenuOpen || (() => {});
+        const appendLog = d.appendLog || (() => {});
 
         let taskRowContextIdx = -1;
+        let ellipsisBackfillBusy = false;
+
+        async function runEllipsisBackfill(item) {
+            if (!item || ellipsisBackfillBusy) return;
+            const zhPath = String(getSubtitlePathForItem(item) || item.targetSubtitlePath || '').trim();
+            const srcPath = String(item.sourceSubtitlePath || '').trim();
+            if (!zhPath || !srcPath) {
+                appendLog('补译省略号需要译文轨与原文轨（.src.srt / .transcribe.srt）', 'err');
+                return;
+            }
+            if (!electron?.transubEngineEllipsisBackfill) {
+                appendLog('当前环境不支持省略号补译', 'err');
+                return;
+            }
+            if (state.running || state.postBatchBusy || state.retranslateBusy) {
+                appendLog('已有任务进行中，请稍后再补译省略号', 'warn');
+                return;
+            }
+            ellipsisBackfillBusy = true;
+            const name = basename(item.path || zhPath);
+            appendLog(`省略号补译开始 · ${name}`, 'info');
+            try {
+                const res = await electron.transubEngineEllipsisBackfill({
+                    subtitlePath: zhPath,
+                    targetSubtitlePath: zhPath,
+                    sourceSubtitlePath: srcPath,
+                    mediaPath: item.path || '',
+                    path: item.path || '',
+                });
+                if (!res?.ok) {
+                    appendLog(res?.error || '省略号补译失败', res?.cancelled ? 'warn' : 'err');
+                    return;
+                }
+                item.ellipsisLeft = Number(res.left) || 0;
+                const filled = Number(res.filled) || 0;
+                appendLog(
+                    filled
+                        ? `省略号补译完成 · ${name} · 补 ${filled} 条${item.ellipsisLeft ? `（仍剩 ${item.ellipsisLeft}）` : ''}`
+                        : `省略号补译无进展 · ${name}${item.ellipsisLeft ? `（仍剩 ${item.ellipsisLeft}）` : ''}`,
+                    filled ? 'ok' : 'warn',
+                );
+                renderList();
+            } catch (err) {
+                appendLog(err?.message || '省略号补译失败', 'err');
+            } finally {
+                ellipsisBackfillBusy = false;
+            }
+        }
         let taskColContextKey = '';
 
         function taskColMeta(key) {
@@ -514,6 +563,12 @@
                 && Number(item.qcIssueCount) > 0
                 && getPostBatchPathsForItem(item).length > 0;
             const canQcSmart = canQcFix && advancedEntitled && !!electron?.transubAdvancedQcSmartFix;
+            const canEllipsisBackfill = !busy
+                && (item.status === 'done' || item.status === 'skipped')
+                && (Number(item.ellipsisLeft) || 0) > 0
+                && !!String(item.sourceSubtitlePath || '').trim()
+                && !!subPath
+                && !!electron?.transubEngineEllipsisBackfill;
             const canRetry = (item.status === 'failed' || item.status === 'error') && !state.running;
             const canShowFolder = !!showPathForItem(item);
             const canBurn = !!String(item.path || '').trim()
@@ -536,6 +591,7 @@
             setEnabled('reconstruct', canReconstruct);
             setEnabled('qc-fix', canQcFix);
             setEnabled('qc-smart-fix', canQcSmart);
+            setEnabled('ellipsis-backfill', canEllipsisBackfill);
             setEnabled('retry', canRetry);
             setEnabled('show-folder', canShowFolder);
             setEnabled('burn', canBurn);
@@ -602,6 +658,9 @@
                     break;
                 case 'qc-smart-fix':
                     void runPostBatchQcSmartFix(item);
+                    break;
+                case 'ellipsis-backfill':
+                    void runEllipsisBackfill(item);
                     break;
                 case 'retry':
                     retrySingleItem(idx);
@@ -801,6 +860,13 @@
                     e.preventDefault();
                     e.stopPropagation();
                     void runPostBatchQcSmartFix(state.items[Number(qcSmartFixRowBtn.dataset.qcSmartFix)]);
+                    return;
+                }
+                const ellipsisBackfillBtn = e.target.closest('[data-ellipsis-backfill]');
+                if (ellipsisBackfillBtn) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void runEllipsisBackfill(state.items[Number(ellipsisBackfillBtn.dataset.ellipsisBackfill)]);
                     return;
                 }
                 const openEditorBtn = e.target.closest('[data-open-editor]');

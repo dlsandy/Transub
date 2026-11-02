@@ -165,4 +165,47 @@ describe('TransubAppInit', () => {
             global.requestAnimationFrame = prevRaf;
         }
     });
+
+    it('env doctor clears the boot mask and skips factory startup', async () => {
+        const calls = [];
+        const overlay = {
+            classList: {
+                add(name) { calls.push(`add:${name}`); },
+                remove(name) { calls.push(`remove:${name}`); },
+            },
+            style: { display: 'flex' },
+        };
+        const boot = createAppInit({
+            state: { loadingDepth: 0 },
+            els: { loadingOverlay: overlay, loadingMessage: { textContent: '' } },
+            electron: {
+                async transWithAiGetOptions() {
+                    calls.push('getOptions');
+                    return { options: { task: 'translate' } };
+                },
+            },
+            pageQuery: new URLSearchParams('envDoctor=1'),
+            getIsStandaloneChrome: () => true,
+            isDesktop: () => true,
+            cacheEls: () => calls.push('cacheEls'),
+            bindEvents: () => calls.push('bindEvents'),
+            warnMissingRendererCores: () => calls.push('warnCores'),
+            setLoading: (on) => calls.push(`loading:${on}`),
+            applyOptionsToForm: async () => calls.push('applyOptions'),
+            runBackgroundStartupChecks: async () => calls.push('backgroundChecks'),
+            refreshEngineStatus: async () => calls.push('engineStatus'),
+            loadDeferredGroup: async () => calls.push('deferred'),
+            ensureSettingsShellReady: async () => {},
+        });
+        await boot.init();
+        assert.ok(calls.includes('cacheEls'));
+        assert.ok(calls.includes('add:hidden'));
+        assert.strictEqual(overlay.style.display, 'none');
+        assert.ok(!calls.includes('applyOptions'));
+        assert.ok(!calls.includes('getOptions'));
+        assert.ok(!calls.includes('backgroundChecks'));
+        assert.ok(!calls.includes('engineStatus'));
+        assert.ok(!calls.includes('deferred'));
+        assert.ok(!calls.includes('loading:true'));
+    });
 });

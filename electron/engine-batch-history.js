@@ -70,7 +70,7 @@ function createEngineBatchHistory(deps) {
 
     function loadEngineAsrExtras(merged = {}) {
         const empty = { asrGlossary: [], initialPrompt: '', hotwords: '' };
-        if (merged.glossaryPromptEnabled === false) return empty;
+        if (!merged.glossaryPromptEnabled) return empty;
         const glossary = readBatchGlossary(merged);
         if (!glossary) return empty;
         try {

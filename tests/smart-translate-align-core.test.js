@@ -38,6 +38,21 @@ describe('smart-translate-align-core', () => {
         assert.strictEqual(out.cues[5].text, 'ZH5');
     });
 
+    it('realignIfNeeded rejects ZH duration inflated past JA (DLDSS-559 cue3)', () => {
+        const ja = [
+            cue(0, 5593, '昨日テレビで', 6312),
+            cue(1, 6332, 'やってたから作ってみたの。', 7933),
+        ];
+        const zh = [
+            cue(0, 5576, '昨天在电视上', 7946),
+            cue(1, 8246, '因为有在做所以试着做做看。', 9328),
+        ];
+        const out = align.realignIfNeeded(ja, zh, { blankText: '…' });
+        assert.strictEqual(out.cues[0].startMs, 5593);
+        assert.strictEqual(out.cues[0].endMs, 6312);
+        assert.ok(out.cues[0].endMs - out.cues[0].startMs < 1500);
+    });
+
     it('realigns EBWH-style drift so index i text matches start of JA i', () => {
         const ja = [];
         for (let i = 0; i < 36; i += 1) {

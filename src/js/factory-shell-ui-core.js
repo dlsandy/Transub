@@ -814,6 +814,7 @@
             bindProLockedClick(els.translateModeDialogWrap, '智能翻译');
             bindProLockedClick(els.translateModeSmartWrap, '混合翻译');
             bindProLockedClick(els.filmAudioEnhanceWrap, '影视音频增强');
+            bindProLockedClick(els.enhanceForVadOnlyWrap, '影视音频增强');
             bindProLockedClick(els.filmVadPresetWrap, '影视音频增强');
             bindProLockedClick(els.retranslateModeDialogWrap, '智能翻译');
             bindProLockedClick(els.retranslateModeSmartWrap, '混合翻译');

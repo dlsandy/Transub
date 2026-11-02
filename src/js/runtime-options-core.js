@@ -17,6 +17,7 @@
     function createRuntimeOptions(deps) {
         const d = deps || {};
         const buildSavedOptionsFromForm = d.buildSavedOptionsFromForm || (() => ({}));
+        const getSavedOptionsSnapshot = d.getSavedOptionsSnapshot || (() => null);
         const getPostTaskOptionsFromUi = d.getPostTaskOptionsFromUi || (() => ({}));
         const readActiveEngineMtModelFromForm = d.readActiveEngineMtModelFromForm || (() => '');
         const readTranslateModeFromForm = d.readTranslateModeFromForm || (() => '');
@@ -28,11 +29,29 @@
 
         function buildRuntimeOptions() {
             const saved = buildSavedOptionsFromForm();
+            const snap = getSavedOptionsSnapshot() || {};
             const activeMt = readActiveEngineMtModelFromForm();
             const mode = readTranslateModeFromForm();
+            // Settings panel is lazy-loaded; prefer snapshot for timingAlign* when DOM
+            // controls are absent / still at HTML defaults after a ForcedAligner preset.
+            const snapAlign = String(snap.timingAlignModel || '').trim();
+            const formAlign = String(saved.timingAlignModel || '').trim();
+            const timingAlignModel = (() => {
+                if (snapAlign && snapAlign !== 'ten' && (!formAlign || formAlign === 'ten')) {
+                    const el = typeof document !== 'undefined'
+                        ? document.getElementById('timingAlignModelSelect')
+                        : null;
+                    if (!el) return snapAlign;
+                }
+                return formAlign || snapAlign || 'ten';
+            })();
             let merged = {
                 ...saved,
                 ...getPostTaskOptionsFromUi(),
+                timingAlign: Object.prototype.hasOwnProperty.call(saved, 'timingAlign')
+                    ? saved.timingAlign !== false
+                    : (snap.timingAlign !== false),
+                timingAlignModel,
                 // Job start needs a concrete MT id; resolve「自动匹配」here (do not persist).
                 engineMtModel: activeMt,
                 ...(mode === 'llm' || mode === 'sakura'

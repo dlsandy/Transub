@@ -14,12 +14,13 @@
                 <h2 id="envFixProgressTitle" class="text-base font-semibold text-gray-900">自动修复</h2>
                 <p id="envFixProgressSubtitle" class="text-xs text-gray-500 mt-1 leading-relaxed">正在按项目下载与安装…</p>
                 <p id="envFixPipMirrorStatus" class="text-[11px] text-gray-500 mt-1 min-h-[1rem]" role="status"></p>
-                <p id="envFixProgressTransfer" class="hidden text-xs tabular-nums text-violet-700 mt-1 font-medium leading-relaxed" aria-live="polite"></p>
+                <p id="envFixProgressTransfer" class="hidden text-sm tabular-nums text-violet-700 mt-1 font-semibold leading-relaxed" aria-live="polite"></p>
+                <p id="envFixProgressManualHint" class="env-fix-progress-manual-hint text-xs mt-2 leading-relaxed">如长时间未修复完成，请改用手动修复。</p>
             </div>
             <div id="envFixProgressList" class="px-4 py-3 space-y-3 overflow-y-auto flex-1 min-h-0"></div>
-            <div class="flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80 shrink-0">
-                <button type="button" id="envFixProgressManualBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">改为手动修复</button>
-                <button type="button" id="envFixProgressCancelBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white">取消修复</button>
+            <div class="flex flex-wrap justify-end items-center gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80 shrink-0">
+                <button type="button" id="envFixProgressCancelBtn" class="env-fix-progress-cancel-btn px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">取消修复</button>
+                <button type="button" id="envFixProgressManualBtn" class="env-fix-progress-manual-btn px-5 py-2.5 rounded-lg text-sm font-semibold text-white shadow-sm">改为手动修复</button>
             </div>
         </div>
     </div>
@@ -57,10 +58,37 @@
 
 <div id="envCheckModal" class="hidden fixed inset-0 items-center justify-center p-3 sm:p-4 bg-black/45 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="envCheckTitle">
         <div class="env-check-card">
+            <div id="envCheckLocaleGate" class="env-check-locale-gate hidden" hidden>
+                <div class="px-5 pt-6 pb-4 text-center">
+                    <h2 id="envCheckLocaleTitle" class="text-xl font-semibold text-gray-900 tracking-tight">选择界面语言</h2>
+                    <p id="envCheckLocaleHint" class="text-sm text-gray-500 mt-2 leading-relaxed">请选择软件显示语言。界面语言与成片字幕语言无关。</p>
+                </div>
+                <div class="env-check-locale-body px-5 pb-4">
+                    <div id="envCheckUiLocaleList" class="env-check-locale-list" role="radiogroup" aria-label="界面语言"></div>
+                </div>
+                <div class="env-check-locale-actions">
+                    <button type="button" id="envCheckLocaleContinueBtn" class="env-check-btn-primary px-4 py-2.5 rounded-xl text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white">继续</button>
+                </div>
+            </div>
+            <div id="envCheckMainPane">
             <div class="px-5 pt-5 pb-3 text-center">
                 <h2 id="envCheckTitle" class="text-xl font-semibold text-gray-900 tracking-tight">系统检查</h2>
                 <p id="envCheckSubtitle" class="text-sm text-gray-500 mt-1">正在检查依赖项…</p>
+                <div id="envCheckLocaleBar" class="env-check-locale-bar hidden" hidden>
+                    <label class="env-check-locale-bar-label" for="envCheckUiLocaleSelect">
+                        <span data-i18n="settings.uiLocale.label">界面语言</span>
+                        <select id="envCheckUiLocaleSelect" class="env-check-locale-select" aria-label="界面语言"></select>
+                    </label>
+                </div>
                 <p id="envCheckFixHint" class="hidden text-xs text-amber-700 mt-1.5 leading-relaxed">下载文件体积较大，可能需要较长时间，请耐心等待</p>
+                <div id="envCheckGuide" class="env-check-guide hidden" hidden role="status" aria-live="polite">
+                    <p id="envCheckGuideHeadline" class="env-check-guide-headline"></p>
+                    <p id="envCheckGuideNext" class="env-check-guide-next"></p>
+                    <p id="envCheckGuideTip" class="env-check-guide-tip hidden"></p>
+                    <div id="envCheckGuideActions" class="env-check-guide-actions hidden">
+                        <button type="button" id="envCheckGuideDriverBtn" class="env-check-guide-link hidden">打开显卡驱动下载页</button>
+                    </div>
+                </div>
             </div>
             <div class="px-5 pb-2">
                 <div id="envCheckOverview" class="settings-env-overview" role="group" aria-label="环境总览">
@@ -81,7 +109,7 @@
             <div class="px-5 pb-2">
                 <div id="envCheckList" class="env-check-list" role="list"></div>
             </div>
-            <div id="envCheckRepairTools" class="px-5 pb-3 space-y-2">
+            <div id="envCheckRepairTools" class="px-5 pb-3 space-y-2 hidden" hidden aria-hidden="true">
                 <!-- Inline drop panel kept for legacy drop-controller ids; primary path is「手动修复」modal -->
                 <div id="envCheckWhlPanel" class="hidden space-y-2" hidden aria-hidden="true">
                     <div id="envCheckWhlDropZone" class="env-fix-whl-drop rounded-xl border-2 border-dashed border-violet-300 bg-violet-50/50 px-3 py-4 text-center cursor-pointer select-none" tabindex="-1" role="button" aria-label="拖放或点击选择已下载的 whl 文件">
@@ -102,25 +130,14 @@
                         <button type="button" id="envCheckWhlInstallBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50" disabled>安装所选 .whl</button>
                     </div>
                 </div>
-                <details class="env-check-more">
-                    <summary>更多选项</summary>
-                    <div class="env-check-more-body space-y-2">
-                        <div class="flex flex-wrap items-center gap-2">
-                            <label for="envCheckPipMirrorSelect" class="text-xs text-gray-600 shrink-0">运行库镜像</label>
-                            <select id="envCheckPipMirrorSelect" class="text-xs rounded-lg px-2 py-1.5 min-w-[9.5rem] border border-gray-200 bg-white text-gray-800" title="环境修复时下载 Python 运行库用的 PyPI 镜像（不是模型下载源）">
-                                <option value="">自动测速</option>
-                            </select>
-                            <span class="text-[11px] text-gray-400">卡住可换源</span>
-                        </div>
-                        <button type="button" id="envCheckReuseCudaBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium border border-sky-200 text-sky-800 hover:bg-sky-50 hidden" title="扫描并复用本机已有 CUDA 运行库">复用本机 CUDA</button>
-                    </div>
-                </details>
             </div>
             <div class="env-check-actions">
+                <button type="button" id="envCheckFixBtn" class="env-check-btn-fix hidden px-3 py-2.5 rounded-xl text-sm font-medium" disabled title="自动联网下载并安装缺失依赖">一键修复</button>
                 <button type="button" id="envCheckStartBtn" class="env-check-btn-primary px-3 py-2.5 rounded-xl text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white" disabled>完成</button>
-                <button type="button" id="envCheckFixBtn" class="env-check-btn-fix hidden px-3 py-2.5 rounded-xl text-sm font-medium" disabled title="自动联网下载并安装缺失依赖">自动修复</button>
                 <button type="button" id="envCheckManualBtn" class="env-check-btn-manual hidden px-3 py-2.5 rounded-xl text-sm font-medium border border-gray-200 text-gray-800 hover:bg-gray-50" disabled title="打开手动下载与本地安装窗口">手动修复</button>
                 <button type="button" id="envCheckRetryBtn" class="px-3 py-2.5 rounded-xl text-sm font-medium bg-violet-100 hover:bg-violet-200 text-violet-800">重新检测</button>
+                <button type="button" id="envDoctorQuitBtn" class="env-check-btn-quit hidden px-3 py-2.5 rounded-xl text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50">退出</button>
+            </div>
             </div>
         </div>
     </div>
@@ -323,6 +340,7 @@
                 <h2 id="manualWhlTitle" class="text-base font-semibold text-gray-900">手动修复</h2>
             </div>
             <div class="px-4 py-3 space-y-3 overflow-y-auto flex-1 min-h-0">
+                <div id="manualWhlSetup" class="space-y-3">
                 <p id="manualWhlError" class="hidden text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2 whitespace-pre-wrap leading-relaxed"></p>
                 <p id="manualWhlHint" class="text-xs text-gray-600 leading-relaxed"></p>
 
@@ -337,6 +355,16 @@
                     </div>
                     <p id="manualWhlPathEmpty" class="text-xs text-gray-400">尚未选择文件</p>
                     <div id="manualWhlPathList" class="space-y-1"></div>
+                </div>
+
+                <div id="manualWhlPipPanel" class="hidden space-y-2 rounded-xl border border-amber-200 bg-amber-50/50 px-3 py-3">
+                    <div class="flex items-center justify-between gap-2">
+                        <p class="text-xs font-medium text-amber-950">pip 命令（cmd.exe）</p>
+                        <button type="button" id="manualWhlCopyPipBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium border border-amber-300 bg-white text-amber-950 hover:bg-amber-100 disabled:opacity-50" title="复制整段 pip 命令，在 cmd.exe 中粘贴执行">复制 pip 命令</button>
+                    </div>
+                    <p class="text-[11px] text-amber-900/90 leading-relaxed">ROCm / XPU / 部分运行库无独立 .whl 直链。请用下方命令安装到引擎 runtime\\python.exe；勿用 PowerShell（会拆坏版本号里的 +）。</p>
+                    <label for="manualWhlPipText" class="block text-[11px] text-amber-900/80 mb-1">安装命令（每段可整段复制）</label>
+                    <textarea id="manualWhlPipText" readonly rows="6" class="w-full text-[11px] font-mono leading-relaxed rounded-lg border border-amber-200 bg-white px-2.5 py-2 text-gray-800 resize-y min-h-[6rem]" placeholder="加载后显示 pip 命令…" spellcheck="false"></textarea>
                 </div>
 
                 <div class="manual-whl-quick-actions grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -365,6 +393,7 @@
                 </div>
 
                 <p id="manualWhlStatus" class="text-xs text-gray-500 min-h-[1.25rem]" role="status" aria-live="polite"></p>
+                </div>
                 <div id="manualWhlProgressWrap" class="hidden space-y-1.5" aria-live="polite">
                     <p id="manualWhlProgressHint" class="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 leading-relaxed">
                         本地安装可能需要几分钟，请耐心等待，勿关闭窗口。
@@ -387,10 +416,10 @@
     </div>
 
 <div id="comboPlansModal" class="hidden fixed inset-0 z-[120] items-center justify-center p-3 sm:p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="comboPlansTitle" hidden aria-hidden="true">
-        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-4xl max-h-[min(90vh,44rem)] flex flex-col overflow-hidden">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-6xl max-h-[min(92vh,48rem)] flex flex-col overflow-hidden">
             <div class="flex items-start justify-between gap-3 px-4 py-3 border-b border-gray-100 shrink-0">
                 <div class="min-w-0">
-                    <h3 id="comboPlansTitle" class="font-semibold text-sm text-gray-900">组合方案</h3>
+                    <h3 id="comboPlansTitle" class="font-semibold text-sm text-gray-900">模型组合推荐</h3>
                     <p id="comboPlansStatus" class="text-[11px] text-gray-500 mt-0.5">识别 + 翻译推荐配方</p>
                 </div>
                 <div class="flex items-center gap-1.5 shrink-0">
@@ -400,92 +429,98 @@
                     </button>
                 </div>
             </div>
-            <div id="comboPlansFilters" class="combo-plan-filters shrink-0">
-                <div class="combo-plan-filter-row">
-                    <span class="combo-plan-filter-kicker">片源</span>
-                    <div class="combo-plan-filter-chips" role="group" aria-label="片源语言">
-                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="language" data-filter-value="">全部</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="auto">自动</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="ja">日语</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="en">英语</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="ko">韩语</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="zh">中文</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="yue">粤语</button>
+            <div class="combo-plans-split">
+                <aside id="comboPlansFilters" class="combo-plan-filters">
+                    <div class="combo-plan-filter-row">
+                        <span class="combo-plan-filter-kicker">片源</span>
+                        <div class="combo-plan-filter-chips" role="group" aria-label="片源语言">
+                            <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="language" data-filter-value="">全部</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="auto">自动</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="ja">日语</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="en">英语</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="ko">韩语</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="zh">中文</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="yue">粤语</button>
+                        </div>
                     </div>
-                </div>
-                <div class="combo-plan-filter-row">
-                    <span class="combo-plan-filter-kicker">目标</span>
-                    <div class="combo-plan-filter-chips" role="group" aria-label="目标语言">
-                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="subtitleTargetLang" data-filter-value="">全部</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="zh-Hans">简中</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="zh-Hant">繁中</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="en">英语</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="ja">日语</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="ko">韩语</button>
+                    <div class="combo-plan-filter-row">
+                        <span class="combo-plan-filter-kicker">目标</span>
+                        <div class="combo-plan-filter-chips" role="group" aria-label="目标语言">
+                            <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="subtitleTargetLang" data-filter-value="">全部</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="zh-Hans">简中</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="zh-Hant">繁中</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="en">英语</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="ja">日语</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="ko">韩语</button>
+                        </div>
                     </div>
-                </div>
-                <div class="combo-plan-filter-row">
-                    <span class="combo-plan-filter-kicker">硬件</span>
-                    <div class="combo-plan-filter-chips" role="group" aria-label="硬件档位">
-                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="hardwareTier" data-filter-value="">全部</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="cpu">CPU</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="low" title="&lt;8GB 显存">性能</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="balanced" title="8–12GB 显存">均衡</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="quality" title="&gt;12GB 显存">质量</button>
+                    <div class="combo-plan-filter-row">
+                        <span class="combo-plan-filter-kicker">硬件</span>
+                        <div class="combo-plan-filter-chips" role="group" aria-label="硬件档位">
+                            <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="hardwareTier" data-filter-value="">全部</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="cpu">CPU</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="low" title="&lt;8GB 显存">性能</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="balanced" title="8–12GB 显存">均衡</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="quality" title="&gt;12GB 显存">质量</button>
+                        </div>
                     </div>
-                </div>
-                <div class="combo-plan-filter-row">
-                    <span class="combo-plan-filter-kicker">译法</span>
-                    <div class="combo-plan-filter-chips" role="group" aria-label="翻译方式">
-                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="translateMode" data-filter-value="">全部</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="llm">推理</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="external">外部</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="dialog">智能◆</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="smart">混合◆</button>
+                    <div class="combo-plan-filter-row">
+                        <span class="combo-plan-filter-kicker">译法</span>
+                        <div class="combo-plan-filter-chips" role="group" aria-label="翻译方式">
+                            <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="translateMode" data-filter-value="">全部</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="llm">推理</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="external">外部</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="dialog">智能◆</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="smart">混合◆</button>
+                        </div>
                     </div>
-                </div>
-                <div class="combo-plan-filter-row">
-                    <span class="combo-plan-filter-kicker">授权</span>
-                    <div class="combo-plan-filter-chips" role="group" aria-label="授权">
-                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="pro" data-filter-value="all">全部</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="pro" data-filter-value="free">仅免费</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="pro" data-filter-value="pro">仅 Pro</button>
+                    <div class="combo-plan-filter-row">
+                        <span class="combo-plan-filter-kicker">授权</span>
+                        <div class="combo-plan-filter-chips" role="group" aria-label="授权">
+                            <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="pro" data-filter-value="all">全部</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="pro" data-filter-value="free">仅免费</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="pro" data-filter-value="pro">仅 Pro</button>
+                        </div>
                     </div>
-                </div>
-                <div class="combo-plan-filter-row">
-                    <span class="combo-plan-filter-kicker">分组</span>
-                    <div class="combo-plan-filter-chips" role="group" aria-label="场景分组">
-                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="group" data-filter-value="">全部</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="ja">日语</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="ko">韩语</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="western">欧美</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="zh">中文</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="talk">访谈</button>
-                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="other">其他</button>
+                    <div class="combo-plan-filter-row">
+                        <span class="combo-plan-filter-kicker">分组</span>
+                        <div class="combo-plan-filter-chips" role="group" aria-label="场景分组">
+                            <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="group" data-filter-value="">全部</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="ja">日语</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="ko">韩语</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="western">欧美</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="zh">中文</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="talk">访谈</button>
+                            <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="other">其他</button>
+                        </div>
                     </div>
                     <button type="button" id="comboPlansClearFiltersBtn" class="combo-plan-filter-clear">清除筛选</button>
-                </div>
-            </div>
-            <div class="combo-plans-body grid grid-cols-1 sm:grid-cols-2 gap-0 overflow-hidden">
-                <div class="border-b sm:border-b-0 sm:border-r border-gray-100 overflow-y-auto p-3 space-y-2 min-h-0">
-                    <div id="comboPlansList" class="space-y-2"></div>
-                    <p id="comboPlansEmpty" class="hidden text-sm text-gray-500 px-1">无匹配方案</p>
-                </div>
-                <div class="overflow-y-auto p-4 min-h-0 flex flex-col">
-                    <div id="comboPlansDetail" class="flex-1 min-h-0">
-                        <p class="text-sm text-gray-500">请选择一个组合方案</p>
+                </aside>
+                <div class="combo-plans-body">
+                    <div class="combo-plans-results">
+                        <label class="combo-plans-search">
+                            <span class="sr-only">查找</span>
+                            <input id="comboPlansSearch" type="search" placeholder="查找方案、模型或硬件" autocomplete="off">
+                        </label>
+                        <div id="comboPlansList" class="space-y-2"></div>
+                        <p id="comboPlansEmpty" class="hidden text-sm text-gray-500 px-1">无匹配方案</p>
                     </div>
-                    <div id="comboPlansProgressWrap" class="hidden mt-3 rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-2" hidden>
-                        <div class="flex items-center justify-between gap-2 text-[11px] text-violet-900 mb-1">
-                            <span id="comboPlansProgressText">正在下载模型…</span>
-                            <span id="comboPlansProgressPct" class="tabular-nums font-medium">0%</span>
+                    <div class="combo-plans-detail-pane">
+                        <div id="comboPlansDetail" class="flex-1 min-h-0">
+                            <p class="text-sm text-gray-500">请选择一个组合方案</p>
                         </div>
-                        <div class="h-1.5 rounded-full bg-violet-100 overflow-hidden">
-                            <span id="comboPlansProgressBar" class="block h-full bg-violet-500 transition-[width] duration-200" style="width:0%"></span>
+                        <div id="comboPlansProgressWrap" class="hidden mt-3 rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-2" hidden>
+                            <div class="flex items-center justify-between gap-2 text-[11px] text-violet-900 mb-1">
+                                <span id="comboPlansProgressText">正在下载模型…</span>
+                                <span id="comboPlansProgressPct" class="tabular-nums font-medium">0%</span>
+                            </div>
+                            <div class="h-1.5 rounded-full bg-violet-100 overflow-hidden">
+                                <span id="comboPlansProgressBar" class="block h-full bg-violet-500 transition-[width] duration-200" style="width:0%"></span>
+                            </div>
                         </div>
-                    </div>
-                    <div class="mt-4 flex flex-wrap justify-end gap-2 shrink-0">
-                        <button type="button" id="comboPlansApplyBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">应用此方案</button>
+                        <div class="mt-4 flex flex-wrap justify-end gap-2 shrink-0">
+                            <button type="button" id="comboPlansApplyBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">应用此方案</button>
+                        </div>
                     </div>
                 </div>
             </div>

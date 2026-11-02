@@ -65,6 +65,7 @@ function Stop-PackagingLocks {
             $_.ExecutablePath -and (
                 $_.ExecutablePath -like "$root\dist\*" -or
                 $_.ExecutablePath -like "$root\.packaging\*" -or
+                $_.ExecutablePath -like "$root\packaging\*" -or
                 $_.ExecutablePath -like "$env:LOCALAPPDATA\Transub\packaging\*" -or
                 $_.ExecutablePath -like "$root\node_modules\electron\dist\electron.exe"
             )
@@ -105,11 +106,47 @@ function Remove-DirWithRetry([string]$Path, [int]$Attempts = 8) {
     return $false
 }
 
+function Get-PackagingBase {
+    # Prefer outside the Cursor/VS Code workspace. In-tree packaging\win-unpacked.tmp
+    # renames often hit EPERM when the IDE / SearchIndexer / AV scans newly extracted Electron.
+    # Override: set TRANSUB_PACKAGING_BASE to an absolute directory.
+    if ($env:TRANSUB_PACKAGING_BASE -and $env:TRANSUB_PACKAGING_BASE.Trim()) {
+        return $env:TRANSUB_PACKAGING_BASE.Trim()
+    }
+    # Sibling of the repo on the same drive (avoids filling %SystemDrive% when repo is on F:).
+    $parent = Split-Path $root -Parent
+    if ($parent) {
+        return (Join-Path $parent 'Transub-packaging')
+    }
+    return (Join-Path $env:LOCALAPPDATA 'Transub\packaging')
+}
+
 function Get-PackagingRoot {
-    # Outside the Cursor workspace to avoid IDE file locks on win-unpacked / app.asar
-    $base = Join-Path $env:LOCALAPPDATA 'Transub\packaging'
+    $base = Get-PackagingBase
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     return (Join-Path $base $stamp)
+}
+
+function Remove-StalePackagingDirs {
+    $bases = @(
+        (Get-PackagingBase),
+        (Join-Path $root 'packaging'),
+        (Join-Path $root '.packaging'),
+        (Join-Path $env:LOCALAPPDATA 'Transub\packaging')
+    )
+    foreach ($base in $bases) {
+        if (-not (Test-Path -LiteralPath $base)) { continue }
+        Get-ChildItem -LiteralPath $base -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            $ok = Remove-DirWithRetry $_.FullName
+            if (-not $ok) {
+                Write-Host "  could not remove old staging: $($_.FullName)" -ForegroundColor Yellow
+                Write-BuildLog "could not remove old staging: $($_.FullName)"
+            } else {
+                Write-Host "  removed old staging: $($_.FullName)"
+                Write-BuildLog "removed old staging: $($_.FullName)"
+            }
+        }
+    }
 }
 
 try {
@@ -186,6 +223,8 @@ if ($rc -ne 0) { exit $rc }
 Write-Step 'Prepare packaging'
 Stop-PackagingLocks
 $distDir = Join-Path $root 'dist'
+# Drop previous stamps here and leftover %LOCALAPPDATA%\Transub\packaging (legacy).
+Remove-StalePackagingDirs
 $packDir = Get-PackagingRoot
 # Also try to clear leftover in-repo .packaging (legacy) without failing the build
 Remove-DirWithRetry (Join-Path $root '.packaging') | Out-Null
@@ -199,15 +238,32 @@ Write-Step "Electron build ($Target)"
 $configArg = "--config.directories.output=$packDir"
 # Avoid electron-builder publishing noise; we only need local artifacts
 $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
-switch ($Target) {
-    'dir' { $rc = Invoke-Npx @('--yes', 'electron-builder', '--win', 'dir', $configArg, '--publish', 'never') }
-    'zip' { $rc = Invoke-Npx @('--yes', 'electron-builder', '--win', 'zip', $configArg, '--publish', 'never') }
+$builderArgs = switch ($Target) {
+    'dir' { @('--yes', 'electron-builder', '--win', 'dir', $configArg, '--publish', 'never') }
+    'zip' { @('--yes', 'electron-builder', '--win', 'zip', $configArg, '--publish', 'never') }
     # default / all: zip + dir only (NSIS Setup discontinued)
-    default { $rc = Invoke-Npx @('--yes', 'electron-builder', '--win', 'zip', '--win', 'dir', $configArg, '--publish', 'never') }
+    default { @('--yes', 'electron-builder', '--win', 'zip', '--win', 'dir', $configArg, '--publish', 'never') }
+}
+# Transient EPERM on win-unpacked.tmp → win-unpacked is common on Windows; retry after unlock.
+$rc = 1
+$maxBuilderAttempts = 3
+for ($attempt = 1; $attempt -le $maxBuilderAttempts; $attempt++) {
+    if ($attempt -gt 1) {
+        Write-Host "  retry electron-builder ($attempt/$maxBuilderAttempts) after EPERM/lock cleanup..." -ForegroundColor Yellow
+        Write-BuildLog "electron-builder retry $attempt/$maxBuilderAttempts"
+        Stop-PackagingLocks
+        Remove-DirWithRetry (Join-Path $packDir 'win-unpacked.tmp') | Out-Null
+        Remove-DirWithRetry (Join-Path $packDir 'win-unpacked') | Out-Null
+        Start-Sleep -Seconds 2
+    }
+    $rc = Invoke-Npx $builderArgs
+    if ($rc -eq 0) { break }
 }
 if ($rc -ne 0) {
     Write-Host "electron-builder failed with exit code $rc" -ForegroundColor Red
-    Write-Host "If EPERM/EBUSY persists: close Transub, pause antivirus scan on LocalAppData\Transub, retry." -ForegroundColor Yellow
+    Write-Host "If EPERM/EBUSY persists: close Transub/Cursor preview of packaging, pause AV on staging, retry." -ForegroundColor Yellow
+    Write-Host "Staging is outside the workspace: $(Get-PackagingBase)" -ForegroundColor Yellow
+    Write-Host "Override with env TRANSUB_PACKAGING_BASE if needed." -ForegroundColor Yellow
     Write-BuildLog "electron-builder failed exit=$rc"
     exit $rc
 }

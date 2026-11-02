@@ -374,4 +374,55 @@ describe('TransubBatchJobProgress', () => {
         assert.ok(Number(state.videoProgress) >= 64, 'same-file dual resume must not zero progress');
         assert.strictEqual(item.startedAt, 1);
     });
+
+    it('paintProgressUi skips overwrite while retranslateBusy', () => {
+        const els = makeEls();
+        els.progressBar.style.width = '42%';
+        els.progressCount.textContent = '1 / 2 · 42%';
+        const state = makeState({
+            retranslateBusy: true,
+            running: false,
+            videoProgress: 0,
+        });
+        const api = createBatchJobProgress({
+            state,
+            els,
+            computeDisplayProgress: () => ({ pct: 0, label: '…' }),
+            formatDuration: () => '0s',
+            elapsedSecSince: () => 0,
+            updateTaskStation: () => {},
+        });
+        api.paintProgressUi();
+        assert.strictEqual(els.progressBar.style.width, '42%');
+        assert.strictEqual(els.progressCount.textContent, '1 / 2 · 42%');
+    });
+
+    it('updateItem throttles light refresh while retranslateBusy', () => {
+        const item = { path: 'F:/a.mp4', status: 'running', progress: 10 };
+        const state = makeState({
+            items: [item],
+            running: false,
+            retranslateBusy: true,
+        });
+        let light = 0;
+        let full = 0;
+        const rowRefreshAtByPath = new Map();
+        const api = createBatchJobProgress({
+            state,
+            els: makeEls(),
+            findItem: () => item,
+            normPath: (p) => String(p || '').toLowerCase(),
+            rowRefreshAtByPath,
+            refreshListRow: (_item, opts) => {
+                if (opts?.light) light += 1;
+                else full += 1;
+                return true;
+            },
+            renderList: () => {},
+        });
+        api.updateItem('F:/a.mp4', { progress: 20, detail: 'a' });
+        api.updateItem('F:/a.mp4', { progress: 30, detail: 'b' });
+        assert.strictEqual(light, 1);
+        assert.strictEqual(full, 0);
+    });
 });

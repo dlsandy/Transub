@@ -337,7 +337,7 @@ function syncEngineModelsFilterCounts() {
         })
         : {
             all: 0, installed: 0, available: 0, recommended: 0, incomplete: 0, experimental: 0,
-            asr: 0, vad: 0, llm: 0, separate: 0,
+            asr: 0, vad: 0, llm: 0, decision: 0, separate: 0,
         };
     const map = {
         all: els.engineModelsTabAllCount,
@@ -349,6 +349,7 @@ function syncEngineModelsFilterCounts() {
         asr: els.engineModelsTabAsrCount,
         vad: els.engineModelsTabVadCount,
         llm: els.engineModelsTabLlmCount,
+        decision: els.engineModelsTabDecisionCount,
         separate: els.engineModelsTabSeparateCount,
     };
     Object.keys(map).forEach((key) => {

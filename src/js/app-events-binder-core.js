@@ -162,12 +162,8 @@
         const deleteEngineModel = typeof d.deleteEngineModel === 'function' ? d.deleteEngineModel : () => {};
         const manualManagedLlmDownload = typeof d.manualManagedLlmDownload === 'function' ? d.manualManagedLlmDownload : () => {};
         const manualEngineHubModelDownload = typeof d.manualEngineHubModelDownload === 'function' ? d.manualEngineHubModelDownload : () => {};
-        const ensureEngineGpuSupport = typeof d.ensureEngineGpuSupport === 'function' ? d.ensureEngineGpuSupport : () => {};
         const ensureEngineTorchCuda = typeof d.ensureEngineTorchCuda === 'function' ? d.ensureEngineTorchCuda : () => {};
-        const scanAndReuseEngineCuda = typeof d.scanAndReuseEngineCuda === 'function' ? d.scanAndReuseEngineCuda : () => {};
-        const setEngineGpuStatusText = typeof d.setEngineGpuStatusText === 'function' ? d.setEngineGpuStatusText : () => {};
         const appConfirm = typeof d.appConfirm === 'function' ? d.appConfirm : (async () => false);
-        const manualEngineDownloadInstall = typeof d.manualEngineDownloadInstall === 'function' ? d.manualEngineDownloadInstall : () => {};
         const formatEngineDownloadSizeLine = typeof d.formatEngineDownloadSizeLine === 'function' ? d.formatEngineDownloadSizeLine : (() => '');
         const setEngineDownloadProgressPct = typeof d.setEngineDownloadProgressPct === 'function' ? d.setEngineDownloadProgressPct : () => {};
         const appendAppEngineDownloadProgressLog = typeof d.appendAppEngineDownloadProgressLog === 'function' ? d.appendAppEngineDownloadProgressLog : () => {};
@@ -376,7 +372,13 @@
                         || String(els.uiLocaleSelect.value || 'zh-Hans');
                     els.uiLocaleSelect.value = next;
                     void Promise.resolve(window.TransubI18n?.setLocale?.(next, { apply: true, persist: true }))
-                        .then(() => persistFormOptionsQuiet());
+                        .then(() => {
+                            try {
+                                const chosenKey = window.TransubEnvCheckLocale?.CHOSEN_KEY || 'transub.uiLocaleChosen';
+                                window.localStorage?.setItem(chosenKey, '1');
+                            } catch { /* ignore */ }
+                            return persistFormOptionsQuiet();
+                        });
                 });
             }
             electron?.onOpenParams?.((payload) => {
@@ -771,6 +773,145 @@
             }
         }
 
+        function setProxyTestStatusText(text, kind = '') {
+            const statusEl = liveEl('proxyTestStatus', 'proxyTestStatus');
+            if (statusEl) {
+                statusEl.textContent = text || '';
+                statusEl.className = kind === 'ok'
+                    ? 'text-xs text-emerald-600 min-h-[1rem]'
+                    : kind === 'err'
+                        ? 'text-xs text-red-600 min-h-[1rem]'
+                        : kind === 'busy'
+                            ? 'text-xs text-sky-600 min-h-[1rem]'
+                            : 'text-xs text-gray-500 min-h-[1rem]';
+            }
+            try { setProxyTestStatus(text, kind); } catch (_) { /* ignore */ }
+        }
+
+        function setNetworkHfStatusText(text, kind = '') {
+            const statusEl = liveEl('networkHfStatus', 'networkHfStatus');
+            if (statusEl) {
+                statusEl.textContent = text || '';
+                statusEl.className = kind === 'ok'
+                    ? 'text-xs text-emerald-600 min-h-[1rem]'
+                    : kind === 'err'
+                        ? 'text-xs text-red-600 min-h-[1rem]'
+                        : kind === 'busy'
+                            ? 'text-xs text-sky-600 min-h-[1rem]'
+                            : 'text-xs text-gray-500 min-h-[1rem]';
+            }
+            try { setNetworkHfStatus(text, kind); } catch (_) { /* ignore */ }
+        }
+
+        async function runProxyConnectionTest(btn) {
+            if (btn?.disabled) return;
+            const payload = readLiveProxyOptionsFromForm();
+            setProxyTestStatusText('测试中…', 'busy');
+            if (btn) btn.disabled = true;
+            try {
+                const probe = electron?.transubTestProxy;
+                if (typeof probe !== 'function') {
+                    setProxyTestStatusText('当前环境不支持测试代理（请完全退出后重启应用）', 'err');
+                    return;
+                }
+                const res = await probe(payload);
+                if (res?.ok) {
+                    setProxyTestStatusText(res.message || '连接成功', 'ok');
+                } else {
+                    setProxyTestStatusText(res?.error || '连接失败', 'err');
+                }
+            } catch (err) {
+                setProxyTestStatusText(err?.message || String(err), 'err');
+            } finally {
+                if (btn) btn.disabled = false;
+                try { syncProxySettingsUi(); } catch (_) { /* ignore */ }
+            }
+        }
+
+        async function runHfEndpointTest(btn) {
+            if (btn?.disabled) return;
+            const payload = {
+                hfEndpoint: liveEl('engineHfEndpointInput', 'engineHfEndpointInput')?.value?.trim() || '',
+                ...readLiveProxyOptionsFromForm(),
+            };
+            setNetworkHfStatusText('测试中…', 'busy');
+            if (btn) btn.disabled = true;
+            try {
+                const probe = electron?.transubTestHfEndpoint;
+                if (typeof probe !== 'function') {
+                    setNetworkHfStatusText('当前环境不支持测试 Hugging Face（请完全退出后重启应用）', 'err');
+                    return;
+                }
+                const res = await probe(payload);
+                if (res?.ok) {
+                    setNetworkHfStatusText(res.message || '连接成功', 'ok');
+                } else {
+                    setNetworkHfStatusText(res?.error || '连接失败', 'err');
+                }
+            } catch (err) {
+                setNetworkHfStatusText(err?.message || String(err), 'err');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        function bindProxyAndHfSettingsEvents() {
+            const doc = typeof document !== 'undefined' ? document : null;
+            if (!doc) return;
+
+            liveEl('proxyEnabledCheck', 'proxyEnabledCheck');
+            liveEl('proxyUrlInput', 'proxyUrlInput');
+            liveEl('proxyBypassInput', 'proxyBypassInput');
+            liveEl('proxyTestBtn', 'proxyTestBtn');
+            liveEl('proxyTestStatus', 'proxyTestStatus');
+            liveEl('engineHfEndpointInput', 'engineHfEndpointInput');
+            liveEl('engineHfMirrorPresetBtn', 'engineHfMirrorPresetBtn');
+            liveEl('engineHfOfficialPresetBtn', 'engineHfOfficialPresetBtn');
+            liveEl('engineHfTestBtn', 'engineHfTestBtn');
+            liveEl('networkHfStatus', 'networkHfStatus');
+
+            // Document delegation survives #paramsModal replaceWith on fragment load.
+            if (!bindProxyAndHfSettingsEvents._delegated) {
+                bindProxyAndHfSettingsEvents._delegated = true;
+                doc.addEventListener('change', (event) => {
+                    if (!event.target?.closest?.('#proxyEnabledCheck')) return;
+                    try { syncProxySettingsUi(); } catch (_) { /* ignore */ }
+                });
+                doc.addEventListener('click', (event) => {
+                    const hfMirrorBtn = event.target?.closest?.('#engineHfMirrorPresetBtn');
+                    if (hfMirrorBtn) {
+                        event.preventDefault();
+                        const input = liveEl('engineHfEndpointInput', 'engineHfEndpointInput');
+                        if (input) input.value = 'https://hf-mirror.com';
+                        markSettingsDirty(true);
+                        setNetworkHfStatusText('已填入国内镜像 https://hf-mirror.com，请保存设置后重新下载', 'ok');
+                        return;
+                    }
+                    const hfOfficialBtn = event.target?.closest?.('#engineHfOfficialPresetBtn');
+                    if (hfOfficialBtn) {
+                        event.preventDefault();
+                        const input = liveEl('engineHfEndpointInput', 'engineHfEndpointInput');
+                        if (input) input.value = '';
+                        markSettingsDirty(true);
+                        setNetworkHfStatusText('已改为直连官方 Hugging Face，请保存设置后重试', 'ok');
+                        return;
+                    }
+                    const hfTestBtn = event.target?.closest?.('#engineHfTestBtn');
+                    if (hfTestBtn) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void runHfEndpointTest(hfTestBtn);
+                        return;
+                    }
+                    const proxyTestBtn = event.target?.closest?.('#proxyTestBtn');
+                    if (!proxyTestBtn) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void runProxyConnectionTest(proxyTestBtn);
+                });
+            }
+        }
+
         function bindEngineInstallAndModelsEvents() {
             els.installTestBtn?.addEventListener('click', testInstall);
             els.installCheckUpdateBtn?.addEventListener('click', () => {
@@ -820,57 +961,9 @@
                 setSaveParamsStatus('有未保存更改', 'warn');
                 await refreshEngineStatus();
             });
-            els.engineHfMirrorPresetBtn?.addEventListener('click', () => {
-                if (els.engineHfEndpointInput) els.engineHfEndpointInput.value = 'https://hf-mirror.com';
-                setNetworkHfStatus('已填入国内镜像 https://hf-mirror.com，请保存设置后重新下载', 'ok');
-            });
-            els.engineHfOfficialPresetBtn?.addEventListener('click', () => {
-                if (els.engineHfEndpointInput) els.engineHfEndpointInput.value = '';
-                setNetworkHfStatus('已改为直连官方 Hugging Face，请保存设置后重试', 'ok');
-            });
-            els.engineHfTestBtn?.addEventListener('click', async () => {
-                const payload = {
-                    hfEndpoint: els.engineHfEndpointInput?.value?.trim() || '',
-                    ...readProxyOptionsFromForm(),
-                };
-                setNetworkHfStatus('测试中…', 'busy');
-                if (els.engineHfTestBtn) els.engineHfTestBtn.disabled = true;
-                try {
-                    const res = await electron?.transubTestHfEndpoint?.(payload);
-                    if (res?.ok) {
-                        setNetworkHfStatus(res.message || '连接成功', 'ok');
-                    } else {
-                        setNetworkHfStatus(res?.error || '连接失败', 'err');
-                    }
-                } catch (err) {
-                    setNetworkHfStatus(err?.message || String(err), 'err');
-                } finally {
-                    if (els.engineHfTestBtn) els.engineHfTestBtn.disabled = false;
-                }
-            });
-            els.proxyEnabledCheck?.addEventListener('change', () => {
-                syncProxySettingsUi();
-            });
             bindTransubStationSettingsEvents();
             bindGithubMirrorSettingsEvents();
-            els.proxyTestBtn?.addEventListener('click', async () => {
-                const payload = readProxyOptionsFromForm();
-                setProxyTestStatus('测试中…', 'busy');
-                if (els.proxyTestBtn) els.proxyTestBtn.disabled = true;
-                try {
-                    const res = await electron?.transubTestProxy?.(payload);
-                    if (res?.ok) {
-                        setProxyTestStatus(res.message || '连接成功', 'ok');
-                    } else {
-                        setProxyTestStatus(res?.error || '连接失败', 'err');
-                    }
-                } catch (err) {
-                    setProxyTestStatus(err?.message || String(err), 'err');
-                } finally {
-                    if (els.proxyTestBtn) els.proxyTestBtn.disabled = false;
-                    syncProxySettingsUi();
-                }
-            });
+            bindProxyAndHfSettingsEvents();
             els.engineTestBtn?.addEventListener('click', async () => {
                 const btn = els.engineTestBtn;
                 const prevLabel = btn?.textContent || '检测引擎';
@@ -894,50 +987,9 @@
                 }
             });
             bindModelsWorkspaceEvents();
-            els.engineEnsureGpuBtn?.addEventListener('click', () => {
-                void ensureEngineGpuSupport({ force: false });
-            });
-            els.engineEnsureTorchCudaBtn?.addEventListener('click', () => {
-                void ensureEngineTorchCuda({ force: true, silent: false });
-            });
             (typeof window !== 'undefined' ? window : global)?.addEventListener?.('transub:ensure-torch-cuda', () => {
                 openAppSettings('install');
-                try {
-                    global.TransubSettingsModalUi?.scrollToEnvSection?.('settingsEnvSectionGpu');
-                } catch (_) { /* ignore */ }
                 void ensureEngineTorchCuda({ force: true, silent: false });
-            });
-            els.engineScanCudaBtn?.addEventListener('click', () => {
-                void scanAndReuseEngineCuda();
-            });
-            els.enginePickCudaRootBtn?.addEventListener('click', () => {
-                void (async () => {
-                    if (!electron?.transubEnginePickCudaRoot) {
-                        appendLog('当前环境不支持选择 CUDA 目录', 'err');
-                        return;
-                    }
-                    const res = await electron.transubEnginePickCudaRoot({});
-                    if (res?.cancelled) return;
-                    if (!res?.ok) {
-                        appendLog(res?.error || '选择 CUDA 目录失败', 'err');
-                        setEngineGpuStatusText(res?.error || '选择失败', 'err');
-                        return;
-                    }
-                    appendLog(res.message || '已加入 CUDA 扫描目录', 'ok');
-                    setEngineGpuStatusText(res.message || '已加入扫描目录', 'ok');
-                    const again = global.TransubAppConfirm
-                        ? await global.TransubAppConfirm({
-                            title: '扫描复用',
-                            message: '目录已加入。是否立即扫描并复用到引擎？',
-                            primaryLabel: '立即扫描',
-                            secondaryLabel: '稍后',
-                        })
-                        : false;
-                    if (again) void scanAndReuseEngineCuda();
-                })();
-            });
-            els.engineManualGpuBtn?.addEventListener('click', () => {
-                void manualEngineDownloadInstall({ kinds: ['gpu'] });
             });
             if (electron?.onAdvancedManagedLlmProgress) {
                 electron.onAdvancedManagedLlmProgress((p) => {
@@ -1058,10 +1110,17 @@
                 syncLogLevelHint();
                 syncExpertCustomHints();
             });
-            els.taskSelect?.addEventListener('change', () => {
-                syncChineseSubtitleVariantUi();
-                updateParamsSummary();
-            });
+            // Document delegation survives #paramsModal replaceWith on settings fragment load.
+            if (!bindFormParamAndStyleEvents._taskSelectDelegated) {
+                bindFormParamAndStyleEvents._taskSelectDelegated = true;
+                document.addEventListener('change', (event) => {
+                    const t = event.target;
+                    if (!t || t.id !== 'taskSelect') return;
+                    if (els.taskSelect !== t) els.taskSelect = t;
+                    syncChineseSubtitleVariantUi();
+                    updateParamsSummary();
+                });
+            }
             els.mergeBilingualCheck?.addEventListener('change', () => {
                 syncMergeBilingualUi();
                 updateParamsSummary();
@@ -1119,12 +1178,30 @@
                     if (els.audioLightDenoiseCheck) {
                         els.audioLightDenoiseCheck.checked = !!n.audioLightDenoise;
                     }
+                } else if (els.enhanceForVadOnlyCheck) {
+                    els.enhanceForVadOnlyCheck.checked = false;
+                }
+                if (els.enhanceForVadOnlyCheck) {
+                    els.enhanceForVadOnlyCheck.disabled = !els.filmAudioEnhanceCheck?.checked;
+                }
+                updateParamsSummary();
+            });
+            els.enhanceForVadOnlyCheck?.addEventListener('change', () => {
+                if (els.enhanceForVadOnlyCheck?.checked && els.filmAudioEnhanceCheck
+                    && !els.filmAudioEnhanceCheck.checked) {
+                    els.filmAudioEnhanceCheck.checked = true;
+                    els.filmAudioEnhanceCheck.dispatchEvent(new Event('change'));
+                    els.enhanceForVadOnlyCheck.checked = true;
                 }
                 updateParamsSummary();
             });
             els.filmVadPresetCheck?.addEventListener('change', () => {
                 if (els.filmVadPresetCheck?.checked && els.filmAudioEnhanceCheck) {
                     els.filmAudioEnhanceCheck.checked = false;
+                    if (els.enhanceForVadOnlyCheck) els.enhanceForVadOnlyCheck.checked = false;
+                }
+                if (els.enhanceForVadOnlyCheck) {
+                    els.enhanceForVadOnlyCheck.disabled = !els.filmAudioEnhanceCheck?.checked;
                 }
                 updateParamsSummary();
             });
@@ -1138,6 +1215,10 @@
                         : { filmAudioEnhance: false };
                     if (els.filmAudioEnhanceCheck) {
                         els.filmAudioEnhanceCheck.checked = !!n.filmAudioEnhance;
+                    }
+                    if (!n.filmAudioEnhance && els.enhanceForVadOnlyCheck) {
+                        els.enhanceForVadOnlyCheck.checked = false;
+                        els.enhanceForVadOnlyCheck.disabled = true;
                     }
                 }
                 updateParamsSummary();
@@ -1196,6 +1277,176 @@
                 updateParamsSummary();
                 updateReadinessStrip();
             });
+            const refreshJevEndpointResolved = () => {
+                if (!els.jevDecisionEndpointResolved) return;
+                try {
+                    const api = (typeof globalThis !== 'undefined' && globalThis.TransubJevDecision)
+                        || null;
+                    const pref = String(els.jevDecisionEndpointInput?.value || 'local').trim() || 'local';
+                    const resolved = api?.formatResolvedEndpointLabel
+                        ? api.formatResolvedEndpointLabel(pref)
+                        : pref;
+                    els.jevDecisionEndpointResolved.textContent = `解析：${resolved}`;
+                } catch {
+                    els.jevDecisionEndpointResolved.textContent = '';
+                }
+            };
+            els.jevDecisionEndpointInput?.addEventListener('change', () => {
+                markSettingsDirty(true);
+                refreshJevEndpointResolved();
+            });
+            els.jevDecisionEndpointInput?.addEventListener('input', () => {
+                refreshJevEndpointResolved();
+            });
+            els.jevDecisionMinConfidenceInput?.addEventListener('change', () => {
+                markSettingsDirty(true);
+            });
+            els.hyMtWindowLinesSelect?.addEventListener('change', () => {
+                markSettingsDirty(true);
+            });
+            const setJevStatus = (msg, ok) => {
+                if (!els.jevApiKeyStatus) return;
+                els.jevApiKeyStatus.textContent = String(msg || '');
+                els.jevApiKeyStatus.classList.toggle('text-emerald-700', !!ok);
+                els.jevApiKeyStatus.classList.toggle('text-rose-700', ok === false);
+            };
+            els.jevDecisionModeSelect?.addEventListener('change', () => {
+                markSettingsDirty(true);
+                void (async () => {
+                    try {
+                        const api = (typeof globalThis !== 'undefined' && globalThis.TransubJevLayaInstallPrompt)
+                            || null;
+                        if (!api?.createJevLayaInstallPrompt) return;
+                        const prompt = api.createJevLayaInstallPrompt({
+                            electron,
+                            els,
+                            appConfirm,
+                            markSettingsDirty,
+                            setJevStatus,
+                            showToast,
+                            appendLog,
+                            uiTx: typeof d.uiTx === 'function' ? d.uiTx : ((s) => s),
+                        });
+                        await prompt.promptWhenEnablingLocal();
+                    } catch (err) {
+                        setJevStatus(err?.message || '安装失败', false);
+                        showToast(err?.message || '安装失败', 'err');
+                    }
+                })();
+            });
+            const refreshJevKeyHint = async () => {
+                try {
+                    const res = await electron?.transubAdvancedGetStatus?.();
+                    const hint = res?.status?.jevKeyHint || res?.status?.jev?.keyHint || '';
+                    if (els.jevApiKeyHint) {
+                        els.jevApiKeyHint.textContent = hint
+                            ? (hint === 'env'
+                                ? '使用环境变量 LAYA_API_KEY'
+                                : `已保存密钥（${hint}）`)
+                            : '本地一般无需 Key；仅 Studio 云端需要';
+                    }
+                } catch { /* ignore */ }
+            };
+            els.jevInstallLayaBtn?.addEventListener('click', () => {
+                void (async () => {
+                    try {
+                        const api = (typeof globalThis !== 'undefined' && globalThis.TransubJevLayaInstallPrompt)
+                            || null;
+                        if (!api?.createJevLayaInstallPrompt) {
+                            setJevStatus('请完全退出后重启 Transub 再安装 Laya', false);
+                            showToast('请完全退出后重启 Transub 再安装 Laya', 'err');
+                            return;
+                        }
+                        const prompt = api.createJevLayaInstallPrompt({
+                            electron,
+                            els,
+                            appConfirm,
+                            markSettingsDirty,
+                            setJevStatus,
+                            showToast,
+                            appendLog,
+                            uiTx: typeof d.uiTx === 'function' ? d.uiTx : ((s) => s),
+                        });
+                        if (els.jevDecisionModeSelect) els.jevDecisionModeSelect.value = 'auto';
+                        markSettingsDirty(true);
+                        await prompt.promptWhenEnablingLocal({ skipConfirm: true });
+                    } catch (err) {
+                        setJevStatus(err?.message || '安装失败', false);
+                        showToast(err?.message || '安装失败', 'err');
+                    }
+                })();
+            });
+            els.jevSaveApiKeyBtn?.addEventListener('click', () => {
+                void (async () => {
+                    const apiKey = String(els.jevApiKeyInput?.value || '').trim();
+                    if (!apiKey) {
+                        setJevStatus('请输入 API Key（本地可留空）', false);
+                        return;
+                    }
+                    try {
+                        const res = await electron.transubAdvancedSaveJev({ apiKey });
+                        if (res?.ok) {
+                            if (els.jevApiKeyInput) els.jevApiKeyInput.value = '';
+                            setJevStatus(res.message || '已保存', true);
+                            await refreshJevKeyHint();
+                        } else {
+                            setJevStatus(res?.error || '保存失败', false);
+                        }
+                    } catch (err) {
+                        setJevStatus(err?.message || '保存失败', false);
+                    }
+                })();
+            });
+            els.jevTestApiKeyBtn?.addEventListener('click', () => {
+                void (async () => {
+                    const apiKey = String(els.jevApiKeyInput?.value || '').trim();
+                    const endpoint = String(els.jevDecisionEndpointInput?.value || 'local').trim() || 'local';
+                    const payload = { endpoint };
+                    if (apiKey) payload.apiKey = apiKey;
+                    setJevStatus('探测中…', undefined);
+                    try {
+                        const probe = await electron.transubAdvancedProbeJev?.(payload);
+                        if (probe?.ok) {
+                            setJevStatus(probe.message || '可达', true);
+                            return;
+                        }
+                        if (probe && !probe.ok && (probe.code === 'port_conflict' || probe.hint)) {
+                            setJevStatus(
+                                [probe.error, probe.hint].filter(Boolean).join(' — ') || '端口冲突',
+                                false,
+                            );
+                            return;
+                        }
+                        const res = await electron.transubAdvancedTestJev(payload);
+                        if (res?.ok) {
+                            setJevStatus(res.message || '连接成功', true);
+                            return;
+                        }
+                        setJevStatus(
+                            [res?.error || probe?.error || '连接失败', res?.hint || probe?.hint]
+                                .filter(Boolean)
+                                .join(' — '),
+                            false,
+                        );
+                    } catch (err) {
+                        setJevStatus(err?.message || '连接失败', false);
+                    }
+                })();
+            });
+            els.jevClearApiKeyBtn?.addEventListener('click', () => {
+                void (async () => {
+                    try {
+                        const res = await electron.transubAdvancedClearJevKey();
+                        if (els.jevApiKeyInput) els.jevApiKeyInput.value = '';
+                        setJevStatus(res?.ok ? '已清除' : (res?.error || '清除失败'), !!res?.ok);
+                        await refreshJevKeyHint();
+                    } catch (err) {
+                        setJevStatus(err?.message || '清除失败', false);
+                    }
+                })();
+            });
+            refreshJevEndpointResolved();
+            void refreshJevKeyHint();
             els.transcribeModelSelect?.addEventListener('change', () => {
                 setModelPathOnForm('transcribe', els.transcribeModelSelect.value, { syncSelect: false });
                 applyAutoDetectedModelsFromCache();
@@ -1262,6 +1513,8 @@
                 els[id]?.addEventListener('change', updateParamsSummary);
             });
             els.vadEnabledCheck?.addEventListener('change', syncExpertCustomHints);
+            els.timingAlignCheck?.addEventListener('change', () => markSettingsDirty(true));
+            els.timingAlignModelSelect?.addEventListener('change', () => markSettingsDirty(true));
             els.vadSensitiveCheck?.addEventListener('change', () => {
                 if (els.vadSensitiveCheck?.checked && els.vadAggressiveCheck) {
                     els.vadAggressiveCheck.checked = false;
@@ -1482,6 +1735,7 @@
             // even if other desktop-only handlers are skipped.
             try { bindTransubStationSettingsEvents(); } catch (_) { /* ignore */ }
             try { bindGithubMirrorSettingsEvents(); } catch (_) { /* ignore */ }
+            try { bindProxyAndHfSettingsEvents(); } catch (_) { /* ignore */ }
             if (!electron) return;
             bindQueueAndToolbarEvents();
             bindThemeAndParamsShellEvents();
@@ -1498,6 +1752,7 @@
             bindEngineInstallAndModelsEvents,
             bindTransubStationSettingsEvents,
             bindGithubMirrorSettingsEvents,
+            bindProxyAndHfSettingsEvents,
             bindFormParamAndStyleEvents,
             bindEditorAndRuntimeEvents,
         };

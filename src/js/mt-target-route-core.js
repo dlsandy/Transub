@@ -71,7 +71,13 @@
     }
 
     function normalizeSourceLang(raw) {
-        const s = String(raw || '').trim().toLowerCase().split(/[-_]/)[0];
+        if (targetLangCore?.normalizeSourceLanguageCode) {
+            return targetLangCore.normalizeSourceLanguageCode(raw);
+        }
+        const full = String(raw || '').trim().toLowerCase().replace(/_/g, '-');
+        if (!full || full === 'auto' || full === 'unknown') return '';
+        if (full === 'yue' || full === 'zh-yue' || full === 'cantonese') return 'yue';
+        const s = full.split(/[-_]/)[0];
         if (!s || s === 'auto' || s === 'unknown') return '';
         if (s === 'jp' || s === 'jpn' || s === 'japanese') return 'ja';
         if (s === 'eng' || s === 'english') return 'en';
@@ -103,17 +109,20 @@
     function isSakuraOrGalMtId(id) {
         const s = String(id || '').trim().toLowerCase();
         if (!s) return false;
-        // Multilingual TranslateGemma must not be treated as pair specialists.
+        // Multilingual TranslateGemma / Hunyuan / HY-MT1.5 must not be treated as JA→ZH packs.
         if (/translategemma|translate[-_]?gemma/i.test(s)) return false;
-        if (/^sakura-/i.test(s) || /galtransl/i.test(s) || /^hy-?mt/i.test(s)) return true;
+        if (/hunyuan|chimera/i.test(s)) return false;
+        if (/^hy-?mt1\.?5|^hy-?mt15/i.test(s)) return false;
+        // Hy-MT2: kept in this family so intl 成片仍走专训拦截；yue→ZH 由 mtModelSupportsPair 放行。
+        if (/^sakura-/i.test(s) || /galtransl/i.test(s) || /^hy-?mt2/i.test(s)) return true;
         try {
             const cat = (typeof module !== 'undefined' && module.exports)
                 ? require('./sakura-mt-catalog-core')
                 : (typeof globalThis !== 'undefined' ? globalThis.TransubSakuraMtCatalog : null);
-            if (cat?.isPairSpecialistMtModel?.(s) || cat?.isJaZhOnlyMtModel?.(s)) return true;
             if (cat?.resolvePromptFamily?.(s) === 'translategemma') return false;
             if (cat?.resolvePromptFamily?.(s) === 'translategemmasub') return false;
             if (cat?.resolvePromptFamily?.(s) === 'hunyuan') return false;
+            if (cat?.isPairSpecialistMtModel?.(s) || cat?.isJaZhOnlyMtModel?.(s)) return true;
             if (cat?.isSakuraMtModel?.(s)) {
                 const fam = cat.resolvePromptFamily?.(s);
                 return fam === 'sakura' || fam === 'galtransl' || fam === 'hymt'

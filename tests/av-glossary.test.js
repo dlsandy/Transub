@@ -45,6 +45,8 @@ describe('av-glossary-core', () => {
         assert.ok(!domainSrc.has('じゃ'));
         assert.ok(!domainSrc.has('先生'));
         assert.ok(!domainSrc.has('あんあん'));
+        assert.ok(!domainSrc.has('イこう'), 'イこう→去了 poisons leave dialogue');
+        assert.strictEqual(isJunkDomainEntry('イこう', '去了'), true);
         assert.ok(domainSrc.has('電マ'));
         assert.ok(!actorSrc.has('SAKURAKO'));
         assert.ok(!actorSrc.has('Ray'));
@@ -106,6 +108,16 @@ describe('av-glossary-core', () => {
     it('feeds ja-person-names resolveCanonicalZhPersonName', () => {
         assert.strictEqual(jaNames.resolveCanonicalZhPersonName('香水じゅん'), '香水纯');
         assert.strictEqual(jaNames.resolveCanonicalZhPersonName('明日花キララ'), '明日花绮罗');
+    });
+
+    it('injects culinary soft-AV domain readings (からみ / レバー / こんにゃく)', () => {
+        avGlossary.resetAvGlossaryCache({ reload: true });
+        const meal = 'こんにゃくです。私はレバーというけど、からみが好きです。';
+        const hits = avGlossary.matchDomainTermsInText(meal, { maxTerms: 12 });
+        const bySrc = Object.fromEntries(hits.map((t) => [t.term, t.translation]));
+        assert.strictEqual(bySrc['こんにゃく'], '魔芋', JSON.stringify(hits));
+        assert.strictEqual(bySrc['レバー'], '肝脏', JSON.stringify(hits));
+        assert.strictEqual(bySrc['からみ'], '辣味', JSON.stringify(hits));
     });
 
     it('injects matched actor terms into Sakura NSFW prompt glossary block', () => {

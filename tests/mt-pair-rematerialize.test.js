@@ -49,6 +49,29 @@ describe('mt-pair-rematerialize dead timeline', () => {
         assert.strictEqual(laid.cues[0].text, '啊');
     });
 
+    it('positional zip skips leading ZH ellipsis so dialogue is not one cue late', () => {
+        const ja = Array.from({ length: 12 }, (_, i) => ({
+            index: i,
+            startMs: 2000 + i * 1500,
+            endMs: 2900 + i * 1500,
+            text: i === 0 ? 'あー彼女教え…' : `JA${i}`,
+        }));
+        const zh = [
+            { startMs: 0, endMs: 0, text: '…' },
+            { startMs: 0, endMs: 0, text: '啊 想让她教我' },
+            ...Array.from({ length: 10 }, (_, i) => ({
+                startMs: 0,
+                endMs: 0,
+                text: `译${i + 1}`,
+            })),
+        ];
+        const laid = rematerializeCuesOntoSource(ja, zh, { preferPositional: true });
+        assert.strictEqual(laid.zhSkip, 1);
+        assert.strictEqual(laid.cues[0].startMs, 2000);
+        assert.strictEqual(laid.cues[0].text, '啊 想让她教我');
+        assert.strictEqual(laid.cues[1].text, '译1');
+    });
+
     it('preferPositional option zips by list order', () => {
         const ja = [
             { startMs: 10000, endMs: 11000, text: 'ja1' },
@@ -64,5 +87,52 @@ describe('mt-pair-rematerialize dead timeline', () => {
         assert.strictEqual(laid.cues[0].text, 'zh1');
         assert.strictEqual(laid.cues[1].startMs, 20000);
         assert.strictEqual(laid.cues[1].text, 'zh2');
+    });
+});
+
+describe('mt-sanitize rematerialize same-start pile', () => {
+    const { rematerializeTranslatedOntoSource } = require('../src/js/mt-sanitize-core');
+
+    it('does not broadcast every ZH line onto every same-start JA slot', () => {
+        const n = 20;
+        const ja = Array.from({ length: n }, (_, i) => ({
+            index: i,
+            startMs: 0,
+            endMs: 500,
+            text: `JA${i}`,
+        }));
+        const zh = Array.from({ length: n }, (_, i) => ({
+            index: i,
+            startMs: 0,
+            endMs: 500,
+            text: `译${i}`,
+        }));
+        const laid = rematerializeTranslatedOntoSource(ja, zh, { preferIndex: false });
+        assert.ok(laid.cues.length >= n);
+        const uniq = new Set(laid.cues.map((c) => String(c.text || '').trim()));
+        assert.ok(uniq.size >= n - 1, `expected ~${n} unique texts, got ${uniq.size}`);
+        for (const c of laid.cues) {
+            assert.ok(
+                !String(c.text).includes('译0 译1 译2'),
+                `mega-glued text: ${String(c.text).slice(0, 80)}`,
+            );
+        }
+        assert.strictEqual(laid.cues[0].text.trim(), '译0');
+        assert.strictEqual(laid.cues[1].text.trim(), '译1');
+    });
+
+    it('still joins CPS extras onto a single JA at the same start', () => {
+        const ja = [
+            { index: 0, startMs: 1000, endMs: 3000, text: 'あいう' },
+            { index: 1, startMs: 5000, endMs: 6000, text: 'えお' },
+        ];
+        const zh = [
+            { index: 0, startMs: 1000, endMs: 1800, text: '啊' },
+            { index: 1, startMs: 1000, endMs: 2800, text: '咦呜' },
+            { index: 2, startMs: 5000, endMs: 5800, text: '诶哦' },
+        ];
+        const laid = rematerializeTranslatedOntoSource(ja, zh, { preferIndex: false });
+        assert.strictEqual(laid.cues[0].text.trim(), '啊 咦呜');
+        assert.strictEqual(laid.cues[1].text.trim(), '诶哦');
     });
 });

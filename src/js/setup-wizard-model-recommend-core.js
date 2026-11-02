@@ -36,8 +36,10 @@
         const vramGb = memTotalMiB > 0 ? memTotalMiB / 1024 : 0;
         const amdOk = vendor === 'amd' && (detected || !!gpuName);
         const nvidiaOk = vendor === 'nvidia' && detected;
-        const gpuOk = nvidiaOk || amdOk;
-        const device = gpuOk ? 'cuda' : 'cpu';
+        const intelOk = vendor === 'intel' && (detected || !!gpuName);
+        const gpuOk = nvidiaOk || amdOk || intelOk;
+        // NVIDIA/AMD → cuda (ROCm uses cuda API); Intel Arc → intel (XPU).
+        const device = intelOk ? 'intel' : ((nvidiaOk || amdOk) ? 'cuda' : 'cpu');
         let profile = 'balanced';
         if (!gpuOk) profile = 'speed';
         else if (vramGb >= 10) profile = 'quality';
@@ -62,7 +64,7 @@
         const vramGb = Number(r?.vramGb || r?.vram_gb) || 0;
         const profile = String(r?.profile || '').trim().toLowerCase();
         const deviceHint = String(r?.device || r?.suggestedDevice || '').trim().toLowerCase();
-        const hasGpu = deviceHint === 'cuda' || !!r?.gpuOk;
+        const hasGpu = deviceHint === 'cuda' || deviceHint === 'intel' || deviceHint === 'xpu' || !!r?.gpuOk;
         let tier = 'cpu';
         if (vramGb >= 10 || profile === 'quality') tier = 'high';
         else if (vramGb >= 6 || profile === 'balanced') tier = 'mid';
@@ -71,7 +73,9 @@
         return {
             tier,
             profile: profile || (tier === 'high' ? 'quality' : tier === 'cpu' ? 'speed' : 'balanced'),
-            device: hasGpu && tier !== 'cpu' ? 'cuda' : 'cpu',
+            device: hasGpu && tier !== 'cpu'
+                ? (deviceHint === 'intel' || deviceHint === 'xpu' ? 'intel' : 'cuda')
+                : 'cpu',
             hardwareKnown: !!(r && (vramGb > 0 || hasGpu || profile)),
             vramGb,
             gpuName: String(r?.gpuName || '').trim(),

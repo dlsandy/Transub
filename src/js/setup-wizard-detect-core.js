@@ -12,7 +12,7 @@
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function setupWizardDetectFactory(global) {
     /** Software deps that must be green before leaving the prepare step. */
     const PREPARE_GATE_IDS = Object.freeze([
-        'installPath', 'ffmpeg', 'vcRedist', 'engine', 'gpuRuntime', 'llamaServerRuntime',
+        'installPath', 'ffmpeg', 'vcRedist', 'engine', 'gpu', 'gpuRuntime', 'llamaServerRuntime',
         'torchEngineStartup',
     ]);
 
@@ -543,6 +543,7 @@
                     engineAsrModel: asrHint,
                     syncLlamaBackend: scope === 'base',
                     scope,
+                    requireDiscreteGpu: true,
                 };
                 if (api?.performEnvCheck) {
                     result = await api.performEnvCheck(checkPayload);
@@ -570,13 +571,18 @@
                     state.detect.gpuName = String(gpuItem?.detail || '').split(/[·（(]/)[0].trim();
                     const detailStr = String(gpuItem?.detail || '');
                     const vendorRaw = String(gpuItem?.vendor || '').toLowerCase();
-                    const gpuVendor = vendorRaw === 'amd' || vendorRaw === 'nvidia'
+                    const gpuVendor = vendorRaw === 'amd' || vendorRaw === 'nvidia' || vendorRaw === 'intel'
                         ? vendorRaw
-                        : (/AMD|Radeon|ROCm/i.test(detailStr) && !/NVIDIA|GeForce|RTX|GTX/i.test(detailStr)
-                            ? 'amd'
-                            : (state.detect.gpuOk ? 'nvidia' : ''));
+                        : (/Intel\s*Arc|SYCL/i.test(detailStr) && !/NVIDIA|AMD|Radeon/i.test(detailStr)
+                            ? 'intel'
+                            : (/AMD|Radeon|ROCm/i.test(detailStr) && !/NVIDIA|GeForce|RTX|GTX/i.test(detailStr)
+                                ? 'amd'
+                                : (state.detect.gpuOk ? 'nvidia' : '')));
                     state.detect.gpuVendor = gpuVendor;
-                    if (gpuVendor === 'amd' || state.detect.gpuOk) {
+                    if (gpuVendor === 'intel') {
+                        // Intel Arc: Engine ASR/Demucs use XPU; LLM uses SYCL.
+                        state.detect.suggestedDevice = 'intel';
+                    } else if (gpuVendor === 'amd' || state.detect.gpuOk) {
                         // AMD uses ROCm torch via device=cuda; Whisper/CT2 still fall back to CPU.
                         state.detect.suggestedDevice = 'cuda';
                     } else {

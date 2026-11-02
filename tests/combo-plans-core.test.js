@@ -122,6 +122,19 @@ describe('combo-plans-core', () => {
         );
     });
 
+    it('filterComboPlans by query matches name and model id', () => {
+        const byName = filterComboPlans(samplePlans, { ...emptyFilters(), query: 'JA LLM' });
+        assert.strictEqual(byName.length, 1);
+        assert.strictEqual(byName[0].id, 'ja-llm');
+        const byModel = filterComboPlans(samplePlans, { ...emptyFilters(), query: 'sensevoice' });
+        assert.strictEqual(byModel.length, 2);
+        assert.ok(byModel.every((p) => (p.models || []).some((id) => String(id).includes('sensevoice'))));
+        assert.strictEqual(
+            filterComboPlans(samplePlans, { ...emptyFilters(), query: '不存在的方案' }).length,
+            0,
+        );
+    });
+
     it('buildApplyOptionsPatch includes translate keys and activeComboPlanId', () => {
         const patch = buildApplyOptionsPatch(samplePlans[0]);
         assert.strictEqual(patch.translateMode, 'llm');

@@ -96,7 +96,7 @@ function buildEngineGlossaryPairs(glossary) {
 }
 
 /**
- * Misheard alias → canonical for engine post-ASR apply (hotword / bad-pool entries only).
+ * Misheard alias → canonical for engine post-ASR apply (hotword / misheard entries only).
  * @param {object|null} glossary
  * @returns {{ wrong: string, correct: string, stage: 'asr', blacklist?: string[] }[]}
  */

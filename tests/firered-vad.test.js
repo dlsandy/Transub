@@ -36,7 +36,12 @@ import json
 from transub_engine.models_catalog import get_spec, resolve_asr_backend
 from transub_engine.runtime_extras import extras_for_model_ids, EXTRA_PACKAGES
 from transub_engine.asr.whisper_fw import _resolve_island_vad_backend
-from transub_engine.asr.qwen3_asr import _island_vad_backend, wants_forced_aligner
+from transub_engine.asr.speech_spans import _asr_uses_island_vad_path
+from transub_engine.asr.qwen3_asr import (
+    _aligner_island_backend,
+    _island_vad_backend,
+    wants_forced_aligner,
+)
 from transub_engine.vad.firered_vad_seg import firered_vad_available, _seconds_to_frames
 spec = get_spec('firered-vad')
 from transub_engine.models_catalog import SHIPPED_WITH_APP
@@ -59,6 +64,18 @@ print(json.dumps({
     'qwen_firered': _island_vad_backend('firered'),
     'qwen_ten': _island_vad_backend(None),
     'want_align_firered': wants_forced_aligner('firered'),
+    'aligner_island_firered_vad': _aligner_island_backend(
+        'firered-vad', 'qwen3-forced-aligner-0.6b'
+    ),
+    'aligner_island_silero': _aligner_island_backend(
+        'silero-vad', 'qwen3-forced-aligner-0.6b'
+    ),
+    'aligner_island_ten': _aligner_island_backend(
+        'silero-vad', 'qwen3-forced-aligner-0.6b'
+    ),
+    'path_large_v2_firered': _asr_uses_island_vad_path('whisper-large-v2', 'firered'),
+    'path_large_v2_ten': _asr_uses_island_vad_path('whisper-large-v2', 'ten'),
+    'path_ja15_firered': _asr_uses_island_vad_path('whisper-ja-1.5b', 'firered'),
     'frames_6s': _seconds_to_frames(6.0),
     'avail': firered_vad_available(),
 }))
@@ -80,6 +97,14 @@ print(json.dumps({
         assert.strictEqual(j.qwen_firered, 'firered');
         assert.strictEqual(j.qwen_ten, 'ten');
         assert.strictEqual(j.want_align_firered, false);
+        assert.strictEqual(j.aligner_island_firered_vad, 'firered');
+        // ForcedAligner must not fall back to primary 90s windows (soft-AV 漏句).
+        assert.strictEqual(j.aligner_island_silero, 'ten');
+        assert.strictEqual(j.aligner_island_ten, 'ten');
+        // JA large-v2 preset must take FireRed islands (not Silero+CT2 stamps).
+        assert.strictEqual(j.path_large_v2_firered, true);
+        assert.strictEqual(j.path_large_v2_ten, false);
+        assert.strictEqual(j.path_ja15_firered, true);
         assert.strictEqual(j.frames_6s, 600);
         assert.strictEqual(typeof j.avail, 'boolean');
     });

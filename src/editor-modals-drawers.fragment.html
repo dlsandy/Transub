@@ -41,9 +41,9 @@
                     <button type="button" id="editorGlossaryAddBtn"><i class="fa fa-plus mr-1"></i>新建</button>
                     <button type="button" id="editorGlossaryImportBtn">导入</button>
                     <button type="button" id="editorGlossaryAnilistBtn" title="从 anilist.co 动漫资料库拉取角色日文名，写入 ASR 专名提示">导入角色名</button>
-                    <button type="button" id="editorGlossaryBadPoolBtn" title="从本地坏句池导入 ASR 修正条目">坏句池</button>
                     <button type="button" id="editorGlossaryExportBtn">导出</button>
                     <button type="button" id="editorGlossaryScanBtn"><i class="fa fa-search mr-1"></i>扫描</button>
+                    <button type="button" id="editorGlossaryGendictBtn" title="从原文扫敬称/片假名专名草稿，确认后写入术语表">扫专名草稿</button>
                 </div>
                 <details class="glossary-import-help" id="editorGlossaryImportHelp">
                     <summary>如何从动漫资料库导入角色名？</summary>
@@ -60,9 +60,60 @@
                         <label for="editorGlossaryAliases">别名（逗号 / 换行分隔）</label>
                         <input type="text" id="editorGlossaryAliases" spellcheck="false" placeholder="Harry Potter, 哈利・波特">
                     </div>
+                    <div class="glossary-form-row glossary-form-meta">
+                        <label for="editorGlossaryRole">类型
+                            <select id="editorGlossaryRole">
+                                <option value="term">普通术语</option>
+                                <option value="character">角色名</option>
+                                <option value="preReplace">ASR 误听替换</option>
+                                <option value="postReplace">条件译后</option>
+                            </select>
+                        </label>
+                        <label for="editorGlossaryPromptInject">提示注入
+                            <select id="editorGlossaryPromptInject">
+                                <option value="hit">仅命中时</option>
+                                <option value="always">常驻（角色建议）</option>
+                                <option value="never">不注入</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div>
+                        <label for="editorGlossaryNote">备注 / 角色设定</label>
+                        <input type="text" id="editorGlossaryNote" spellcheck="false" placeholder="例如：女·老师·对主角用「你」">
+                    </div>
+                    <details id="editorGlossaryPostReplaceDetails" class="glossary-post-replace">
+                        <summary>条件译后（可选）</summary>
+                        <p class="glossary-post-replace-hint">译后硬替换：满足原文/译文条件时把「旧→新」写死。角色类型也可挂规则（如去掉「××小姐」）。</p>
+                        <label class="glossary-post-replace-enable">
+                            <input type="checkbox" id="editorGlossaryPostReplaceEnabled" checked> 启用本条条件译后
+                        </label>
+                        <div class="glossary-form-row glossary-form-meta">
+                            <label for="editorGlossaryPostSrcInc">原文须含
+                                <input type="text" id="editorGlossaryPostSrcInc" spellcheck="false" placeholder="さん，ちゃん">
+                            </label>
+                            <label for="editorGlossaryPostSrcExc">原文不含
+                                <input type="text" id="editorGlossaryPostSrcExc" spellcheck="false" placeholder="">
+                            </label>
+                        </div>
+                        <div class="glossary-form-row glossary-form-meta">
+                            <label for="editorGlossaryPostDstInc">译文须含
+                                <input type="text" id="editorGlossaryPostDstInc" spellcheck="false" placeholder="小姐">
+                            </label>
+                            <label for="editorGlossaryPostDstExc">译文不含
+                                <input type="text" id="editorGlossaryPostDstExc" spellcheck="false" placeholder="">
+                            </label>
+                        </div>
+                        <label for="editorGlossaryPostAudioEvent">音效事件（可选，逗号分隔）
+                            <input type="text" id="editorGlossaryPostAudioEvent" spellcheck="false" placeholder="LAUGHTER">
+                        </label>
+                        <label for="editorGlossaryPostReplacePairs">替换对（每行 旧→新）
+                            <textarea id="editorGlossaryPostReplacePairs" rows="3" spellcheck="false" placeholder="芙兰小姐→芙兰"></textarea>
+                        </label>
+                    </details>
                     <div class="glossary-form-row">
                         <label><input type="checkbox" id="editorGlossaryCaseSensitive"> 区分大小写</label>
                         <label><input type="checkbox" id="editorGlossaryEnabled" checked> 启用</label>
+                        <label title="转写后按别名→标准写法替换误听"><input type="checkbox" id="editorGlossaryAsrReplace"> ASR 误听替换</label>
                         <button type="button" id="editorGlossarySaveEntryBtn" class="text-xs px-2 py-1 border rounded">保存条目</button>
                         <button type="button" id="editorGlossaryDeleteEntryBtn" class="text-xs px-2 py-1 border rounded text-red-600">删除</button>
                     </div>
@@ -72,6 +123,23 @@
                 <div class="editor-modal-actions">
                     <button type="button" id="editorGlossaryCancel" data-glossary-dismiss>关闭</button>
                     <button type="button" id="editorGlossaryConfirm">统一全部别名</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorGendictConfirmModal" class="editor-modal gendict-confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorGendictConfirmTitle">
+            <div class="editor-modal-backdrop" data-gendict-dismiss></div>
+            <div class="editor-modal-panel gendict-confirm-panel">
+                <h3 id="editorGendictConfirmTitle">确认专名草稿</h3>
+                <p id="editorGendictConfirmIntro" class="gendict-confirm-intro"></p>
+                <div class="gendict-toolbar">
+                    <button type="button" id="editorGendictSelectAllBtn" class="text-xs px-2 py-1 border rounded">全选</button>
+                    <button type="button" id="editorGendictSelectNoneBtn" class="text-xs px-2 py-1 border rounded">全不选</button>
+                </div>
+                <div id="editorGendictDraftList" class="gendict-draft-list" role="list"></div>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorGendictConfirmCancel" data-gendict-dismiss>取消</button>
+                    <button type="button" id="editorGendictConfirmBtn" class="primary">写入勾选项</button>
                 </div>
             </div>
         </div>

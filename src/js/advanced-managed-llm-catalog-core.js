@@ -12,8 +12,8 @@
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function advancedManagedLlmCatalogFactory() {
     const DEFAULT_SERVER_PORT = 39281;
-    /** Pinned binary build (b####). Semver stubs like v0.4.1 have no llama-*-bin-* zips. */
-    const LLAMA_CPP_TAG = 'b11029';
+    /** Pinned llama.cpp build (nightly zip). Semver tags like v0.7.0 have no llama-*-bin-* zips. */
+    const LLAMA_CPP_TAG = 'b12032';
     const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
     const OLLAMA_DOWNLOAD_URL = 'https://ollama.com/download';
     /** 未解锁 Pro 时目录可见的轻量模型上限（十亿）；智能翻译仍需 Pro */
@@ -45,16 +45,22 @@
                         const m = String(e.id || '').match(/(\d+(?:\.\d+)?)b/i);
                         return m ? Number(m[1]) : 1.5;
                     })();
+                const activeBillion = Number(e.activeParamBillion);
                 const isMulti = String(e.promptFamily || e.family || '').toLowerCase() === 'translategemma'
                     || String(e.promptFamily || '').toLowerCase() === 'translategemmasub'
                     || String(e.promptFamily || '').toLowerCase() === 'hunyuan'
+                    || String(e.promptFamily || '').toLowerCase() === 'hymt'
                     || /translategemma|translate[-_]?gemma|hunyuan|hy-?mt/i.test(String(e.id || ''));
                 const baseNote = e.note || (isMulti ? '多语 MT' : '日→简中');
                 const pf = String(e.promptFamily || '').trim().toLowerCase();
-                // Sakura / GalTransl stay free at all sizes; other MT packs still use ≤7B.
-                const sakuraGalFree = pf === 'sakura' || pf === 'galtransl'
-                    || /galtransl/i.test(String(e.id || ''))
+                // Sakura / GalTransl / Murasaki stay free at all sizes; other MT packs still use ≤7B
+                // (MoE: gate on active params when declared).
+                const sakuraGalFree = pf === 'sakura' || pf === 'galtransl' || pf === 'murasaki'
+                    || /galtransl|murasaki/i.test(String(e.id || ''))
                     || /^sakura-/i.test(String(e.id || ''));
+                const activeFree = Number.isFinite(activeBillion) && activeBillion > 0
+                    && activeBillion <= FREE_PIPELINE_TRANSLATE_MAX_B;
+                const ls = e.llamaServer && typeof e.llamaServer === 'object' ? { ...e.llamaServer } : undefined;
                 return {
                     id: e.id,
                     name: e.name,
@@ -65,14 +71,23 @@
                     localOnly: e.localOnly === true,
                     sizeHint: e.sizeHint,
                     sizeBytes: e.sizeBytes,
+                    weightGiB: Number.isFinite(Number(e.weightGiB)) && Number(e.weightGiB) > 0
+                        ? Number(e.weightGiB)
+                        : undefined,
                     ramHint: e.ramHint,
                     note: `${baseNote}；免费推理翻译可用；不适合智能翻译 / 语境与影片重构`,
                     paramBillion: billion,
-                    freePipelineTranslate: sakuraGalFree || billion <= FREE_PIPELINE_TRANSLATE_MAX_B,
+                    activeParamBillion: Number.isFinite(activeBillion) && activeBillion > 0
+                        ? activeBillion
+                        : undefined,
+                    moe: e.moe === true,
+                    freePipelineTranslate: sakuraGalFree || billion <= FREE_PIPELINE_TRANSLATE_MAX_B || activeFree,
                     translateOnly: true,
                     recommended: false,
+                    promptFamily: e.promptFamily || undefined,
                     contextSize: Number.isFinite(Number(e.contextSize)) ? Number(e.contextSize) : undefined,
                     llamaJinja: e.llamaJinja === true,
+                    llamaServer: ls,
                     ollamaTag: e.ollamaTag || undefined,
                     languages: Array.isArray(e.languages) ? e.languages.slice() : undefined,
                 };
@@ -117,7 +132,8 @@
     /**
      * 固定版本的 llama.cpp 预编译包。
      * Windows x64：静态回退为 Vulkan；有 NVIDIA 时由 preferCuda + 驱动 CUDA 主版本选默认：
-     * CUDA ≥13 → CUDA 13；CUDA ≥12 → CUDA 12。有 AMD 时 preferRocm → ROCm。
+     * CUDA ≥13 → CUDA 13；CUDA ≥12 → CUDA 12。有 AMD 时 preferRocm → ROCm；
+     * 有 Intel Arc 时 preferSycl → SYCL。
      */
     const WIN_VULKAN_X64 = Object.freeze({
         id: 'win-vulkan-x64',
@@ -127,7 +143,7 @@
         archive: 'zip',
         exeName: 'llama-server.exe',
         sizeHint: '约 34 MB',
-        note: '兼容多数 GPU（含 AMD），无需单独安装 CUDA / ROCm',
+        note: '兼容多数 GPU（含 AMD / Intel Arc），无需单独安装 CUDA / ROCm / oneAPI',
     });
     const WIN_CUDA12_X64 = Object.freeze({
         id: 'win-cuda12-x64',
@@ -162,6 +178,16 @@
         sizeHint: '约 233 MB',
         note: '需 AMD 显卡；通常还需本机安装 ROCm/HIP（与 Adrenalin 驱动分开）；失败可改用 Vulkan',
     });
+    const WIN_SYCL_X64 = Object.freeze({
+        id: 'win-sycl-x64',
+        label: 'Windows x64 · SYCL（Intel Arc）',
+        backend: 'sycl',
+        url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/llama-${LLAMA_CPP_TAG}-bin-win-sycl-x64.zip`,
+        archive: 'zip',
+        exeName: 'llama-server.exe',
+        sizeHint: '约 148 MB',
+        note: '需 Intel Arc（含部分内置 Arc）；包内含 SYCL 运行库，无需另装 oneAPI；失败可改用 Vulkan',
+    });
     const UBUNTU_VULKAN_X64 = Object.freeze({
         id: 'ubuntu-vulkan-x64',
         label: 'Linux x64 · Vulkan',
@@ -170,7 +196,7 @@
         archive: 'tar.gz',
         exeName: 'llama-server',
         sizeHint: '约 31 MB',
-        note: '兼容多数 GPU（含 AMD），无需单独安装 ROCm',
+        note: '兼容多数 GPU（含 AMD / Intel Arc），无需单独安装 ROCm / oneAPI',
     });
     const UBUNTU_ROCM_X64 = Object.freeze({
         id: 'ubuntu-rocm-x64',
@@ -181,6 +207,16 @@
         exeName: 'llama-server',
         sizeHint: '约 208 MB',
         note: '需 AMD 显卡与本机 ROCm；失败可改用 Vulkan',
+    });
+    const UBUNTU_SYCL_X64 = Object.freeze({
+        id: 'ubuntu-sycl-x64',
+        label: 'Linux x64 · SYCL（Intel Arc）',
+        backend: 'sycl',
+        url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/llama-${LLAMA_CPP_TAG}-bin-ubuntu-sycl-fp16-x64.tar.gz`,
+        archive: 'tar.gz',
+        exeName: 'llama-server',
+        sizeHint: '约 62 MB',
+        note: '需 Intel Arc 与较新驱动；失败可改用 Vulkan',
     });
 
     /** 平台默认包（向后兼容 RUNTIME_PACKAGES[platformKey]） */
@@ -218,8 +254,10 @@
 
     /** 同平台可选变体（仅列出可切换的；缺省回退 RUNTIME_PACKAGES） */
     const RUNTIME_PACKAGE_VARIANTS = Object.freeze({
-        'win32-x64': Object.freeze([WIN_VULKAN_X64, WIN_CUDA12_X64, WIN_CUDA13_X64, WIN_ROCM_X64]),
-        'linux-x64': Object.freeze([UBUNTU_VULKAN_X64, UBUNTU_ROCM_X64]),
+        'win32-x64': Object.freeze([
+            WIN_VULKAN_X64, WIN_CUDA12_X64, WIN_CUDA13_X64, WIN_ROCM_X64, WIN_SYCL_X64,
+        ]),
+        'linux-x64': Object.freeze([UBUNTU_VULKAN_X64, UBUNTU_ROCM_X64, UBUNTU_SYCL_X64]),
     });
 
     /** id → 包（含变体） */
@@ -451,7 +489,7 @@
             sizeBytes: 5851109120,
             weightGiB: 5.9,
             ramHint: '建议 ≥12 GB 内存 · 约 8GB 显存可近全载',
-            note: 'Huihui 消融拒答；Q5_K_M 推荐；语意优先、通顺为辅；建议开剧情贴合润色（上限 36）与忠实复核；关思考（需 Pro）',
+            note: 'Huihui 消融拒答；Q5_K_M 推荐；语意优先、通顺为辅；建议开剧情贴合润色（默认 72 / 上限 96）与忠实复核；关思考（需 Pro）',
             paramBillion: 8,
             recommended: true,
             draftModelId: 'qwen3-1.7b',
@@ -640,6 +678,67 @@
             },
         },
         {
+            id: 'qwen38-27b',
+            name: 'Qwen3.8 27B UD-Q4_K_M',
+            family: 'qwen',
+            familyLabel: 'Qwen',
+            fileName: 'Qwen3.8-27B-UD-Q4_K_M.gguf',
+            ggufUrl: 'https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q4_K_M.gguf',
+            sizeHint: '约 15.3 GB',
+            sizeBytes: 16464440224,
+            weightGiB: 15.3,
+            ramHint: '建议 ≥32 GB 内存；16GB 显存可用 --n-cpu-ffn 混合；24GB 更易近全载',
+            note: '稠密 27B 视觉语言模型（文本 GGUF）；智能翻译 / 润色需 Pro；关思考。显存不足时用 --n-cpu-ffn（需 llama-server ≥ b10645；目录目标 b12032）',
+            paramBillion: 27,
+            freePipelineTranslate: false,
+            draftModelId: 'qwen35-2b-abliterated',
+            llamaServer: {
+                flashAttn: true,
+                reasoning: 'off',
+                // Dense hybrid: first-N FFN on CPU (not MoE --n-cpu-moe).
+                nCpuFfn: 12,
+                nGpuLayers: 99,
+            },
+            chatDefaults: {
+                disableThinking: true,
+                temperature: 0.16,
+                polishTemperature: 0.24,
+                topP: 0.8,
+                repeatPenalty: 1.08,
+                frequencyPenalty: 0.12,
+            },
+        },
+        {
+            id: 'qwen38-27b-iq4xs',
+            name: 'Qwen3.8 27B UD-IQ4_XS',
+            family: 'qwen',
+            familyLabel: 'Qwen',
+            fileName: 'Qwen3.8-27B-UD-IQ4_XS.gguf',
+            ggufUrl: 'https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ4_XS.gguf',
+            sizeHint: '约 13.3 GB',
+            sizeBytes: 14252845984,
+            weightGiB: 13.3,
+            ramHint: '建议 ≥24 GB 内存；10–16GB 显存用 --n-cpu-ffn 混合',
+            note: '稠密 27B · Unsloth IQ4_XS；智能翻译需 Pro；关思考。比 Q4_K_M 更易塞进中端显存（目录目标 b12032）',
+            paramBillion: 27,
+            freePipelineTranslate: false,
+            draftModelId: 'qwen35-2b-abliterated',
+            llamaServer: {
+                flashAttn: true,
+                reasoning: 'off',
+                nCpuFfn: 8,
+                nGpuLayers: 99,
+            },
+            chatDefaults: {
+                disableThinking: true,
+                temperature: 0.16,
+                polishTemperature: 0.24,
+                topP: 0.8,
+                repeatPenalty: 1.08,
+                frequencyPenalty: 0.12,
+            },
+        },
+        {
             id: 'qwen35-4b',
             name: 'Qwen3.5 4B',
             family: 'qwen',
@@ -649,7 +748,7 @@
             sizeHint: '约 2.8 GB',
             sizeBytes: 3013027808,
             ramHint: '建议 ≥6 GB 内存',
-            note: 'Qwen3.5 混合注意力；轻量 ≤7B，可浏览下载；智能翻译需 Pro；字幕任务关思考。需较新 llama-server（目录目标 b11029+）',
+            note: 'Qwen3.5 混合注意力；轻量 ≤7B，可浏览下载；智能翻译需 Pro；字幕任务关思考。需较新 llama-server（目录目标 b12032+）',
             paramBillion: 4,
             freePipelineTranslate: true,
             chatDefaults: {
@@ -761,7 +860,7 @@
             sizeHint: '约 1.0 GB',
             sizeBytes: 1107457600,
             ramHint: '建议 ≥4 GB 内存',
-            note: '词元星火端侧；混合注意力、原生长上下文；轻量 ≤7B，可浏览下载；智能翻译需 Pro；字幕任务自动关思考。需 llama.cpp ≥ b10828（spark2_5；目录目标 b11029）',
+            note: '词元星火端侧；混合注意力、原生长上下文；轻量 ≤7B，可浏览下载；智能翻译需 Pro；字幕任务自动关思考。需 llama.cpp ≥ b10828（spark2_5；目录目标 b12032）',
             paramBillion: 1.7,
             freePipelineTranslate: true,
             ollamaTag: 'SparkLLM/Spark-X2.5-1.7B',
@@ -779,7 +878,7 @@
             sizeHint: '约 2.4 GB',
             sizeBytes: 2600224096,
             ramHint: '建议 ≥6 GB 内存',
-            note: '词元星火端侧；中文/多语与指令跟随强；轻量 ≤7B，可浏览下载；智能翻译需 Pro；字幕任务自动关思考。需 llama.cpp ≥ b10828（spark2_5；目录目标 b11029）',
+            note: '词元星火端侧；中文/多语与指令跟随强；轻量 ≤7B，可浏览下载；智能翻译需 Pro；字幕任务自动关思考。需 llama.cpp ≥ b10828（spark2_5；目录目标 b12032）',
             paramBillion: 4,
             freePipelineTranslate: true,
             draftModelId: 'spark-x25-1.7b',
@@ -1140,7 +1239,7 @@
             sizeHint: '约 3.2 GB',
             sizeBytes: 3427874272,
             ramHint: '建议 ≥6 GB 内存',
-            note: 'Huihui 消融拒答；Gemma 4 边缘档（有效约 2B）；文本 GGUF（勿绑 mmproj）；智能翻译需 Pro；多语/英文优于日→中软声。需 llama-server ≥ b8637（目录目标 b11029）',
+            note: 'Huihui 消融拒答；Gemma 4 边缘档（有效约 2B）；文本 GGUF（勿绑 mmproj）；智能翻译需 Pro；多语/英文优于日→中软声。需 llama-server ≥ b8637（目录目标 b12032）',
             paramBillion: 2,
             freePipelineTranslate: true,
             chatDefaults: {
@@ -1163,7 +1262,7 @@
             sizeBytes: 5335286272,
             weightGiB: 5.0,
             ramHint: '建议 ≥10 GB 内存 · 约 8GB 显存可近全载',
-            note: 'Huihui 消融拒答；Gemma 4 边缘档（有效约 4B）；文本 GGUF（勿绑 mmproj）；智能翻译需 Pro；少拒答通用对话。需 llama-server ≥ b8637（目录目标 b11029）',
+            note: 'Huihui 消融拒答；Gemma 4 边缘档（有效约 4B）；文本 GGUF（勿绑 mmproj）；智能翻译需 Pro；少拒答通用对话。需 llama-server ≥ b8637（目录目标 b12032）',
             paramBillion: 4,
             freePipelineTranslate: true,
             draftModelId: 'gemma4-e2b-abliterated',
@@ -1187,7 +1286,7 @@
             sizeBytes: 7381382720,
             weightGiB: 6.9,
             ramHint: '建议 ≥14 GB 内存 · 约 10GB 显存可近全载',
-            note: 'Huihui 消融拒答；Gemma 4 12B 文本 GGUF（勿绑 mmproj）；智能翻译 / 润色少拒答（需 Pro）；多语强于日→中软声。需 llama-server ≥ b8637（目录目标 b11029）',
+            note: 'Huihui 消融拒答；Gemma 4 12B 文本 GGUF（勿绑 mmproj）；智能翻译 / 润色少拒答（需 Pro）；多语强于日→中软声。需 llama-server ≥ b8637（目录目标 b12032）',
             paramBillion: 12,
             draftModelId: 'gemma4-e2b-abliterated',
             chatDefaults: {
@@ -1210,7 +1309,7 @@
             sizeBytes: 16796011680,
             weightGiB: 15.6,
             ramHint: '建议 ≥24 GB 内存；10GB 显存需部分卸内存 / --n-cpu-moe',
-            note: 'Huihui 消融拒答；Gemma 4 MoE（总参 26B、激活约 4B）；文本 GGUF（勿绑 mmproj）；智能翻译少拒答（需 Pro）。需 llama-server ≥ b8637（目录目标 b11029）',
+            note: 'Huihui 消融拒答；Gemma 4 MoE（总参 26B、激活约 4B）；文本 GGUF（勿绑 mmproj）；智能翻译少拒答（需 Pro）。需 llama-server ≥ b8637（目录目标 b12032）',
             paramBillion: 26,
             activeParamBillion: 4,
             moe: true,
@@ -1467,7 +1566,7 @@
     /**
      * @param {string} [platform]
      * @param {string} [arch]
-     * @param {{ preferCuda?: boolean, preferRocm?: boolean, cudaVersion?: string }} [hints]
+     * @param {{ preferCuda?: boolean, preferRocm?: boolean, preferSycl?: boolean, cudaVersion?: string }} [hints]
      */
     function getDefaultRuntimeId(platform = detectPlatform(), arch = detectArch(), hints = {}) {
         const key = platformKey(platform, arch);
@@ -1488,15 +1587,92 @@
                 return 'ubuntu-rocm-x64';
             }
         }
+        if (hints && hints.preferSycl) {
+            if (key === 'win32-x64' && RUNTIME_PACKAGE_BY_ID['win-sycl-x64']) {
+                return 'win-sycl-x64';
+            }
+            if (key === 'linux-x64' && RUNTIME_PACKAGE_BY_ID['ubuntu-sycl-x64']) {
+                return 'ubuntu-sycl-x64';
+            }
+        }
         return RUNTIME_PACKAGES[key]?.id || '';
+    }
+
+    /**
+     * Download/install target: discrete GPU → matching CUDA/ROCm/SYCL; otherwise Vulkan.
+     * A saved Vulkan id does not stick when a GPU is present.
+     * @param {string} [savedId]
+     * @param {string} [platform]
+     * @param {string} [arch]
+     * @param {{ preferCuda?: boolean, preferRocm?: boolean, preferSycl?: boolean, cudaVersion?: string }} [hints]
+     */
+    function pickInstallRuntimeId(savedId = '', platform = detectPlatform(), arch = detectArch(), hints = {}) {
+        const saved = String(savedId || '').trim();
+        const hasGpu = !!(hints && (hints.preferCuda || hints.preferRocm || hints.preferSycl));
+        if (hasGpu) {
+            return getDefaultRuntimeId(platform, arch, hints) || '';
+        }
+        if (saved && !/vulkan/i.test(saved)) {
+            const pkg = getRuntimePackage(platform, arch, saved, {});
+            if (pkg && (pkg.backend === 'cuda' || pkg.backend === 'rocm' || pkg.backend === 'sycl')) {
+                return pkg.id;
+            }
+        }
+        return getDefaultRuntimeId(platform, arch, {}) || '';
+    }
+
+    function runtimeAccelFamily(runtimeId) {
+        const s = String(runtimeId || '').toLowerCase();
+        if (s.includes('cuda')) return 'cuda';
+        if (s.includes('rocm')) return 'rocm';
+        if (s.includes('sycl')) return 'sycl';
+        if (s.includes('vulkan')) return 'vulkan';
+        return '';
+    }
+
+    function cudaMajorFromRuntimeId(runtimeId) {
+        const m = String(runtimeId || '').match(/cuda(\d+)/i);
+        return m ? Number(m[1]) : 0;
+    }
+
+    /**
+     * Installed llama-server already satisfies the preferred package.
+     * CUDA 13 covers a CUDA 12 preference; CUDA/ROCm/SYCL must not be replaced by Vulkan.
+     * @param {string} installedId
+     * @param {string} preferredId
+     */
+    function isInstalledRuntimeAcceptable(installedId, preferredId) {
+        const inst = String(installedId || '').trim();
+        const pref = String(preferredId || '').trim();
+        if (!inst) return false;
+        if (!pref || inst === pref) return true;
+        const ib = runtimeAccelFamily(inst);
+        const pb = runtimeAccelFamily(pref);
+        if (!ib || !pb) return false;
+        if (ib === 'cuda' && pb === 'cuda') {
+            const im = cudaMajorFromRuntimeId(inst);
+            const pm = cudaMajorFromRuntimeId(pref);
+            if (!im || !pm) return true;
+            return im >= pm;
+        }
+        if (ib === pb) return true;
+        if ((ib === 'cuda' || ib === 'rocm' || ib === 'sycl') && pb === 'vulkan') return true;
+        return false;
     }
 
     function backendRank(backend, preferredBackend) {
         const b = String(backend || '');
         if (preferredBackend && b === preferredBackend) return 0;
-        if (b === 'cuda' || b === 'rocm') return 1;
+        if (b === 'cuda' || b === 'rocm' || b === 'sycl') return 1;
         if (b === 'vulkan') return 2;
         return 3;
+    }
+
+    function preferredBackendFromHints(hints = {}) {
+        if (hints.preferCuda) return 'cuda';
+        if (hints.preferRocm) return 'rocm';
+        if (hints.preferSycl) return 'sycl';
+        return '';
     }
 
     function listRuntimePackages(platform = detectPlatform(), arch = detectArch(), hints = {}) {
@@ -1511,9 +1687,7 @@
         }
         if (hints && list.length > 1) {
             const preferredId = getDefaultRuntimeId(platform, arch, hints);
-            const preferredBackend = hints.preferCuda
-                ? 'cuda'
-                : (hints.preferRocm ? 'rocm' : '');
+            const preferredBackend = preferredBackendFromHints(hints);
             if (preferredId || preferredBackend) {
                 list.sort((a, b) => {
                     if (preferredId) {
@@ -1563,7 +1737,7 @@
     }
 
 /**
- * Normalize llama.cpp release tag used for binary downloads (e.g. "b11029").
+ * Normalize llama.cpp release tag used for binary downloads (e.g. "b12032").
  * Semver-only tags like "v0.4.1" are rejected: GitHub marks b#### builds as
  * prereleases, so /releases/latest is often a stub without llama-*-bin-* zips.
  * @param {string} tag
@@ -2008,6 +2182,12 @@ function normalizeLlamaCppTag(tag) {
         if (/^transub-ja/i.test(activeModelId)) {
             activeModelId = 'sakura-1.5b';
         }
+        try {
+            const sakuraCat = require('./sakura-mt-catalog-core');
+            if (activeModelId && sakuraCat.remapRetiredMtModelId) {
+                activeModelId = sakuraCat.remapRetiredMtModelId(activeModelId, activeModelId);
+            }
+        } catch { /* optional */ }
         const pulledFiltered = pulled.filter((id) => !/^transub-ja/i.test(String(id || '')));
         return {
             activeModelId,
@@ -2056,11 +2236,11 @@ function normalizeLlamaCppTag(tag) {
         const b = Number(entry.paramBillion);
         if (!Number.isFinite(b) || b <= 0) return false;
         if (b <= FREE_PIPELINE_TRANSLATE_MAX_B) return true;
-        // Sakura / GalTransl remain free at large sizes; Hy-MT / TranslateGemma still cap at ≤7B.
+        // Sakura / GalTransl / Murasaki remain free at large sizes; Hy-MT / TranslateGemma still cap at ≤7B.
         const pf = String(entry.promptFamily || '').trim().toLowerCase();
-        if (pf === 'sakura' || pf === 'galtransl') return true;
+        if (pf === 'sakura' || pf === 'galtransl' || pf === 'murasaki') return true;
         const id = String(entry.id || '').trim().toLowerCase();
-        return /galtransl/i.test(id)
+        return /galtransl|murasaki/i.test(id)
             || /^sakura-/i.test(id);
     }
 
@@ -2083,6 +2263,8 @@ function normalizeLlamaCppTag(tag) {
             if (
                 fam === 'sakura'
                 || fam === 'galtransl'
+                || fam === 'murasaki'
+                || fam === 'orion'
                 || fam === 'hymt'
                 || fam === 'hy-mt'
                 || fam === 'translategemma'
@@ -2094,6 +2276,8 @@ function normalizeLlamaCppTag(tag) {
             if (
                 pf === 'sakura'
                 || pf === 'galtransl'
+                || pf === 'murasaki'
+                || pf === 'orion'
                 || pf === 'hymt'
                 || pf === 'translategemma'
                 || pf === 'translategemmasub'
@@ -2108,8 +2292,10 @@ function normalizeLlamaCppTag(tag) {
             || '',
         ).trim().toLowerCase();
         if (!raw) return false;
+        // Retired Murasaki F16 — not in catalog; do not treat as usable translate-only.
+        if (/^murasaki-4b-v03-f16$/i.test(raw)) return false;
         return /(^|[/_\s.-])sakura([/_\s.-]|$)/i.test(raw)
-            || /galtransl/i.test(raw)
+            || /galtransl|murasaki|orion/i.test(raw)
             || /translategemma|translate[-_]?gemma/i.test(raw)
             || /^hy-?mt/i.test(raw)
             || /hunyuan|chimera/i.test(raw);
@@ -2168,8 +2354,59 @@ function normalizeLlamaCppTag(tag) {
     }
 
     /**
+     * Strip trailing quant tags from catalog ids so Q4/Q5 of the same GGUF line share a key.
+     * e.g. qwen35-9b-abliterated-q5 → qwen35-9b-abliterated
+     * @param {string|object|null|undefined} modelIdOrEntry
+     * @returns {string}
+     */
+    function modelQuantFamilyKey(modelIdOrEntry) {
+        const entry = (modelIdOrEntry && typeof modelIdOrEntry === 'object')
+            ? modelIdOrEntry
+            : findCatalogEntry(modelIdOrEntry);
+        const id = String(entry?.id || modelIdOrEntry || '').trim().toLowerCase();
+        if (!id) return '';
+        return id.replace(/-q[2-8](?:[_-]?k[_-]?[msl])?$/i, '');
+    }
+
+    /**
+     * File stem without `.Q4_K_M.gguf` / `.Q5_K_M.gguf` so sibling quants match.
+     * @param {string|object|null|undefined} modelIdOrEntry
+     * @returns {string}
+     */
+    function modelFileFamilyKey(modelIdOrEntry) {
+        const entry = (modelIdOrEntry && typeof modelIdOrEntry === 'object')
+            ? modelIdOrEntry
+            : findCatalogEntry(modelIdOrEntry);
+        const fn = String(entry?.fileName || '').trim().toLowerCase();
+        if (!fn) return '';
+        return fn
+            .replace(/\.q[2-8][^\\/]*\.gguf$/i, '')
+            .replace(/\.gguf$/i, '');
+    }
+
+    /**
+     * Same Instruct line, different GGUF quant (e.g. Q4 vs Q5 abliterated 9B).
+     * @param {string|object|null|undefined} a
+     * @param {string|object|null|undefined} b
+     * @returns {boolean}
+     */
+    function isSmartTranslateQuantSibling(a, b) {
+        const ea = (a && typeof a === 'object') ? a : findCatalogEntry(a);
+        const eb = (b && typeof b === 'object') ? b : findCatalogEntry(b);
+        if (!ea?.id || !eb?.id) return false;
+        if (String(ea.id).toLowerCase() === String(eb.id).toLowerCase()) return false;
+        if (isTranslateOnlyModel(ea) || isTranslateOnlyModel(eb)) return false;
+        const idKeyA = modelQuantFamilyKey(ea);
+        const idKeyB = modelQuantFamilyKey(eb);
+        if (idKeyA && idKeyA === idKeyB) return true;
+        const fileA = modelFileFamilyKey(ea);
+        const fileB = modelFileFamilyKey(eb);
+        return !!(fileA && fileA === fileB);
+    }
+
+    /**
      * If the requested Instruct is not among installedIds, pick a capable installed one.
-     * Prefers ~7B.
+     * Prefers same-line quant sibling, then ~7B.
      * - forChat / chatCapableOnly: never keep Sakura/Gal/Hy-MT/TG/Hunyuan — remap to chat.
      * - otherwise: explicit translate-only kept only when that id is in installedIds
      *   (sentence-MT picker); chat-only installed lists fall through to remap.
@@ -2203,6 +2440,20 @@ function normalizeLlamaCppTag(tag) {
         const prefer = (forChat && isTranslateOnlyModel(requested)) ? '' : requested;
         const hit = capable.find((id) => id.toLowerCase() === prefer.toLowerCase());
         if (hit) return hit;
+        // Prefer another quant of the same Instruct line (Q4↔Q5) over an unrelated ~7B.
+        if (prefer) {
+            const siblings = capable.filter((id) => isSmartTranslateQuantSibling(prefer, id));
+            if (siblings.length) {
+                return siblings.slice().sort((a, b) => {
+                    const ea = findCatalogEntry(a);
+                    const eb = findCatalogEntry(b);
+                    if (!!eb?.recommended !== !!ea?.recommended) return eb?.recommended ? 1 : -1;
+                    const wa = Number(ea?.weightGiB) || 0;
+                    const wb = Number(eb?.weightGiB) || 0;
+                    return (wb - wa) || a.localeCompare(b);
+                })[0] || '';
+            }
+        }
         const score = (id) => {
             const b = Number(findCatalogEntry(id)?.paramBillion);
             const n = Number.isFinite(b) && b > 0 ? b : 99;
@@ -2247,6 +2498,8 @@ function normalizeLlamaCppTag(tag) {
         CATALOG,
         platformKey,
         getDefaultRuntimeId,
+        pickInstallRuntimeId,
+        isInstalledRuntimeAcceptable,
         getRuntimePackage,
         listRuntimePackages,
         normalizeLlamaCppTag,
@@ -2270,6 +2523,9 @@ function normalizeLlamaCppTag(tag) {
         resolveSmartTranslateModelChoice,
         pickHybridBriefModelId,
         pickInstalledSmartTranslateModelId,
+        modelQuantFamilyKey,
+        modelFileFamilyKey,
+        isSmartTranslateQuantSibling,
         normalizeLlmSource,
         parseMinRamGbFromHint,
         getModelScaleTier,

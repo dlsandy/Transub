@@ -287,6 +287,17 @@ describe('transcript keep', () => {
         }
     });
 
+    it('flags mass t≈0 pile even when each cue was padded past 600ms', () => {
+        const { cuesLackValidTiming, cuesHaveBrokenTimeline } = require('../electron/transcript-keep');
+        const paddedZero = Array.from({ length: 12 }, (_, i) => ({
+            startMs: 0,
+            endMs: 1000,
+            text: `译${i}`,
+        }));
+        assert.strictEqual(cuesLackValidTiming(paddedZero), true);
+        assert.strictEqual(cuesHaveBrokenTimeline(paddedZero), true);
+    });
+
     it('borrows timeline from zh cues when source cues lack valid timing', () => {
         const dir = makeTempDir('transub-keep-timing-');
         try {
@@ -548,5 +559,103 @@ describe('transcript keep', () => {
         ];
         assert.strictEqual(cuesLookQcPacked(real), false);
         assert.strictEqual(cuesHaveBrokenTimeline(real), false);
+    });
+
+    it('still refreshes collapsed keep files when ZH texts diverge from JA', () => {
+        const {
+            shouldAttemptKeptTranscriptTimingRefresh,
+            cuesLackValidTiming,
+            cuesHeadDivergesFromSnapshot,
+        } = require('../electron/transcript-keep');
+        const collapsedJa = [];
+        const zh = [];
+        const engineJa = [];
+        for (let i = 0; i < 12; i += 1) {
+            collapsedJa.push({ startMs: 0, endMs: 500, text: `日本語${i}` });
+            zh.push({ startMs: 70000 + i * 2000, endMs: 71000 + i * 2000, text: `中文${i}` });
+            engineJa.push({ startMs: 70000 + i * 2000, endMs: 71000 + i * 2000, text: `日本語${i}` });
+        }
+        assert.strictEqual(cuesLackValidTiming(collapsedJa), true);
+        assert.strictEqual(cuesHeadDivergesFromSnapshot(zh, engineJa), true);
+        assert.strictEqual(shouldAttemptKeptTranscriptTimingRefresh(collapsedJa, {
+            zhCues: zh,
+            engineJa,
+        }), true);
+        assert.strictEqual(shouldAttemptKeptTranscriptTimingRefresh(engineJa, {
+            zhCues: zh,
+            engineJa,
+        }), false);
+    });
+
+    it('syncMediaAdjacentTranscript overwrites stale beside-media JA (START-655)', () => {
+        const { syncMediaAdjacentTranscript } = require('../electron/transcript-keep');
+        const dir = makeTempDir('transub-adj-');
+        const media = path.join(dir, 'clip.mp4');
+        const auth = path.join(dir, 'lib', 'clip.transcribe.srt');
+        const stale = path.join(dir, 'clip.transcribe.srt');
+        fs.mkdirSync(path.dirname(auth), { recursive: true });
+        fs.writeFileSync(media, Buffer.alloc(0));
+        const mk = (n, start0) => Array.from({ length: n }, (_, i) => {
+            const s = start0 + i * 2;
+            const pad = (x) => String(x).padStart(2, '0');
+            return `${i + 1}\n00:${pad(Math.floor(s / 60))}:${pad(s % 60)},000 --> 00:${pad(Math.floor(s / 60))}:${pad((s % 60) + 1)},000\n行${i}\n`;
+        }).join('\n');
+        fs.writeFileSync(auth, mk(12, 60), 'utf8');
+        fs.writeFileSync(stale, mk(16, 0), 'utf8');
+        const older = new Date(Date.now() - 3600_000);
+        fs.utimesSync(stale, older, older);
+        const res = syncMediaAdjacentTranscript(media, auth);
+        assert.strictEqual(res.ok, true, JSON.stringify(res));
+        assert.strictEqual(res.synced, true, JSON.stringify(res));
+        const { readSubtitleDocument } = require('../electron/extensions-bridge');
+        const out = readSubtitleDocument(stale);
+        assert.strictEqual(out.cues.length, 12);
+        assert.ok(out.cues[1].startMs >= 60000, `start=${out.cues[1].startMs}`);
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    });
+
+    it('syncMediaAdjacentTranscript does not create new beside-media .transcribe.srt', () => {
+        const { syncMediaAdjacentTranscript } = require('../electron/transcript-keep');
+        const dir = makeTempDir('transub-adj-nocreate-');
+        const media = path.join(dir, 'clip.mp4');
+        const auth = path.join(dir, 'lib', 'clip.transcribe.srt');
+        const beside = path.join(dir, 'clip.transcribe.srt');
+        fs.mkdirSync(path.dirname(auth), { recursive: true });
+        fs.writeFileSync(media, Buffer.alloc(0));
+        fs.writeFileSync(auth, '1\n00:00:01,000 --> 00:00:02,000\nhi\n', 'utf8');
+        const res = syncMediaAdjacentTranscript(media, auth);
+        assert.strictEqual(res.ok, true, JSON.stringify(res));
+        assert.strictEqual(res.skipped, true, JSON.stringify(res));
+        assert.strictEqual(res.reason, 'no_create');
+        assert.ok(!fs.existsSync(beside));
+        const created = syncMediaAdjacentTranscript(media, auth, { createBesideMedia: true });
+        assert.strictEqual(created.synced, true, JSON.stringify(created));
+        assert.ok(fs.existsSync(beside));
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    });
+
+    it('keepTranscriptFromSourceCues merges incomplete JA fragments', () => {
+        const { keepTranscriptFromSourceCues } = require('../electron/transcript-keep');
+        const dir = makeTempDir('transub-keep-struct-');
+        const media = path.join(dir, 'clip.mp4');
+        fs.writeFileSync(media, Buffer.alloc(0));
+        const res = keepTranscriptFromSourceCues([
+            { startMs: 0, endMs: 500, text: 'この距離でど' },
+            { startMs: 540, endMs: 1400, text: 'どのくらいまで映ってるんですか?' },
+            { startMs: 2000, endMs: 2400, text: 'ふふっ、舐め' },
+            { startMs: 2440, endMs: 3200, text: 'したことないんだもんね' },
+        ], media, {
+            transcriptKeepDir: dir,
+            jaAsrDomainFix: false,
+        });
+        assert.strictEqual(res.ok, true, JSON.stringify(res));
+        const { readSubtitleDocument } = require('../electron/extensions-bridge');
+        const keptPath = res.kept?.[0] || path.join(dir, 'clip.transcribe.srt');
+        assert.ok(fs.existsSync(keptPath), keptPath);
+        const doc = readSubtitleDocument(keptPath);
+        const texts = (doc.cues || []).map((c) => c.text);
+        assert.ok(texts.some((t) => /この距離でどのくらい/.test(t)), texts);
+        assert.ok(texts.some((t) => /舐めしたことない/.test(t)), texts);
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
     });
 });

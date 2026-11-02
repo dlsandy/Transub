@@ -27,7 +27,7 @@
         const stage = String(p?.stage || p?.raw?.stage || '').trim().toLowerCase();
         if (['pip', 'install', 'torch_cuda', 'extras', 'runtime'].includes(stage)) return true;
         const msg = String(p?.message || p?.detail || p?.raw?.detail || '');
-        if (/测速\s*PyPI|PyPI\s*镜像|安装\s*.*运行库|补齐\s*.*运行库|改装\s*cuda|cuda\s*pytorch/i.test(msg)) {
+        if (/正在本地安装|正在下载[^\n]{0,160}\.whl|测速\s*PyPI|PyPI\s*镜像|安装\s*.*运行库|补齐\s*.*运行库|改装\s*cuda|cuda\s*pytorch/i.test(msg)) {
             return true;
         }
         return false;

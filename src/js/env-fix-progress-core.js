@@ -99,7 +99,10 @@
         }
         if (kind === 'gpu') return pick((s) => s.id === 'gpuRuntime');
         if (kind === 'torch') {
-            return pick((s) => s.id === 'audioSeparate' || s.id === 'torchEngineStartup');
+            // Prefer the install step (ROCm / CUDA). Startup retest is a later recheck label.
+            const installIds = pick((s) => s.id === 'torchRocm' || s.id === 'torchXpu' || s.id === 'audioSeparate');
+            if (installIds.length) return installIds;
+            return pick((s) => s.id === 'torchEngineStartup');
         }
         if (kind === 'llama') return pick((s) => s.id === 'llamaServerRuntime');
         return [];
@@ -121,8 +124,30 @@
             if (id === 'vadModel' && /vad|fsmn/.test(t)) score += 5;
             if (id === 'lidModel' && /语种|lid|whisper-tiny/.test(t)) score += 4;
             if (id === 'gpuRuntime' && /gpu|cublas|cuda 组件|onnxruntime-gpu|复用本机 cuda/.test(t)) score += 5;
-            if (id === 'audioSeparate' && /pytorch|torch_cuda|改装 cuda|补齐 cuda pytorch/.test(t)) score += 5;
-            if (id === 'torchEngineStartup' && /pytorch|引擎启动|torch_cuda|cublas|docstring|补齐 cuda/.test(t)) score += 6;
+            // ROCm pip / torchvision reconcile must stay on torchRocm — not torchEngineStartup
+            // (bare /pytorch/ used to steal the bar and leave「补齐 ROCm」at 0% Waiting).
+            if (id === 'torchRocm' && /rocm|torchvision|hip\b|amd-torch|补齐 rocm|装进引擎运行时/.test(t)) {
+                score += 8;
+            }
+            if (id === 'torchXpu' && /xpu|补齐 xpu|intel arc|装进引擎运行时/.test(t) && !/rocm/.test(t)) {
+                score += 8;
+            }
+            if (
+                id === 'audioSeparate'
+                && /pytorch|torch_cuda|改装 cuda|补齐 cuda pytorch/.test(t)
+                && !/rocm|xpu/.test(t)
+            ) {
+                score += 5;
+            }
+            if (id === 'torchEngineStartup') {
+                if (/引擎启动|重测|docstring/.test(t)) score += 6;
+                else if (
+                    /pytorch|torch_cuda|cublas|补齐 cuda/.test(t)
+                    && !/rocm|xpu|torchvision/.test(t)
+                ) {
+                    score += 4;
+                }
+            }
             if (id === 'llamaServerRuntime' && /llama-server|llama server/.test(t)) score += 5;
             if (id === 'vcRedist' && /visual c\+\+|vc\+\+|vc_redist/.test(t)) score += 5;
             if (score > best) {
@@ -156,9 +181,22 @@
             }
         }
         if (Number.isFinite(speed) && speed > 0) {
-            bits.push(`${formatFixBytes(speed)}/s`);
+            bits.push(`下载速度 ${formatFixBytes(speed)}/s`);
         }
         return bits.join(' · ');
+    }
+
+    /**
+     * Install / mirror-probe events must drop the previous file's byte counter.
+     * Download events keep it so the repair dialog can show size and speed.
+     */
+    function progressClearsTransfer(ev) {
+        if (!ev || typeof ev !== 'object') return false;
+        if (ev.clearTransfer || ev.raw?.clearTransfer) return true;
+        const stage = String(ev.stage || ev.raw?.stage || '').trim().toLowerCase();
+        if (stage === 'install') return true;
+        const msg = String(ev.message || ev.detail || ev.raw?.detail || '');
+        return /正在本地安装|镜像测速|正在测速|测速完成|使用指定下载镜像/.test(msg);
     }
 
     function createEnvFixProgressModal(deps) {
@@ -178,9 +216,10 @@
 
         function bindOnce() {
             const modal = modalEl();
-            if (!modal || bound) return;
+            const cancelBtn = $('envFixProgressCancelBtn');
+            if (!modal || !cancelBtn || bound) return;
             bound = true;
-            $('envFixProgressCancelBtn')?.addEventListener('click', () => {
+            cancelBtn.addEventListener('click', () => {
                 if (finished) {
                     close();
                     return;
@@ -216,7 +255,7 @@
                         <div class="env-fix-progress-bar h-full rounded-full transition-[width] duration-150" style="width:${row.kind === 'manual' ? 0 : pct}%"></div>
                     </div>
                     <p class="env-fix-progress-msg text-[11px] text-gray-500 mt-1 min-h-[1rem] leading-snug break-all">${escapeHtml(row.message || (row.kind === 'manual' ? uiTx('需手动处理') : uiTx('等待中')))}</p>
-                    <p class="env-fix-progress-transfer text-[11px] tabular-nums text-violet-700 mt-0.5 min-h-[1rem] ${row.transfer ? '' : 'hidden'}">${escapeHtml(row.transfer || '')}</p>
+                    <p class="env-fix-progress-transfer text-xs tabular-nums font-medium text-violet-700 mt-0.5 min-h-[1.1rem] ${row.transfer ? '' : 'hidden'}">${escapeHtml(row.transfer || '')}</p>
                 </div>`;
             }).join('');
         }
@@ -284,12 +323,16 @@
             finished = !busy;
             const cancelBtn = $('envFixProgressCancelBtn');
             const manualBtn = $('envFixProgressManualBtn');
+            const manualHint = $('envFixProgressManualHint');
             if (cancelBtn) {
                 cancelBtn.disabled = false;
                 cancelBtn.textContent = busy ? uiTx('取消修复') : uiTx('关闭');
             }
             if (manualBtn) {
                 manualBtn.classList.toggle('hidden', !busy);
+            }
+            if (manualHint) {
+                manualHint.classList.toggle('hidden', !busy);
             }
         }
 
@@ -420,6 +463,7 @@
         matchFixStepFromProgress,
         formatFixBytes,
         formatTransferDetail,
+        progressClearsTransfer,
         createEnvFixProgressModal,
     };
 }));

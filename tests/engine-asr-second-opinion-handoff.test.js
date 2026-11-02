@@ -9,6 +9,14 @@ describe('engine-asr-second-opinion-handoff', () => {
             'dual',
         ).enabled, false);
         assert.strictEqual(soHandoff.planAsrSecondOpinionBatch(
+            {
+                asrSecondOpinion: 'off',
+                contentProfile: 'av_soft',
+                engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame',
+            },
+            'transcribe',
+        ).enabled, false);
+        assert.strictEqual(soHandoff.planAsrSecondOpinionBatch(
             { asrSecondOpinion: 'on', contentProfile: 'film' },
             'translate_mt',
         ).enabled, true);
@@ -21,11 +29,22 @@ describe('engine-asr-second-opinion-handoff', () => {
             'dual',
         );
         assert.strictEqual(autoSoft.enabled, true);
+        // qualityPipelineMode=auto + default quality perf → film also enables auto SO
         const autoFilm = soHandoff.planAsrSecondOpinionBatch(
             { asrSecondOpinion: 'auto', contentProfile: 'film', engineAsrModel: 'sensevoice-small' },
             'dual',
         );
-        assert.strictEqual(autoFilm.enabled, false);
+        assert.strictEqual(autoFilm.enabled, true);
+        const autoFilmSpeed = soHandoff.planAsrSecondOpinionBatch(
+            {
+                asrSecondOpinion: 'auto',
+                contentProfile: 'film',
+                engineAsrModel: 'sensevoice-small',
+                perfProfile: 'speed',
+            },
+            'dual',
+        );
+        assert.strictEqual(autoFilmSpeed.enabled, false);
         const speedAuto = soHandoff.planAsrSecondOpinionBatch(
             {
                 asrSecondOpinion: 'auto',
@@ -82,6 +101,16 @@ describe('engine-asr-second-opinion-handoff', () => {
         assert.strictEqual(opts.engineAsrModel, 'qwen3-asr-1.7b-ja');
         assert.strictEqual(opts.task, 'transcribe');
         assert.strictEqual(opts.smartTranslate, false);
+    });
+
+    it('SenseVoice sibling remaps TEN VAD to fsmn-vad', () => {
+        const { buildSecondOpinionRangeOptions } = require('../electron/engine-asr-second-opinion');
+        const opts = buildSecondOpinionRangeOptions(
+            { engineVadModel: 'ten-vad', timingAlignModel: 'ten', releaseGpuAfter: true },
+            'sensevoice-small',
+        );
+        assert.strictEqual(opts.engineVadModel, 'fsmn-vad');
+        assert.strictEqual(opts.engineAsrModel, 'sensevoice-small');
     });
 
     it('converts ms cues back to engine shape', () => {

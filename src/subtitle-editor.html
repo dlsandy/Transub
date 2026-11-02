@@ -87,11 +87,6 @@
         </div>
     </header>
 
-    <div class="editor-deprecation-banner" role="status">
-        内置 Electron 编辑器即将停用。请改用独立 Transub Editor（设置 → 字幕编辑器 → 打开方式：自动/外部）。部分 Pro 动作仍使用本窗。
-    </div>
-
-
     <div id="editorModeTools" class="editor-mode-tools" role="toolbar" aria-label="当前工作区工具">
         <button type="button" id="editorAddCueBtn" class="editor-btn-icon" data-tool-group="entry" title="在末尾添加一条字幕" aria-label="添加字幕"><i class="fa fa-plus"></i></button>
         <button type="button" id="editorShiftBackBtn" data-tool-group="timing" title="全体字幕 -500ms">全体 -0.5s</button>
@@ -663,8 +658,12 @@
     <script src="js/subtitle-qc-silence-core.js"></script>
     <script src="js/subtitle-qc-smart-core.js"></script>
     <script src="js/content-profile-core.js"></script>
+    <script src="js/sensevoice-rich-tags-core.js"></script>
+    <script src="js/sensevoice-emotion-mt-style-core.js"></script>
     <script src="js/subtitle-meta-core.js"></script>
     <script src="js/subtitle-glossary-core.js"></script>
+    <script src="js/ja-person-names-core.js"></script>
+    <script src="js/glossary-gendict-core.js"></script>
     <script src="js/subtitle-glossary-import-core.js"></script>
     <script src="js/subtitle-text-presets-core.js"></script>
     <script src="js/subtitle-workflows-core.js"></script>
@@ -704,6 +703,7 @@
     <script src="js/subtitle-editor/batch-retranslate-ui.js"></script>
     <script src="js/subtitle-editor/batch-delete-ui.js"></script>
     <script src="js/subtitle-editor/playhead-scrub.js"></script>
+    <script src="js/subtitle-editor/waveform.js"></script>
     <script src="js/subtitle-editor/undo.js"></script>
     <script src="js/subtitle-editor/modals.js"></script>
     <script src="js/subtitle-editor/boot.js"></script>
@@ -721,6 +721,8 @@
     <script src="js/subtitle-editor/jassub-preview.js"></script>
     <script src="js/subtitle-editor/subtitlecat-upload-ui.js"></script>
     <script src="js/subtitle-editor/glossary-import-ui.js"></script>
+    <script src="js/subtitle-editor/glossary-form-ui.js"></script>
+    <script src="js/subtitle-editor/glossary-gendict-ui.js"></script>
     <script src="js/subtitle-editor/player-handoff-ui.js"></script>
     <script src="js/subtitle-editor/target-lang-ui.js"></script>
     <script src="js/subtitle-editor.js"></script>

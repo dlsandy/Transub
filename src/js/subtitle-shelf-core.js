@@ -168,9 +168,11 @@
         if (lang === 'ja' || lang === 'jp' || lang === 'jpn' || lang === 'japanese') return 'ja';
         if (lang === 'en' || lang === 'eng' || lang === 'english') return 'en';
         if (lang === 'ko' || lang === 'kr' || lang === 'kor' || lang === 'korean') return 'ko';
+        // Keep yue distinct from zh so shelf→MT can request 粤语书面→普通话.
+        if (lang === 'yue' || lang === 'zh-yue' || lang === 'cantonese') return 'yue';
         if (
             lang === 'zh' || lang === 'zh-cn' || lang === 'zh-hans' || lang === 'cn'
-            || lang === 'yue' || lang === 'zh-tw' || lang === 'zh-hant'
+            || lang === 'zh-tw' || lang === 'zh-hant'
         ) {
             return 'zh';
         }
@@ -407,10 +409,45 @@
         'ja',
     ]);
     const PREVIEW_CUE_LIMIT = 300;
+    const SHELF_PAGE_SIZE = 50;
     const DEFAULT_DETAIL_WIDTH = 420;
     const MIN_DETAIL_WIDTH = 280;
     const MIN_LIST_WIDTH = 240;
     const DETAIL_SPLITTER_WIDTH = 6;
+
+    /**
+     * Slice filtered shelf items into a page (1-based).
+     * @param {object[]} items
+     * @param {number} page
+     * @param {number} [pageSize]
+     */
+    function paginateShelfItems(items, page, pageSize = SHELF_PAGE_SIZE) {
+        const list = Array.isArray(items) ? items : [];
+        const size = Math.max(1, Math.floor(Number(pageSize)) || SHELF_PAGE_SIZE);
+        const total = list.length;
+        const pageCount = Math.max(1, Math.ceil(total / size) || 1);
+        let p = Math.floor(Number(page));
+        if (!Number.isFinite(p) || p < 1) p = 1;
+        if (p > pageCount) p = pageCount;
+        const start = total === 0 ? 0 : (p - 1) * size;
+        const end = Math.min(total, start + size);
+        return {
+            page: p,
+            pageSize: size,
+            pageCount,
+            total,
+            start,
+            end,
+            items: list.slice(start, end),
+        };
+    }
+
+    /** 1-based page that contains `index` (0-based) in a list of `pageSize`. */
+    function shelfPageForIndex(index, pageSize = SHELF_PAGE_SIZE) {
+        const size = Math.max(1, Math.floor(Number(pageSize)) || SHELF_PAGE_SIZE);
+        const i = Math.max(0, Math.floor(Number(index)) || 0);
+        return Math.floor(i / size) + 1;
+    }
 
     /**
      * Clamp detail pane width given host width.
@@ -623,6 +660,9 @@
         SHELF_FILTERS,
         SHELF_SECONDARY_FILTERS,
         PREVIEW_CUE_LIMIT,
+        SHELF_PAGE_SIZE,
+        paginateShelfItems,
+        shelfPageForIndex,
         DEFAULT_DETAIL_WIDTH,
         MIN_DETAIL_WIDTH,
         MIN_LIST_WIDTH,

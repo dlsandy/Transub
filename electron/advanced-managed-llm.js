@@ -29,7 +29,11 @@ function cancelManagedPull() {
         pullAbort = null;
         return { ok: true, cancelled: true };
     }
-    return { ok: true, cancelled: false };
+    return { ok: true, cancelled: true };
+}
+
+function clearManagedInstallCancel() {
+    return llamaServer.clearRuntimeInstallCancel();
 }
 
 function summarizeCatalogEntry(entry) {
@@ -141,6 +145,13 @@ function buildManagedStatus(doc, options = {}) {
             preferRocm: (() => {
                 try {
                     return !!require('./advanced-runtime-prefer').getHints().preferRocm;
+                } catch (_) {
+                    return false;
+                }
+            })(),
+            preferSycl: (() => {
+                try {
+                    return !!require('./advanced-runtime-prefer').getHints().preferSycl;
                 } catch (_) {
                     return false;
                 }
@@ -787,6 +798,7 @@ module.exports = {
     buildManagedStatus,
     pullManagedModel,
     cancelManagedPull,
+    clearManagedInstallCancel,
     resolveManagedEndpoint,
     runManagedPerfBenchmark,
     scanSystemCudaCompanion,

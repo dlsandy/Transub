@@ -66,13 +66,13 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(defaults.noSpeechThreshold, 0.6);
     assert.strictEqual(defaults.logProbThreshold, -1);
     assert.strictEqual(defaults.compressionRatioThreshold, 2.4);
-    assert.strictEqual(defaults.hallucinationSilenceThreshold, null);
+        assert.strictEqual(defaults.hallucinationSilenceThreshold, 2);
     assert.strictEqual(defaults.chineseSubtitleVariant, 'simplified');
     assert.strictEqual(defaults.uiLocale, 'zh-Hans');
     assert.strictEqual(defaults.postBatchCompressRepetition, true);
     assert.strictEqual(defaults.postBatchTextPresetGroupId, '');
     assert.strictEqual(defaults.postBatchCpsSplit, true);
-    assert.strictEqual(defaults.postBatchQcFixMode, 'fix');
+        assert.strictEqual(defaults.postBatchQcFixMode, 'smart');
     assert.strictEqual(defaults.qcSilenceSplitChars, 15);
     assert.strictEqual(defaults.sakuraNsfwPrompt, null);
     // Engine fields must be present so settings save/load does not drop them
@@ -81,6 +81,9 @@ function testNormalizeHallucinationOptions() {
     assert.ok(String(defaults.engineUrl || '').includes('127.0.0.1'));
     assert.strictEqual(defaults.engineAsrModel, 'qwen3-asr-1.7b-ja-anime-galgame');
     assert.strictEqual(defaults.engineAutoStart, true);
+    assert.strictEqual(defaults.overwrite, true);
+        assert.strictEqual(defaults.smartTranslateFaithfulTone, true);
+    assert.strictEqual(defaults.engineHfEndpoint, 'https://hf-mirror.com');
     assert.strictEqual(defaults.glossaryPromptEnabled, false);
     assert.strictEqual(
         normalizeTransWithAiRuntimeOptions({ glossaryPromptEnabled: true }).glossaryPromptEnabled,
@@ -157,34 +160,38 @@ function testNormalizeHallucinationOptions() {
 }
 
 function testNormalizePersistsAllSavedOptionKeys() {
+    const persistKeys = require('../src/js/settings-persist-keys-core');
     const form = assembleSavedOptionsFromFields({
         task: 'translate',
         translateMode: 'llm',
         advancedEntitled: true,
         glossaryPromptEnabled: false,
         glossaryMtEnabled: false,
-        asrBadPoolDrafts: false,
         trayProgressEnabled: false,
         rememberLastOpenDir: false,
         smartTranslateHybridMt: false,
     }, settingsNormCore);
     const normalized = normalizeTransWithAiRuntimeOptions(form);
-    for (const key of Object.keys(form)) {
-        assert.ok(
-            Object.prototype.hasOwnProperty.call(normalized, key),
-            `normalizeTransWithAiRuntimeOptions drops persist key: ${key}`,
-        );
-    }
+    const diff = persistKeys.diffAssembleVsNormalize(form, normalized);
+    assert.ok(
+        diff.ok,
+        `normalizeTransWithAiRuntimeOptions drops persist key(s): ${diff.missing.join(', ')}`,
+    );
     assert.strictEqual(normalized.glossaryPromptEnabled, false);
-    assert.strictEqual(normalized.asrBadPoolDrafts, false);
     assert.strictEqual(normalized.trayProgressEnabled, false);
     assert.strictEqual(normalized.rememberLastOpenDir, false);
 
     const defaults = normalizeTransWithAiRuntimeOptions({});
     assert.strictEqual(defaults.glossaryPromptEnabled, false);
-    assert.strictEqual(defaults.asrBadPoolDrafts, false);
     assert.strictEqual(defaults.trayProgressEnabled, false);
     assert.strictEqual(defaults.autoCpuOnGpuBusy, false);
+
+    const { assertPartialSaveKeysSubsetOfNormalize } = require('../electron/settings-persist-keys');
+    const partial = assertPartialSaveKeysSubsetOfNormalize();
+    assert.ok(
+        partial.ok,
+        `PARTIAL_SAVE_OPTION_KEYS not in normalize: ${partial.missing.join(', ')}`,
+    );
 }
 
 async function testDetectVersionFromLog() {
@@ -216,6 +223,12 @@ describe('transwithai-parsers', () => {
     });
     it('normalize keeps all persistable settings keys', () => {
         testNormalizePersistsAllSavedOptionKeys();
+    });
+    it('normalize keeps ko / yue language (not coerced to auto)', () => {
+        assert.strictEqual(normalizeTransWithAiRuntimeOptions({ language: 'ko' }).language, 'ko');
+        assert.strictEqual(normalizeTransWithAiRuntimeOptions({ language: 'yue' }).language, 'yue');
+        assert.strictEqual(normalizeTransWithAiRuntimeOptions({ language: 'ja' }).language, 'ja');
+        assert.strictEqual(normalizeTransWithAiRuntimeOptions({ language: 'de' }).language, 'auto');
     });
     it('detect version from log', async () => {
         await testDetectVersionFromLog();

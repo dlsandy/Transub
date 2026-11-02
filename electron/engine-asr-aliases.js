@@ -4,6 +4,7 @@
  */
 const LEGACY_ENGINE_ASR_ALIASES = Object.freeze({
     'qwen3-asr-1.7b-ja': 'qwen3-asr-1.7b',
+    'qwen3-asr-1.7b-ja-anime-lora-v3': 'qwen3-asr-1.7b-ja-anime-galgame',
 });
 
 function canonicalizeEngineAsrModelId(value, fallback = '') {

@@ -21,7 +21,12 @@
     const DEFAULT_MAX_SMART_CUES = 40;
     const DEFAULT_NEIGHBOR_RADIUS = 1;
     const DEFAULT_SMART_TYPES = Object.freeze(['fluency', 'connected', 'weird']);
-    const DEFAULT_RETRANSCRIBE_TYPES = Object.freeze(['connected']);
+    const DEFAULT_RETRANSCRIBE_TYPES = Object.freeze([
+        'connected',
+        'timing_waveform',
+        'timing_waveform_hard',
+        'timing_waveform_soft',
+    ]);
     const DEFAULT_LLM_SPLIT_TYPES = Object.freeze(['connected', 'high_cps', 'long', 'splittable']);
     const DEFAULT_MAX_LLM_SPLIT = 24;
     const DEFAULT_MAX_RETRANSCRIBE_RANGES = 8;
@@ -218,6 +223,9 @@
             const hit = types.filter((t) => typeSet.has(t));
             if (!hit.length) continue;
             let score = 0;
+            if (types.includes('timing_waveform_hard')) score += 5;
+            if (types.includes('timing_waveform')) score += 4;
+            if (types.includes('timing_waveform_soft')) score += 3;
             if (types.includes('connected')) score += 4;
             if (types.includes('high_cps')) score += 2;
             if (types.includes('overlap')) score += 1;
@@ -355,20 +363,25 @@
         const max = clampInt(options.maxRanges, 1, 40, DEFAULT_MAX_RETRANSCRIBE_RANGES);
         const lowN = Number(options.lowConfidenceCueCount) || 0;
         const connN = Number(options.connectedCueCount) || 0;
+        const waveN = Number(options.waveformCueCount) || 0;
         const parts = [`将对 ${n} 个时间窗重转写（覆盖约 ${cueCount} 条）`];
         if (connN) parts.push(`连续 ${connN}`);
+        if (waveN) parts.push(`波形计时 ${waveN}`);
         if (lowN) parts.push(`低置信 ${lowN}`);
         if (ranges.length >= max) parts.push(`已截断至 ${max} 窗`);
         return parts.join(' · ');
     }
 
     /**
-     * Batch QC: merge connected-issue ranges with low-confidence ASR windows under one budget.
-     * Connected windows fill first; leftover slots go to low-confidence only.
+     * Batch QC: merge connected-issue ranges with waveform-timing + low-confidence
+     * ASR windows under one budget.
+     * Connected windows fill first; leftover slots go to waveform (Score-ordered),
+     * then low-confidence.
      * @returns {{
      *   ranges: object[],
      *   indexes: number[],
      *   connectedIndexes: number[],
+     *   waveformIndexes: number[],
      *   lowConfidenceIndexes: number[],
      *   plan: string,
      * }}
@@ -387,10 +400,21 @@
         };
         const connectedTargets = selectQcRetranscribeTargets(issues, {
             maxTargets: options.maxTargets,
-            types: options.types,
+            types: ['connected'],
         });
         const connectedIndexes = connectedTargets.map((t) => Number(t.index))
             .filter((n) => Number.isInteger(n) && n >= 0);
+
+        const waveFromOpt = [...new Set((Array.isArray(options.waveformIndexes) ? options.waveformIndexes : [])
+            .map((n) => Number(n))
+            .filter((n) => Number.isInteger(n) && n >= 0))];
+        const waveFromIssues = selectQcRetranscribeTargets(issues, {
+            maxTargets: options.maxTargets || 24,
+            types: ['timing_waveform', 'timing_waveform_hard', 'timing_waveform_soft'],
+        }).map((t) => Number(t.index)).filter((n) => Number.isInteger(n) && n >= 0);
+        // Prefer explicit Score/heuristic order when provided; else issue scores.
+        const waveformIndexes = waveFromOpt.length ? waveFromOpt : waveFromIssues;
+
         const lowIndexes = [...new Set((Array.isArray(lowConfidenceIndexes) ? lowConfidenceIndexes : [])
             .map((n) => Number(n))
             .filter((n) => Number.isInteger(n) && n >= 0))]
@@ -402,8 +426,27 @@
             for (const idx of r.indexes || []) covered.add(Number(idx));
         }
 
+        let waveformRanges = [];
+        let leftoverSlots = Math.max(0, maxRanges - connectedRanges.length);
+        if (leftoverSlots > 0 && waveformIndexes.length) {
+            const leftoverWave = waveformIndexes.filter((idx) => !covered.has(idx));
+            // Greedy in Score/heuristic order so triage priority survives range capping.
+            for (const idx of leftoverWave) {
+                if (waveformRanges.length >= leftoverSlots) break;
+                if (covered.has(idx)) continue;
+                const one = buildQcRetranscribeRanges(cues, [idx], {
+                    ...rangeOpts,
+                    maxRanges: 1,
+                });
+                for (const r of one) {
+                    waveformRanges.push(r);
+                    for (const i of r.indexes || []) covered.add(Number(i));
+                }
+            }
+            leftoverSlots = Math.max(0, maxRanges - connectedRanges.length - waveformRanges.length);
+        }
+
         let lowRanges = [];
-        const leftoverSlots = Math.max(0, maxRanges - connectedRanges.length);
         if (leftoverSlots > 0 && lowIndexes.length) {
             const leftoverLow = lowIndexes.filter((idx) => !covered.has(idx));
             if (leftoverLow.length) {
@@ -414,19 +457,22 @@
             }
         }
 
-        const ranges = [...connectedRanges, ...lowRanges]
+        const ranges = [...connectedRanges, ...waveformRanges, ...lowRanges]
             .sort((a, b) => a.startMs - b.startMs);
         const indexes = [...new Set(ranges.flatMap((r) => r.indexes || []))]
             .sort((a, b) => a - b);
+        const waveUsed = waveformIndexes.filter((idx) => indexes.includes(idx)).length;
         const lowUsed = lowIndexes.filter((idx) => indexes.includes(idx)).length;
         return {
             ranges,
             indexes,
             connectedIndexes,
+            waveformIndexes,
             lowConfidenceIndexes: lowIndexes,
             plan: summarizeQcRetranscribePlan(ranges, {
                 maxRanges,
                 connectedCueCount: connectedIndexes.length,
+                waveformCueCount: waveUsed,
                 lowConfidenceCueCount: lowUsed,
             }),
         };

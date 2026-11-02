@@ -2,6 +2,7 @@ const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { getProjectRoot, getInstallRoot } = require('./app-paths');
+const { createWaveformPeakReducer, normalizeWaveformPeaks } = require('./waveform-peaks');
 
 /** @type {Set<import('child_process').ChildProcess>} */
 const activeFfmpegProcs = new Set();
@@ -766,9 +767,11 @@ function detectSilenceInRange(filePath, startMs, endMs, options = {}) {
             let stderr = '';
             let proc;
             let settled = false;
+            let timer = null;
             const finish = (result) => {
                 if (settled) return;
                 settled = true;
+                if (timer) clearTimeout(timer);
                 resolve(result);
             };
             try {
@@ -778,6 +781,14 @@ function detectSilenceInRange(filePath, startMs, endMs, options = {}) {
                 finish({ ok: false, error: err.message || String(err) });
                 return;
             }
+            const timeoutMs = Math.max(
+                20000,
+                Math.min(120000, Math.round(durationSec * 8000) + 15000),
+            );
+            timer = setTimeout(() => {
+                killFfmpegProc(proc);
+                finish({ ok: false, error: 'ffmpeg_timeout', timedOut: true });
+            }, timeoutMs);
             proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
             proc.on('error', (err) => {
                 finish({
@@ -786,6 +797,7 @@ function detectSilenceInRange(filePath, startMs, endMs, options = {}) {
                 });
             });
             proc.on('close', (code, signal) => {
+                if (settled) return;
                 if (signal || code === null) {
                     finish({ ok: false, cancelled: true, error: '已取消' });
                     return;
@@ -935,29 +947,30 @@ function extractWaveformPeaks(filePath, options = {}) {
         return Promise.resolve({ ok: false, error: '文件不存在' });
     }
 
-    const peaksPerSec = Math.max(5, Math.min(120, Number(options.peaksPerSec) || 20));
+    const peaksPerSec = Math.max(5, Math.min(800, Number(options.peaksPerSec) || 20));
     const maxPeaks = Math.max(200, Math.min(48000, Number(options.maxPeaks) || 6000));
-    const sampleRate = 8000;
-    // Cap online reduction to ~3h at requested density (same safety as prior byte cap).
-    const hardMaxPeaks = Math.min(maxPeaks, Math.max(1, Math.ceil(60 * 180 * peaksPerSec)));
-    const samplesPerPeak = Math.max(1, Math.round(sampleRate / peaksPerSec));
+    const startSec = Math.max(0, Number(options.startSec) || 0);
+    const durationSecOpt = Math.max(0, Number(options.durationSec) || 0);
+    const normRef = Number(options.normRef) || 0;
     const ffmpegResolved = resolveFfmpegForExecution(options.ffmpegPathSetting || options.ffmpegPath);
     if (!ffmpegResolved.ok) {
         return Promise.resolve({ ok: false, error: ffmpegResolved.error });
     }
     const exe = ffmpegResolved.path;
-    const args = [
-        '-hide_banner',
-        '-nostats',
+    const args = ['-hide_banner', '-nostats'];
+    // Input seek keeps long-file detail windows usable. Overview uses start 0.
+    if (startSec > 0) args.push('-ss', startSec.toFixed(3));
+    if (durationSecOpt > 0) args.push('-t', durationSecOpt.toFixed(3));
+    args.push(
         '-i', resolved,
         '-vn',
         '-sn',
         '-dn',
         '-ac', '1',
-        '-ar', String(sampleRate),
+        '-ar', '8000',
         '-f', 's16le',
         '-',
-    ];
+    );
 
     return (async () => {
         const ready = await ensureWindowsExecutableReady(exe, 'ffmpeg');
@@ -979,70 +992,17 @@ function extractWaveformPeaks(filePath, options = {}) {
                 return;
             }
 
-            const peaks = [];
-            let carry = Buffer.alloc(0);
-            let sampleCount = 0;
-            let bucketPeak = 0;
-            let bucketSamples = 0;
-            let maxAbs = 1;
-            let capped = false;
+            const reducer = createWaveformPeakReducer({
+                peaksPerSec,
+                maxPeaks,
+                durationSec: durationSecOpt,
+            });
             let stderr = '';
 
-            const pushPeak = (peak) => {
-                if (peaks.length >= hardMaxPeaks) {
-                    capped = true;
-                    return false;
-                }
-                const v = peak > 0 ? peak : 0;
-                peaks.push(v);
-                if (v > maxAbs) maxAbs = v;
-                return true;
-            };
-
-            const consumePcm = (buf) => {
-                if (!buf || !buf.length || capped) return;
-                let offset = 0;
-                // Pair leftover odd byte with the next chunk.
-                if (carry.length) {
-                    const need = 2 - carry.length;
-                    if (buf.length < need) {
-                        carry = Buffer.concat([carry, buf]);
-                        return;
-                    }
-                    const paired = Buffer.concat([carry, buf.subarray(0, need)], 2);
-                    carry = Buffer.alloc(0);
-                    offset = need;
-                    const sample = Math.abs(paired.readInt16LE(0));
-                    sampleCount += 1;
-                    if (sample > bucketPeak) bucketPeak = sample;
-                    bucketSamples += 1;
-                    if (bucketSamples >= samplesPerPeak) {
-                        if (!pushPeak(bucketPeak)) return;
-                        bucketPeak = 0;
-                        bucketSamples = 0;
-                    }
-                }
-                while (offset + 1 < buf.length && !capped) {
-                    const sample = Math.abs(buf.readInt16LE(offset));
-                    offset += 2;
-                    sampleCount += 1;
-                    if (sample > bucketPeak) bucketPeak = sample;
-                    bucketSamples += 1;
-                    if (bucketSamples >= samplesPerPeak) {
-                        if (!pushPeak(bucketPeak)) break;
-                        bucketPeak = 0;
-                        bucketSamples = 0;
-                    }
-                }
-                if (offset < buf.length && !capped) {
-                    carry = Buffer.from(buf.subarray(offset));
-                }
-            };
-
             proc.stdout.on('data', (chunk) => {
-                if (capped) return;
-                consumePcm(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-                if (capped) {
+                if (reducer.capped) return;
+                reducer.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+                if (reducer.capped) {
                     try { proc.kill('SIGKILL'); } catch { /* ignore */ }
                 }
             });
@@ -1057,20 +1017,19 @@ function extractWaveformPeaks(filePath, options = {}) {
                 });
             });
             proc.on('close', (code, signal) => {
+                const reduced = reducer.finish();
+                const peaks = reduced.peaks;
                 if (signal || code === null) {
-                    // Cap kill is intentional; still return peaks collected so far.
-                    if (!(capped && peaks.length >= 8)) {
+                    // Safety-cap kill still returns peaks collected so far.
+                    if (!(reduced.capped && peaks.length >= 8)) {
                         finish({ ok: false, cancelled: true, error: '已取消' });
                         return;
                     }
-                } else if (code !== 0 && sampleCount < 8 && peaks.length < 8) {
+                } else if (code !== 0 && reduced.sampleCount < 8 && peaks.length < 8) {
                     finish({ ok: false, error: stderr.trim().slice(-300) || `ffmpeg 退出码 ${code}` });
                     return;
                 }
-                if (!capped && bucketSamples > 0) {
-                    pushPeak(bucketPeak);
-                }
-                if (peaks.length < 8 && sampleCount < 8) {
+                if (peaks.length < 8 && reduced.sampleCount < 8) {
                     finish({ ok: false, error: '未能提取到音频波形' });
                     return;
                 }
@@ -1078,34 +1037,16 @@ function extractWaveformPeaks(filePath, options = {}) {
                     finish({ ok: false, error: '未能提取到音频波形' });
                     return;
                 }
-                // If density overshot maxPeaks, downsample by max-pooling contiguous bins.
-                let outPeaks = peaks;
-                if (outPeaks.length > maxPeaks) {
-                    const ratio = outPeaks.length / maxPeaks;
-                    const reduced = new Array(maxPeaks);
-                    for (let i = 0; i < maxPeaks; i += 1) {
-                        const start = Math.floor(i * ratio);
-                        const end = Math.min(outPeaks.length, Math.floor((i + 1) * ratio));
-                        let peak = 0;
-                        for (let j = start; j < end; j += 1) {
-                            if (outPeaks[j] > peak) peak = outPeaks[j];
-                        }
-                        reduced[i] = peak;
-                    }
-                    outPeaks = reduced;
-                    maxAbs = 1;
-                    for (let i = 0; i < outPeaks.length; i += 1) {
-                        if (outPeaks[i] > maxAbs) maxAbs = outPeaks[i];
-                    }
-                }
-                const durationSec = sampleCount / sampleRate;
-                const normalized = outPeaks.map((p) => Math.min(1, p / maxAbs));
+                const durationSec = reduced.sampleCount / reduced.sampleRate;
                 finish({
                     ok: true,
-                    peaks: normalized,
+                    peaks: normalizeWaveformPeaks(peaks, reduced.peakMax, normRef),
+                    peakMax: reduced.peakMax,
                     durationSec,
-                    peaksPerSec: outPeaks.length / Math.max(0.001, durationSec),
-                    sampleRate,
+                    startSec,
+                    truncated: !!reduced.capped,
+                    peaksPerSec: peaks.length / Math.max(0.001, durationSec),
+                    sampleRate: reduced.sampleRate,
                 });
             });
         });
@@ -1164,7 +1105,8 @@ function probeAcousticWindow(filePath, options = {}) {
         return Promise.resolve({ ok: false, error: '文件不存在' });
     }
     const durationSec = Math.max(4, Math.min(20, Number(options.durationSec) || 12));
-    const startSec = Math.max(0, Math.min(3600, Number(options.startSec) || 0));
+    // Long features need probes past 1h; clamp only against absurd values.
+    const startSec = Math.max(0, Math.min(86400, Number(options.startSec) || 0));
     const ffmpegResolved = resolveFfmpegForExecution(options.ffmpegPathSetting || options.ffmpegPath);
     if (!ffmpegResolved?.ok) {
         return Promise.resolve({ ok: false, error: ffmpegResolved?.error || 'ffmpeg 不可用' });
@@ -1258,6 +1200,7 @@ module.exports = {
     parseAcousticProbeLog,
     cancelActiveFfmpegJobs,
     trackFfmpegProc,
+    killFfmpegProc,
     ensureWindowsExecutableReady,
     formatExecutableSpawnError,
     normalizeMediaLangTag,

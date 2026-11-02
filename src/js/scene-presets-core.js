@@ -52,7 +52,7 @@
     const MIN_LIST_WIDTH = 240;
     const DETAIL_SPLITTER_WIDTH = 6;
 
-    /** Keys owned by task / MT chips — never store on scene presets. */
+    /** Keys owned by task / MT chips / settings-only audio — never store on scene presets. */
     const PRESET_SKIP_KEYS = Object.freeze([
         'task',
         'translateMode',
@@ -61,6 +61,8 @@
         'glossaryMtEnabled',
         'sakuraNsfwPrompt',
         'activePresetId',
+        'filmAudioEnhance',
+        'enhanceForVadOnly',
     ]);
 
     /**
@@ -114,8 +116,7 @@
         { key: 'hallucinationSilenceThreshold', label: '幻觉静音 (秒)', type: 'number', min: 0, max: 30, step: 0.5, emptyOk: true },
         { key: 'beamSize', label: '集束宽度', type: 'number', min: 1, max: 20, step: 1 },
         { key: 'audioLightDenoise', label: '轻度降噪', type: 'checkbox' },
-        { key: 'filmAudioEnhance', label: '影视音频增强', type: 'checkbox' },
-        { key: 'filmVadPreset', label: '影视 VAD 预设', type: 'checkbox' },
+        { key: 'filmVadPreset', label: '仅影视 VAD 预设', type: 'checkbox' },
         { key: 'timingAlign', label: '时间轴对齐', type: 'checkbox' },
         {
             key: 'timingAlignModel',
@@ -124,6 +125,10 @@
             options: [
                 { value: 'ten', label: 'TEN' },
                 { value: 'firered', label: 'FireRed' },
+                {
+                    value: 'qwen3-forced-aligner-0.6b',
+                    label: 'ForcedAligner（词级）',
+                },
             ],
         },
     ]);

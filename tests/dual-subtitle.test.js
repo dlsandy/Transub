@@ -20,7 +20,10 @@ describe('dual-subtitle-core', () => {
         assert.strictEqual(dual.normalizeDualTargetSuffix('zh-tw'), 'zh-tw');
         assert.strictEqual(dual.normalizeTargetSubtitleNaming('media'), 'media');
         assert.strictEqual(dual.normalizeTargetSubtitleNaming('lang'), 'lang');
+        assert.strictEqual(dual.normalizeTargetSubtitleNaming(''), 'media');
+        assert.strictEqual(dual.normalizeTargetSubtitleNaming(), 'media');
         assert.strictEqual(dual.resolveTargetFileSuffix({ targetSubtitleNaming: 'media' }), '');
+        assert.strictEqual(dual.resolveTargetFileSuffix({}), '');
         assert.strictEqual(
             dual.resolveTargetFileSuffix({ targetSubtitleNaming: 'lang', dualTargetSuffix: 'en' }),
             'en',

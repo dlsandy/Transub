@@ -49,8 +49,8 @@ describe('TransubSettingsModalUi', () => {
         const prevDoc = global.document;
         global.document = {
             getElementById(id) {
-                if (id === 'settingsEnvChipGpu') return chip;
-                if (id === 'settingsEnvChipGpuState') return stateEl;
+                if (id === 'settingsEnvChipEngine') return chip;
+                if (id === 'settingsEnvChipEngineState') return stateEl;
                 return null;
             },
             querySelectorAll(sel) {
@@ -58,9 +58,11 @@ describe('TransubSettingsModalUi', () => {
             },
         };
         try {
-            setEnvOverviewChip('gpu', { state: 'warn', label: '需安装 GPU 支持' });
+            setEnvOverviewChip('engine', { state: 'warn', label: '需检测引擎' });
             assert.strictEqual(chip.dataState, 'warn');
-            assert.strictEqual(stateEl.textContent, '需安装 GPU 支持');
+            assert.strictEqual(stateEl.textContent, '需检测引擎');
+            setEnvOverviewChip('gpu', { state: 'err', label: 'ignored' });
+            assert.strictEqual(stateEl.textContent, '需检测引擎');
             setEnvGpuActionsEnabled(true);
             assert.strictEqual(btn.disabled, false);
             assert.strictEqual(btn._title, '安装 GPU');
@@ -77,6 +79,8 @@ describe('TransubSettingsModalUi', () => {
         assert.strictEqual(api.resolveParamsTab(''), 'runtime');
         assert.strictEqual(api.resolveParamsTab('models'), 'install');
         assert.strictEqual(api.resolveParamsTab('pro-llm'), 'pro-smart-translate');
+        assert.strictEqual(api.resolveParamsTab('决策辅助'), 'pro-decision-assist');
+        assert.strictEqual(api.resolveParamsTab('laya'), 'pro-decision-assist');
         assert.strictEqual(api.resolveParamsTab('未知面板'), '未知面板');
     });
 

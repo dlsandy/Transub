@@ -11,6 +11,7 @@ describe('TransubAdvancedEntitlementUi', () => {
     it('exports createAdvancedEntitlementUi and constants', () => {
         assert.strictEqual(typeof createAdvancedEntitlementUi, 'function');
         assert.ok(PRO_GATED_TAB_TITLES['pro-smart-translate']);
+        assert.ok(PRO_GATED_TAB_TITLES['pro-decision-assist']);
         assert.ok(!PRO_GATED_TAB_TITLES['pro-llm']);
         assert.ok(String(AFDIAN_PRO_PURCHASE_URL).includes('afdian.com'));
     });
@@ -22,6 +23,7 @@ describe('TransubAdvancedEntitlementUi', () => {
         });
         assert.strictEqual(ui.isProGatedTab('llm'), true);
         assert.strictEqual(ui.isProGatedTab('pro-film-audio'), true);
+        assert.strictEqual(ui.isProGatedTab('pro-decision-assist'), true);
         assert.strictEqual(ui.isProGatedTab('runtime'), false);
     });
 
@@ -30,12 +32,14 @@ describe('TransubAdvancedEntitlementUi', () => {
         let known = false;
         let freeInfo = { ok: false };
         const filmAudioEnhanceCheck = { checked: true };
+        const enhanceForVadOnlyCheck = { checked: true };
         const filmVadPresetCheck = { checked: true };
         let translateMode = 'smart';
         let qcMode = 'smart';
         const ui = createAdvancedEntitlementUi({
             els: {
                 filmAudioEnhanceCheck,
+                enhanceForVadOnlyCheck,
                 filmVadPresetCheck,
                 smartTranslateCheck: { checked: true },
                 engineLlmMtModelSelect: { value: '' },
@@ -58,6 +62,7 @@ describe('TransubAdvancedEntitlementUi', () => {
         assert.strictEqual(known, true);
         assert.strictEqual(freeInfo.ok, true);
         assert.strictEqual(filmAudioEnhanceCheck.checked, false);
+        assert.strictEqual(enhanceForVadOnlyCheck.checked, false);
         assert.strictEqual(filmVadPresetCheck.checked, false);
         assert.strictEqual(translateMode, 'engine');
         assert.strictEqual(qcMode, 'fix');

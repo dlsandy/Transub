@@ -106,4 +106,146 @@ describe('TransubSettingsFormApply', () => {
         assert.strictEqual(typeof insertDefault, 'boolean');
         void insertDefault;
     });
+
+    it('applyOptionsToForm keeps film enhance toggles when keys are omitted', async () => {
+        installMinimalDocument();
+        const filmAudioEnhanceCheck = { checked: true };
+        const enhanceForVadOnlyCheck = { checked: true, disabled: false };
+        const filmVadPresetCheck = { checked: false };
+        const api = createSettingsFormApply({
+            els: {
+                filmAudioEnhanceCheck,
+                enhanceForVadOnlyCheck,
+                filmVadPresetCheck,
+            },
+            settingsNormApi: norm,
+            savedOptionsApi: saved,
+            DEFAULT_AUDIO_SUFFIXES: 'mp3,wav',
+            readTaskFromForm: () => 'transcribe',
+            readTranslateModeFromForm: () => 'engine',
+            readEngineBackendFromForm: () => 'transub',
+            engineInstallPathForSave: () => '',
+            readLlmMtModelFromForm: () => '',
+            readDualLineOrderFromForm: () => 'target-first',
+            readSubFormatsFromForm: () => ['srt'],
+            readModelPathFromForm: () => '',
+            normalizeChineseSubtitleVariant: (v) => v || 'simplified',
+            getAdvancedEntitled: () => true,
+            getInsertSoftwareCreditDefault: () => false,
+            getAutoScanFoldersDraft: () => [],
+            setAutoScanFoldersDraft: () => {},
+            getTranslateStyleEnabled: () => false,
+            stashTwaiLegacyFromOptions: () => {},
+            ensureEngineInstallPathFilled: async () => {},
+            syncProxySettingsUi: () => {},
+            syncTransubStationSettingsUi: () => {},
+            ensureSelectValue: () => {},
+            syncEngineBackendUi: () => {},
+            applyDualLineOrderToForm: () => {},
+            updateTranslateStyleUi: () => {},
+            applySubFormatsToForm: () => {},
+            applyBurnSettingsToForm: () => {},
+            syncLogLevelHint: () => {},
+            syncExpertExtraChipsUi: () => {},
+            refreshAutoScanFoldersListUi: () => {},
+            refreshSubtitleEditorPathHint: async () => {},
+            setPostBatchQcFixMode: () => {},
+            applyActivePresetIdToSelect: () => {},
+            syncQuickExtrasBar: () => {},
+        });
+        await api.applyOptionsToForm({ language: 'ja', filmVadPreset: true }, { applyUiMode: false });
+        assert.strictEqual(filmAudioEnhanceCheck.checked, true);
+        assert.strictEqual(enhanceForVadOnlyCheck.checked, true);
+        assert.strictEqual(enhanceForVadOnlyCheck.disabled, false);
+        // film enhance stays on → film VAD checkbox stays off (mutex)
+        assert.strictEqual(filmVadPresetCheck.checked, false);
+    });
+
+    it('yue + stale transcribe + 简/繁 chip heals to translate; 原文 stays 原文', async () => {
+        installMinimalDocument();
+        globalThis.TransubSubtitleTargetLang = require('../src/js/subtitle-target-lang-core.js');
+        const quickTargetLangSelect = { value: 'source' };
+        const chineseSubtitleVariantSelect = { value: 'simplified' };
+        const taskSelect = { value: 'transcribe' };
+        const baseDeps = {
+            settingsNormApi: norm,
+            savedOptionsApi: saved,
+            DEFAULT_AUDIO_SUFFIXES: 'mp3,wav',
+            readTaskFromForm: () => String(taskSelect.value || 'transcribe'),
+            readTranslateModeFromForm: () => 'engine',
+            readEngineBackendFromForm: () => 'transub',
+            engineInstallPathForSave: () => '',
+            readLlmMtModelFromForm: () => '',
+            readDualLineOrderFromForm: () => 'target-first',
+            readSubFormatsFromForm: () => ['srt'],
+            readModelPathFromForm: () => '',
+            normalizeChineseSubtitleVariant: (v) => v || 'simplified',
+            toQuickTargetLang: (v) => String(v || 'simplified'),
+            getAdvancedEntitled: () => false,
+            getInsertSoftwareCreditDefault: () => false,
+            getAutoScanFoldersDraft: () => [],
+            setAutoScanFoldersDraft: () => {},
+            getTranslateStyleEnabled: () => false,
+            stashTwaiLegacyFromOptions: () => {},
+            ensureEngineInstallPathFilled: async () => {},
+            syncProxySettingsUi: () => {},
+            syncTransubStationSettingsUi: () => {},
+            ensureSelectValue: () => {},
+            syncEngineBackendUi: () => {},
+            applyDualLineOrderToForm: () => {},
+            updateTranslateStyleUi: () => {},
+            applySubFormatsToForm: () => {},
+            applyBurnSettingsToForm: () => {},
+            syncLogLevelHint: () => {},
+            syncExpertExtraChipsUi: () => {},
+            refreshAutoScanFoldersListUi: () => {},
+            refreshSubtitleEditorPathHint: async () => {},
+            setPostBatchQcFixMode: () => {},
+            applyActivePresetIdToSelect: () => {},
+            syncQuickExtrasBar: () => {},
+        };
+        const api = createSettingsFormApply({
+            ...baseDeps,
+            els: { quickTargetLangSelect, chineseSubtitleVariantSelect, taskSelect },
+        });
+        await api.applyOptionsToForm({
+            language: 'yue',
+            task: 'transcribe',
+            chineseSubtitleVariant: 'simplified',
+            subtitleTargetChip: 'simplified',
+            subtitleTargetLang: 'zh-Hans',
+        }, { applyUiMode: false });
+        assert.strictEqual(quickTargetLangSelect.value, 'simplified');
+        assert.strictEqual(taskSelect.value, 'translate');
+
+        await api.applyOptionsToForm({
+            language: 'yue',
+            task: 'transcribe',
+            chineseSubtitleVariant: 'simplified',
+            subtitleTargetChip: 'source',
+            subtitleTargetLang: 'zh-Hans',
+        }, { applyUiMode: false });
+        assert.strictEqual(quickTargetLangSelect.value, 'source');
+        assert.strictEqual(taskSelect.value, 'transcribe');
+
+        chineseSubtitleVariantSelect.value = 'traditional';
+        await api.applyOptionsToForm({
+            language: 'yue',
+            task: 'transcribe',
+            chineseSubtitleVariant: 'traditional',
+            subtitleTargetChip: 'traditional',
+            subtitleTargetLang: 'zh-Hant',
+        }, { applyUiMode: false });
+        assert.strictEqual(quickTargetLangSelect.value, 'traditional');
+        assert.strictEqual(taskSelect.value, 'translate');
+
+        // Legacy: no chip key → 原文
+        await api.applyOptionsToForm({
+            language: 'yue',
+            task: 'transcribe',
+            chineseSubtitleVariant: 'simplified',
+            subtitleTargetLang: 'zh-Hans',
+        }, { applyUiMode: false });
+        assert.strictEqual(quickTargetLangSelect.value, 'source');
+    });
 });

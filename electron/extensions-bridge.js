@@ -6,6 +6,11 @@ const { loadTaskHistory, appendTaskHistory, clearTaskHistory } = require('./task
 const { loadEditorHistory, appendEditorHistory, clearEditorHistory } = require('./editor-history');
 const { detectGpuEnvironment } = require('./gpu-detect');
 const { resolveLocalSubtitlePath, guessVideoPathForSubtitle, MEDIA_EXTENSIONS: SUBTITLE_MEDIA_EXTENSIONS, AUDIO_EXTENSIONS, VIDEO_EXTENSIONS } = require('./subtitle-utils');
+const {
+    isVideoFile,
+    scanVideosInDirectory,
+    scanVideosInDirectoryAsync,
+} = require('./media-video-scan');
 const { isMediaExt } = require('../src/js/media-extensions-core');
 const { resolveMediaUrl } = require('./media-protocol');
 const { loadSettings, saveSettings, getSettingsFilePath } = require('./settings-data');
@@ -26,86 +31,7 @@ function editorWorkflowsData() {
     return require('./editor-workflows-data');
 }
 
-let _systemFontCache = null;
-let _systemFontCacheAt = 0;
-
-/**
- * Best-effort system font family list (cached ~10 min).
- * Windows: System.Drawing InstalledFontCollection via PowerShell.
- * Font names are Base64(UTF-8) on the wire so CP936/OEM consoles cannot mojibake CJK names.
- */
-function listSystemFontFamilies() {
-    const now = Date.now();
-    if (_systemFontCache && (now - _systemFontCacheAt) < 10 * 60 * 1000) {
-        return Promise.resolve(_systemFontCache);
-    }
-    const { execFile } = require('child_process');
-    return new Promise((resolve) => {
-        const finish = (fonts) => {
-            const list = Array.from(new Set(
-                (Array.isArray(fonts) ? fonts : [])
-                    .map((f) => String(f || '').trim())
-                    .filter(Boolean),
-            )).sort((a, b) => a.localeCompare(b, 'zh-CN'));
-            _systemFontCache = list;
-            _systemFontCacheAt = Date.now();
-            resolve(list);
-        };
-        if (process.platform === 'win32') {
-            const ps = [
-                '-NoProfile',
-                '-NonInteractive',
-                '-Command',
-                "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
-                + "$OutputEncoding = [Console]::OutputEncoding; "
-                + "Add-Type -AssemblyName System.Drawing; "
-                + "[System.Drawing.Text.InstalledFontCollection]::new().Families "
-                + "| ForEach-Object { "
-                + "[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([string]$_.Name)) "
-                + "}",
-            ];
-            execFile('powershell.exe', ps, {
-                windowsHide: true,
-                timeout: 15000,
-                maxBuffer: 2 * 1024 * 1024,
-                encoding: 'utf8',
-            }, (err, stdout) => {
-                if (err) {
-                    finish([]);
-                    return;
-                }
-                const fonts = [];
-                for (const line of String(stdout || '').split(/\r?\n/)) {
-                    const b64 = line.trim();
-                    if (!b64) continue;
-                    try {
-                        const name = Buffer.from(b64, 'base64').toString('utf8').trim();
-                        if (name) fonts.push(name);
-                    } catch (_) { /* skip bad line */ }
-                }
-                finish(fonts);
-            });
-            return;
-        }
-        execFile('fc-list', [':family'], {
-            timeout: 10000,
-            maxBuffer: 2 * 1024 * 1024,
-            encoding: 'utf8',
-            env: { ...process.env, LANG: process.env.LANG || 'C.UTF-8' },
-        }, (err, stdout) => {
-            if (err) {
-                finish([]);
-                return;
-            }
-            const names = [];
-            for (const line of String(stdout || '').split(/\r?\n/)) {
-                const family = line.split(',')[0].trim();
-                if (family) names.push(family);
-            }
-            finish(names);
-        });
-    });
-}
+const { registerExtensionsSystemFontsIpc } = require('./extensions-system-fonts');
 const {
     checkForAppUpdate,
     downloadAppUpdate,
@@ -113,39 +39,6 @@ const {
     openUpdateDownload,
     setUpdateProgressListener,
 } = require('./app-updater');
-
-function isVideoFile(filePath) {
-    return isMediaExt(filePath);
-}
-
-function scanVideosInDirectory(rootDir, recursive = true) {
-    const results = [];
-    const queue = [path.resolve(rootDir)];
-    const seen = new Set();
-
-    while (queue.length) {
-        const dir = queue.shift();
-        let entries;
-        try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
-        } catch {
-            continue;
-        }
-        for (const entry of entries) {
-            const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-                if (recursive) queue.push(full);
-                continue;
-            }
-            if (!entry.isFile() || !isVideoFile(full)) continue;
-            const key = process.platform === 'win32' ? full.toLowerCase() : full;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            results.push(full);
-        }
-    }
-    return results.sort((a, b) => a.localeCompare(b, 'zh-CN'));
-}
 
 const {
     readSubtitleDocument,
@@ -350,7 +243,7 @@ function setupExtensionsBridge(api, deps) {
         try {
             const folder = asString(payload.folder, 4096).trim();
             if (!folder || !fs.existsSync(folder)) return { ok: false, error: '文件夹不存在' };
-            const files = scanVideosInDirectory(folder, payload.recursive !== false);
+            const files = await scanVideosInDirectoryAsync(folder, payload.recursive !== false);
             return { ok: true, files };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
@@ -658,14 +551,7 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
-    register('transub-list-system-fonts', async () => {
-        try {
-            const fonts = await listSystemFontFamilies();
-            return { ok: true, fonts, count: fonts.length };
-        } catch (err) {
-            return { ok: false, error: err.message || String(err), fonts: [] };
-        }
-    });
+    registerExtensionsSystemFontsIpc(register);
 
     register('transub-get-glossary', async (_event, payload = {}) => {
         try {
@@ -813,58 +699,6 @@ function setupExtensionsBridge(api, deps) {
                 mediaId: fetched.mediaId,
                 entryCount: merged.entries.length,
                 bangumiSubjectName: fetched.bangumiSubjectName || null,
-                glossary: saved.glossary,
-                path: saved.path,
-            };
-        } catch (err) {
-            return { ok: false, error: err.message || String(err) };
-        }
-    });
-
-    register('transub-import-bad-pool-glossary', async (_event, payload = {}) => {
-        try {
-            const { buildBadPoolGlossary } = require('./asr-vocab-import');
-            const { mergeGlossaries, normalizeGlossary } = require('../src/js/subtitle-glossary-core');
-            const {
-                readGlossary,
-                writeGlossary,
-                readProjectGlossary,
-                writeProjectGlossary,
-            } = glossaryData();
-            const built = buildBadPoolGlossary(payload.root || '');
-            const scope = String(payload.scope || 'global').toLowerCase() === 'project'
-                ? 'project'
-                : 'global';
-            let base = { version: 1, entries: [] };
-            if (scope === 'project') {
-                const subPath = String(payload.subtitlePath || payload.path || '').trim();
-                if (!subPath) return { ok: false, error: '项目术语表需要字幕路径' };
-                const cur = readProjectGlossary(subPath);
-                if (cur?.glossary) base = cur.glossary;
-                const merged = mergeGlossaries(base, built.glossary);
-                const saved = writeProjectGlossary(subPath, merged);
-                if (!saved.ok) return saved;
-                return {
-                    ok: true,
-                    scope,
-                    entryCount: merged.entries.length,
-                    importedCount: built.glossary.entries.length,
-                    poolDir: built.dir,
-                    glossary: saved.glossary,
-                    path: saved.path,
-                };
-            }
-            const cur = readGlossary();
-            if (cur?.glossary) base = cur.glossary;
-            const merged = normalizeGlossary(mergeGlossaries(base, built.glossary));
-            const saved = writeGlossary(merged);
-            if (!saved.ok) return saved;
-            return {
-                ok: true,
-                scope: 'global',
-                entryCount: merged.entries.length,
-                importedCount: built.glossary.entries.length,
-                poolDir: built.dir,
                 glossary: saved.glossary,
                 path: saved.path,
             };

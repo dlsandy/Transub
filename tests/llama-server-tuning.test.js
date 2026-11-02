@@ -39,6 +39,8 @@ describe('llama-server-tuning-core', () => {
         assert.ok(args.includes('--spec-type'));
         assert.ok(args.includes('draft-simple'));
         assert.ok(args.includes('--spec-draft-n-max'));
+        assert.ok(args.includes('--spec-draft-n-ubatch'));
+        assert.strictEqual(args[args.indexOf('--spec-draft-n-ubatch') + 1], '256');
     });
 
     it('builds spawn args with Ornith MTP / MoE / FA presets', () => {
@@ -70,12 +72,103 @@ describe('llama-server-tuning-core', () => {
         assert.ok(args.includes('draft-mtp'));
         assert.ok(args.includes('--n-cpu-moe'));
         assert.ok(args.includes('14'));
+        assert.strictEqual(args[args.indexOf('--moe-cache-mib') + 1], '512');
         assert.ok(args.includes('-fa'));
         assert.ok(args.includes('--reasoning'));
         assert.ok(args.includes('off'));
         assert.ok(args.includes('--cache-type-k'));
         assert.ok(args.includes('--repeat-penalty'));
         assert.ok(!args.includes('-md'));
+    });
+
+    it('omits v0.7 flags on an older llama-server build', () => {
+        const args = tuning.buildLlamaServerSpawnArgs({
+            modelPath: 'C:\\models\\ornith.gguf',
+            port: 39281,
+            contextSize: 8192,
+            nGpuLayers: 99,
+            moe: true,
+            nCpuMoe: 14,
+            gpuTotalMiB: 10240,
+            specType: 'draft-mtp',
+            runtimeTag: 'b11029',
+        });
+        assert.ok(args.includes('--n-cpu-moe'));
+        assert.ok(!args.includes('--moe-cache-mib'));
+        assert.ok(!args.includes('--spec-draft-n-ubatch'));
+    });
+
+    it('builds spawn args with --n-cpu-ffn for dense hybrid', () => {
+        const args = tuning.buildLlamaServerSpawnArgs({
+            modelPath: 'C:\\models\\qwen38.gguf',
+            port: 39281,
+            contextSize: 8192,
+            nGpuLayers: 99,
+            paramBillion: 27,
+            weightGiB: 15.3,
+            nCpuFfn: 12,
+            gpuTotalMiB: 10240,
+            runtimeTag: 'b12032',
+        });
+        assert.ok(args.includes('--n-cpu-ffn'));
+        assert.strictEqual(args[args.indexOf('--n-cpu-ffn') + 1], '12');
+        assert.ok(!args.includes('--n-cpu-moe'));
+    });
+
+    it('does not pass --n-cpu-ffn alongside MoE --n-cpu-moe', () => {
+        const args = tuning.buildLlamaServerSpawnArgs({
+            modelPath: 'C:\\models\\moe.gguf',
+            port: 39281,
+            contextSize: 4096,
+            nGpuLayers: 40,
+            moe: true,
+            nCpuMoe: 18,
+            nCpuFfn: 12,
+            gpuTotalMiB: 10240,
+            runtimeTag: 'b12032',
+        });
+        assert.ok(args.includes('--n-cpu-moe'));
+        assert.ok(!args.includes('--n-cpu-ffn'));
+    });
+
+    it('omits --n-cpu-ffn on builds older than b10645', () => {
+        const args = tuning.buildLlamaServerSpawnArgs({
+            modelPath: 'C:\\models\\qwen38.gguf',
+            port: 39281,
+            contextSize: 8192,
+            nGpuLayers: 99,
+            nCpuFfn: 12,
+            weightGiB: 15.3,
+            paramBillion: 27,
+            gpuTotalMiB: 10240,
+            runtimeTag: 'b9993',
+        });
+        assert.ok(!args.includes('--n-cpu-ffn'));
+    });
+
+    it('resolveNCpuFfn auto-offloads heavy dense on tight VRAM', () => {
+        assert.strictEqual(tuning.resolveNCpuFfn({
+            paramBillion: 27,
+            weightGiB: 15.3,
+            nGpuLayers: 99,
+            gpuTotalMiB: 10240,
+            runtimeTag: 'b12032',
+        }), 16);
+        assert.strictEqual(tuning.resolveNCpuFfn({
+            paramBillion: 27,
+            weightGiB: 15.3,
+            nGpuLayers: 99,
+            gpuTotalMiB: 24576,
+            runtimeTag: 'b12032',
+        }), 0);
+        assert.strictEqual(tuning.resolveNCpuFfn({
+            paramBillion: 27,
+            weightGiB: 15.3,
+            nCpuFfn: 0,
+            nGpuLayers: 99,
+            gpuTotalMiB: 10240,
+            runtimeTag: 'b12032',
+        }), 0);
     });
 
     it('resolveNCpuMoe lowers offload on high VRAM', () => {
@@ -89,6 +182,116 @@ describe('llama-server-tuning-core', () => {
             nCpuMoe: 14,
             gpuTotalMiB: 10240,
         }), 14);
+        // Heavy Compact (~13GB) on 10GB card → raise expert offload.
+        assert.strictEqual(tuning.resolveNCpuMoe({
+            moe: true,
+            nCpuMoe: 18,
+            weightGiB: 13.1,
+            gpuTotalMiB: 10240,
+        }), 20);
+    });
+
+    it('resolvePreferNgl / resolveLlamaContextSize clamp for heavy MoE', () => {
+        assert.strictEqual(tuning.resolvePreferNgl({
+            nGpuLayers: 99,
+            weightGiB: 13.1,
+            gpuTotalMiB: 10240,
+        }), 20);
+        assert.strictEqual(tuning.resolvePreferNgl({
+            nGpuLayers: 40,
+            weightGiB: 13.1,
+            gpuTotalMiB: 10240,
+        }), 20);
+        // Mini ~10.5 on 10GB: allow higher -ngl than Compact.
+        assert.strictEqual(tuning.resolvePreferNgl({
+            nGpuLayers: 60,
+            weightGiB: 10.5,
+            gpuTotalMiB: 10240,
+        }), 60);
+        assert.strictEqual(tuning.resolvePreferNgl({
+            nGpuLayers: 99,
+            weightGiB: 10.5,
+            gpuTotalMiB: 8192,
+        }), 20);
+        assert.strictEqual(tuning.resolvePreferNgl({
+            nGpuLayers: 40,
+            weightGiB: 6,
+            gpuTotalMiB: 24576,
+        }), 40);
+        assert.strictEqual(tuning.resolveLlamaContextSize({
+            contextSize: 8192,
+            weightGiB: 13.1,
+            gpuTotalMiB: 10240,
+        }), 4096);
+        assert.strictEqual(tuning.resolveLlamaContextSize({
+            contextSize: 8192,
+            weightGiB: 17.8,
+            gpuTotalMiB: 8192,
+        }), 2048);
+    });
+
+    it('resolveLlamaServerOptsFromEntry maps Hy-MT2 30B Heretic MoE', () => {
+        const catalog = require('../src/js/advanced-managed-llm-catalog-core');
+        const entry = catalog.findCatalogEntry('hy-mt2-30b-a3b-heretic');
+        if (!entry) {
+            // Public checkout without proprietary Hy-MT2 30B Heretic catalog
+            return;
+        }
+        const opts = tuning.resolveLlamaServerOptsFromEntry(entry, { gpuTotalMiB: 10240 });
+        assert.strictEqual(opts.moe, true);
+        assert.strictEqual(opts.nCpuMoe, 18);
+        // Catalog prefers 40; weight vs 10GB clamps start -ngl to 20.
+        assert.strictEqual(opts.nGpuLayers, 20);
+        assert.strictEqual(opts.contextSize, 4096);
+        assert.strictEqual(opts.flashAttn, true);
+        assert.strictEqual(opts.forceSingleSlot, true);
+        const args = tuning.buildLlamaServerSpawnArgs({
+            modelPath: 'C:\\models\\hy-mt2-30b.gguf',
+            port: 39281,
+            contextSize: opts.contextSize,
+            nGpuLayers: opts.nGpuLayers,
+            ...opts,
+            gpuTotalMiB: 10240,
+        });
+        assert.ok(args.includes('--n-cpu-moe'));
+        // Spawn path further raises nCpuMoe from weight deficit.
+        assert.strictEqual(args[args.indexOf('--n-cpu-moe') + 1], '20');
+        assert.strictEqual(args[args.indexOf('-ngl') + 1], '20');
+    });
+
+    it('resolveLlamaServerOptsFromEntry maps Hy-MT2 30B Mini for 10GB vs 8GB', () => {
+        const catalog = require('../src/js/advanced-managed-llm-catalog-core');
+        const entry = catalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-mini');
+        if (!entry) {
+            // Public checkout without proprietary Hy-MT2 30B Heretic catalog
+            return;
+        }
+        const on10 = tuning.resolveLlamaServerOptsFromEntry(entry, { gpuTotalMiB: 10240 });
+        assert.strictEqual(on10.nGpuLayers, 60);
+        assert.strictEqual(on10.nCpuMoe, 12);
+        const args10 = tuning.buildLlamaServerSpawnArgs({
+            modelPath: 'C:\\models\\hy-mt2-30b-mini.gguf',
+            port: 39281,
+            ...on10,
+            nGpuLayers: on10.nGpuLayers,
+            contextSize: on10.contextSize,
+            gpuTotalMiB: 10240,
+        });
+        assert.strictEqual(args10[args10.indexOf('-ngl') + 1], '60');
+        assert.strictEqual(args10[args10.indexOf('--n-cpu-moe') + 1], '12');
+
+        const on8 = tuning.resolveLlamaServerOptsFromEntry(entry, { gpuTotalMiB: 8192 });
+        assert.strictEqual(on8.nGpuLayers, 20);
+        assert.ok(on8.contextSize <= 4096);
+        const args8 = tuning.buildLlamaServerSpawnArgs({
+            modelPath: 'C:\\models\\hy-mt2-30b-mini.gguf',
+            port: 39281,
+            ...on8,
+            nGpuLayers: on8.nGpuLayers,
+            contextSize: on8.contextSize,
+            gpuTotalMiB: 8192,
+        });
+        assert.ok(Number(args8[args8.indexOf('--n-cpu-moe') + 1]) >= 18);
     });
 
     it('resolveLlamaServerOptsFromEntry maps catalog llamaServer', () => {

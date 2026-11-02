@@ -16,6 +16,7 @@
 
     const PRO_GATED_TAB_TITLES = Object.freeze({
         'pro-smart-translate': '智能翻译',
+        'pro-decision-assist': '决策辅助',
         'pro-film-audio': '影视音频增强',
         'pro-qc-smart': '智能修复',
         'pro-reconstruct': '语境和理解重构',
@@ -109,6 +110,9 @@
             const prevEntitled = getAdvancedEntitled();
             const wasKnown = getAdvancedEntitlementKnown();
             setAdvancedEntitledState(!!entitled);
+            // Mark known before mode fallback. Options apply skips the Pro→推理
+            // downgrade until this flag is set, so a late set would leave free users on 混合翻译.
+            setAdvancedEntitlementKnown(true);
             setFreePipelineTranslate((freeInfo && typeof freeInfo === 'object')
                 ? {
                     ok: !!freeInfo.ok,
@@ -141,6 +145,7 @@
             // with disabled-but-checked boxes that block save / fail every batch file.
             if (!getAdvancedEntitled()) {
                 if (els.filmAudioEnhanceCheck) els.filmAudioEnhanceCheck.checked = false;
+                if (els.enhanceForVadOnlyCheck) els.enhanceForVadOnlyCheck.checked = false;
                 if (els.filmVadPresetCheck) els.filmVadPresetCheck.checked = false;
                 if (readTranslateModeFromForm() === 'smart' || els.smartTranslateCheck?.checked) {
                     const llmId = String(els.engineLlmMtModelSelect?.value || '').trim();
@@ -162,7 +167,6 @@
                     applyProSoftwareCreditDefault({ persist: true });
                 }
             }
-            setAdvancedEntitlementKnown(true);
             syncSmartTranslateUi();
             syncAdvancedFeaturesGate();
             syncMtModelChipUi();
@@ -180,6 +184,7 @@
             }
             updateTranslateStyleUi();
             try { global.TransubScenePresetsUi?.onProEntitlementChanged?.(); } catch (_) { /* ignore */ }
+            try { global.TransubSubtitleBurnUi?.onProEntitlementChanged?.(); } catch (_) { /* ignore */ }
         }
 
         function syncEngineModelsLabGate() {

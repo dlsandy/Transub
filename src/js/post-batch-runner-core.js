@@ -693,7 +693,10 @@ async function runPostBatchAutoFix(onlyItems = null) {
         doViewingPunct, doSoftenDiscourse, doSoftenOnomatopoeia, doCompactInterjections,
         taskNow, doSpacePunct, doPostprocess,
     } = flags;
-    if (!flags.shouldRun) return;
+    if (!flags.shouldRun) {
+        appendLog('观影后处理：当前任务无需批量后处理（shouldRun=false）', 'info');
+        return;
+    }
 
     const subtitleTargetLang = settingsNormApi.normalizeSubtitleTargetLang
         ? settingsNormApi.normalizeSubtitleTargetLang(

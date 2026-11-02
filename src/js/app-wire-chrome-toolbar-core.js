@@ -127,6 +127,12 @@
                 updateStartButton: late(h, 'updateStartButton'),
                 removeSelected: late(h, 'removeSelected'),
                 toggleTaskSelectAll: late(h, 'toggleTaskSelectAll'),
+                applyQuickTargetChipValue: late(h, 'applyQuickTargetChipValue'),
+                toQuickTargetLang: (...a) => h.toQuickTargetLang(...a),
+                updateParamsSummary: late(h, 'updateParamsSummary'),
+                syncParamsMoreChipUi: late(h, 'syncParamsMoreChipUi'),
+                applyMtTargetCapabilityToForm: late(h, 'applyMtTargetCapabilityToForm'),
+                updateRecipeCapsule: late(h, 'updateRecipeCapsule'),
             }),
         );
         h.bindMainUiExtras = function bindMainUiExtras() {

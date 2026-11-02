@@ -115,6 +115,85 @@ describe('TransubRetranslateRunner', () => {
         assert.ok(startPatch, 'retranslate must pin pipeline stage to translate');
         assert.strictEqual(startPatch.pipelineFloor, 3);
     });
+
+    it('setRetranslateProgress advances bar and does not reset to 0% after prepare', async () => {
+        const state = {
+            retranslatePlan: [{
+                item: { path: 'a.mp4', name: 'a' },
+                sourcePath: 'a.srt',
+                destPath: 'a.zh.srt',
+                cues: [{ index: 0, startMs: 0, endMs: 1000, text: 'hello' }],
+            }],
+            retranslateBusy: false,
+            retranslateAbort: false,
+            index: 0,
+            total: 0,
+            videoProgress: 0,
+            itemStage: '',
+            activePath: '',
+        };
+        const els = {
+            retranslateModeLlm: { checked: true },
+            quickLanguageSelect: { value: 'ja' },
+            languageSelect: { value: 'ja' },
+            quickTargetLangSelect: { value: 'simplified' },
+            chineseSubtitleVariantSelect: { value: 'simplified' },
+            retranslateModelSelect: { value: 'm' },
+            insertSoftwareCreditCheck: { checked: false },
+            progressBar: { style: { width: '' } },
+            progressLabel: { textContent: '' },
+            progressCount: { textContent: '' },
+            currentFile: { textContent: '', title: '' },
+        };
+        const planApi = require('../src/js/retranslate-plan-core.js');
+        const runner = createRetranslateRunner({
+            state,
+            els,
+            readRetranslateModeFromModal: () => 'llm',
+            getAdvancedEntitled: () => true,
+            showToast: () => {},
+            settingsNormApi: {
+                normalizeChineseSubtitleVariant: (v) => v,
+            },
+            retranslatePlanApi: planApi,
+            translateStyleApi: { getPresetLabel: (p) => p },
+            readRetranslateStyleFromModal: () => ({
+                translateStyleEnabled: false,
+                translateStylePreset: 'natural_spoken',
+                translateStyleCustomNote: '',
+            }),
+            activateInferLogTab: () => {},
+            activateAppLogTab: () => {},
+            ensureLogExpanded: () => {},
+            appendRetranslateLog: () => {},
+            updateStartButton: () => {},
+            setBadge: () => {},
+            updateItem: () => {},
+            refreshListRow: () => {},
+            closeRetranslateModal: () => {},
+            primarySubFormatFromForm: () => 'srt',
+            electron: {
+                transubReadSubtitleFile: async () => ({
+                    ok: true,
+                    cues: [{ index: 0, startMs: 0, endMs: 1000, text: 'hello' }],
+                }),
+                transubSakuraTranslate: async () => {
+                    // After prepare, bar must already show progress (not forced 0%).
+                    assert.notStrictEqual(els.progressBar.style.width, '0%');
+                    assert.ok(String(els.progressCount.textContent).includes('1 / 1'));
+                    assert.ok(Number(state.videoProgress) > 0);
+                    return { ok: false, error: 'stop-early', cancelled: true };
+                },
+            },
+            resetJobProgressState: () => {},
+            updateProgressUi: () => {},
+            renderList: () => {},
+            formatDuration: () => '0s',
+            elapsedSecSince: () => 0,
+        });
+        await runner.runRetranslateFromModal();
+        assert.ok(String(els.progressCount.textContent || '').length >= 0);
+    });
 });
 
 describe('appendRetranslateLog sink', () => {

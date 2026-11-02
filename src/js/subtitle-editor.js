@@ -14,6 +14,7 @@
     if (!oe) throw new Error("subtitle-qc-core.js must load before subtitle-editor.js");
     if (!z) throw new Error("subtitle-meta-core.js must load before subtitle-editor.js");
     if (!se) throw new Error("subtitle-glossary-core.js must load before subtitle-editor.js");
+    const richTagsApi = T.TransubSensevoiceRichTags || null;
     if (!_) throw new Error("subtitle-text-presets-core.js must load before subtitle-editor.js");
     if (!Xr) throw new Error("subtitle-workflows-core.js must load before subtitle-editor.js");
     if (!Ne) throw new Error("subtitle-fluency-core.js must load before subtitle-editor.js");
@@ -33,7 +34,10 @@
     if (!j?.installAssPosDrag) throw new Error("subtitle-editor/ass-pos-drag.js must load before subtitle-editor.js");
     if (!j?.installSubtitleCatUploadUi) throw new Error("subtitle-editor/subtitlecat-upload-ui.js must load before subtitle-editor.js");
     if (!j?.installGlossaryImportUi) throw new Error("subtitle-editor/glossary-import-ui.js must load before subtitle-editor.js");
+    if (!j?.installGlossaryFormUi) throw new Error("subtitle-editor/glossary-form-ui.js must load before subtitle-editor.js");
+    if (!j?.installGlossaryGendictUi) throw new Error("subtitle-editor/glossary-gendict-ui.js must load before subtitle-editor.js");
     if (!j?.playheadScrub?.installPlayheadScrub) throw new Error("subtitle-editor/playhead-scrub.js must load before subtitle-editor.js");
+    if (!j?.waveform?.createWaveformView) throw new Error("subtitle-editor/waveform.js must load before subtitle-editor.js");
     if (!T.TransubAssStyles) throw new Error("ass-styles-core.js must load before subtitle-editor.js");
     if (!T.TransubAssOverride) throw new Error("ass-override-core.js must load before subtitle-editor.js");
     const {
@@ -150,6 +154,10 @@
         waveform: {
             peaks: null,
             durationSec: 0,
+            startMs: 0,
+            normRef: 0,
+            truncated: !1,
+            detail: null,
             videoPath: "",
             loading: !1,
             cacheKey: ""
@@ -731,7 +739,7 @@
     }
 
     function fs() {
-        document.title = t.path ? `${t.dirty?"* ":""}Transub Editor（内置·即将停用） \u2014 ${G(t.path)}` : "Transub Editor（内置·即将停用）"
+        document.title = t.path ? `${t.dirty?"* ":""}Transub Editor \u2014 ${G(t.path)}` : "Transub Editor"
     }
 
     function P(n) {
@@ -1013,8 +1021,10 @@
         const i = t.cueMeta[n],
             s = !!i?.low,
             a = i?.confidence != null && Number.isFinite(Number(i.confidence)) ? Math.round(Number(i.confidence) * 100) : null,
-            o = i?.source === "asr" ? "ASR" : i?.source === "heuristic" ? "\u4F30\u8BA1" : i?.source === "sidecar" ? "\u5143\u6570\u636E" : "";
-        return s ? `\u4F4E\u7F6E\u4FE1${a!=null?` ${a}%`:""}${o?` \xB7 ${o}`:""}\uFF1A\u5EFA\u8BAE\u68C0\u67E5\u6216\u91CD\u8F6C\u5199` : i?.source === "asr" && a != null ? `ASR \u7F6E\u4FE1 ${a}% \xB7 ${r||""}` : r || ""
+            o = i?.source === "asr" ? "ASR" : i?.source === "heuristic" ? "\u4F30\u8BA1" : i?.source === "sidecar" ? "\u5143\u6570\u636E" : "",
+            richTitle = richTagsApi?.formatRichTagsBadge?.(t.cues[n], i)?.title || "";
+        const base = s ? `\u4F4E\u7F6E\u4FE1${a!=null?` ${a}%`:""}${o?` \xB7 ${o}`:""}\uFF1A\u5EFA\u8BAE\u68C0\u67E5\u6216\u91CD\u8F6C\u5199` : i?.source === "asr" && a != null ? `ASR \u7F6E\u4FE1 ${a}% \xB7 ${r||""}` : r || "";
+        return richTitle ? (base ? `${base} \xB7 ${richTitle}` : richTitle) : base
     }
 
     function $a(n, r) {
@@ -1031,7 +1041,8 @@
             h = hs(n),
             v = b(ys(n, l)),
             styleCol = !!(t.showAssStyleColumn || t.format === "ass" || t.format === "ssa"),
-            styleName = String(i?.ass?.style || "").trim() || "Default";
+            styleName = String(i?.ass?.style || "").trim() || "Default",
+            richBadge = richTagsApi?.formatRichTagsBadge?.(i, t.cueMeta[n])?.html || "";
         return `
             <tr class="${u?"cue-row-low-conf":""}" data-cue-idx="${n}" title="${v}">
                 <td class="text-xs tabular-nums align-middle col-idx" style="color:var(--ed-muted)">${h}${n+1}${u?'<span class="low-conf-dot" aria-label="\u4F4E\u7F6E\u4FE1">!</span>':""}</td>
@@ -1040,7 +1051,7 @@
                 <td class="text-[11px] tabular-nums align-middle ${o.dur?"cell-warn":""}">${b(xt(V(i)))}</td>
                 <td class="cue-cps-cell align-middle ${g?"hot":""}">${m!=null?b(m):"\u2014"}</td>
                 ${styleCol?`<td class="cell-style align-middle col-style">${As?.renderStyleCellHtml?.(n, styleName) || b(styleName)}</td>`:""}
-                <td class="cell-text align-middle">${b(l||"\u2014")}</td>
+                <td class="cell-text align-middle">${richBadge}${b(l||"\u2014")}</td>
                 ${r?`<td class="cell-pair align-middle" title="${b(c||"")}">${b(c||"\u2014")}</td>`:""}
             </tr>`
     }
@@ -1077,7 +1088,12 @@
                 textIdx = styleCol ? 6 : 5,
                 pairIdx = styleCol ? 7 : 6,
                 styleName = String(i?.ass?.style || "").trim() || "Default";
-            styleCol && l[5] && (As?.syncStyleCell ? As.syncStyleCell(l[5], n, styleName) : (l[5].textContent = styleName, l[5].title = styleName)), l[textIdx] && (l[textIdx].textContent = c || "\u2014"), U() && l[pairIdx] && (l[pairIdx].textContent = String(an(i) || "").replace(/\s+/g, " ").trim() || "\u2014", l[pairIdx].title = l[pairIdx].textContent === "\u2014" ? "" : l[pairIdx].textContent)
+            styleCol && l[5] && (As?.syncStyleCell ? As.syncStyleCell(l[5], n, styleName) : (l[5].textContent = styleName, l[5].title = styleName));
+            if (l[textIdx]) {
+                const richBadge = richTagsApi?.formatRichTagsBadge?.(i, t.cueMeta[n])?.html || "";
+                l[textIdx].innerHTML = `${richBadge}${b(c || "\u2014")}`
+            }
+            U() && l[pairIdx] && (l[pairIdx].textContent = String(an(i) || "").replace(/\s+/g, " ").trim() || "\u2014", l[pairIdx].title = l[pairIdx].textContent === "\u2014" ? "" : l[pairIdx].textContent)
         }
         n > 0 && vs(n - 1), n < t.cues.length - 1 && vs(n + 1)
     }
@@ -1563,7 +1579,7 @@ ${t.dualLineOrder||""}`;
     }
     async function Is(n) {
         if (!e.video) return;
-        if (e.video.pause(), e.video.removeAttribute("src"), e.video.load(), t.videoPath = n || "", t.waveform.peaks = null, t.waveform.cacheKey = "", t.waveform.videoPath = "", !n) {
+        if (e.video.pause(), e.video.removeAttribute("src"), e.video.load(), t.videoPath = n || "", t.waveform.peaks = null, t.waveform.detail = null, t.waveform.normRef = 0, t.waveform.startMs = 0, t.waveform.cacheKey = "", t.waveform.videoPath = "", waveView?.invalidateDetail?.(), !n) {
             nr(), Ge();
             return
         }
@@ -4156,7 +4172,7 @@ ${t.dualLineOrder||""}`;
     }
 
     function et() {
-        t.glossaryEditingId = "", e.glossaryCanonical && (e.glossaryCanonical.value = ""), e.glossaryAliases && (e.glossaryAliases.value = ""), e.glossaryCaseSensitive && (e.glossaryCaseSensitive.checked = !1), e.glossaryEnabled && (e.glossaryEnabled.checked = !0), wr()
+        t.glossaryEditingId = "", e.glossaryCanonical && (e.glossaryCanonical.value = ""), e.glossaryAliases && (e.glossaryAliases.value = ""), e.glossaryNote && (e.glossaryNote.value = ""), e.glossaryRole && (e.glossaryRole.value = "term"), e.glossaryPromptInject && (e.glossaryPromptInject.value = "hit"), e.glossaryCaseSensitive && (e.glossaryCaseSensitive.checked = !1), e.glossaryEnabled && (e.glossaryEnabled.checked = !0), e.glossaryAsrReplace && (e.glossaryAsrReplace.checked = !1), glossaryFormUi?.clearPostReplaceForm?.(), wr()
     }
 
     function li(n) {
@@ -4164,7 +4180,7 @@ ${t.dualLineOrder||""}`;
             et();
             return
         }
-        t.glossaryEditingId = n.id, e.glossaryCanonical && (e.glossaryCanonical.value = n.canonical || ""), e.glossaryAliases && (e.glossaryAliases.value = (n.aliases || []).join(", ")), e.glossaryCaseSensitive && (e.glossaryCaseSensitive.checked = !!n.caseSensitive), e.glossaryEnabled && (e.glossaryEnabled.checked = n.enabled !== !1), wr()
+        t.glossaryEditingId = n.id, e.glossaryCanonical && (e.glossaryCanonical.value = n.canonical || ""), e.glossaryAliases && (e.glossaryAliases.value = (n.aliases || []).join(", ")), e.glossaryNote && (e.glossaryNote.value = n.note || ""), e.glossaryRole && (e.glossaryRole.value = n.role || "term"), e.glossaryPromptInject && (e.glossaryPromptInject.value = n.promptInject || (n.role === "character" ? "always" : "hit")), e.glossaryCaseSensitive && (e.glossaryCaseSensitive.checked = !!n.caseSensitive), e.glossaryEnabled && (e.glossaryEnabled.checked = n.enabled !== !1), e.glossaryAsrReplace && (e.glossaryAsrReplace.checked = !!n.asrReplace), glossaryFormUi?.fillPostReplaceForm?.(n), wr()
     }
 
     function wr() {
@@ -4177,8 +4193,9 @@ ${t.dualLineOrder||""}`;
         e.glossaryEntryList.innerHTML = n.map(r => {
             const i = r.id === t.glossaryEditingId ? " active" : "",
                 s = (r.aliases || []).join(" \xB7 ") || "\uFF08\u65E0\u522B\u540D\uFF09",
-                a = r.enabled === !1 ? "\uFF08\u5DF2\u505C\u7528\uFF09" : "";
-            return `<button type="button" class="glossary-entry-item${i}" data-glossary-id="${b(r.id)}" role="listitem"><span class="g-can">${b(r.canonical)}${b(a)}</span><span class="g-alias">${b(s)}</span></button>`
+                a = r.enabled === !1 ? "\uFF08\u5DF2\u505C\u7528\uFF09" : "",
+                o = se.glossaryRoleLabelZh?.(r.role) || "";
+            return `<button type="button" class="glossary-entry-item${i}" data-glossary-id="${b(r.id)}" role="listitem"><span class="g-can">${b(r.canonical)}${b(a)}${o?`<span class="g-role">\xB7${b(o)}</span>`:""}</span><span class="g-alias">${b(s)}</span></button>`
         }).join("")
     }
 
@@ -4304,8 +4321,15 @@ ${t.dualLineOrder||""}`;
             id: t.glossaryEditingId || void 0,
             canonical: n,
             aliases: e.glossaryAliases?.value || "",
+            note: e.glossaryNote?.value || "",
+            role: e.glossaryRole?.value || "term",
+            promptInject: e.glossaryPromptInject?.value || "",
             caseSensitive: !!e.glossaryCaseSensitive?.checked,
-            enabled: e.glossaryEnabled?.checked !== !1
+            enabled: e.glossaryEnabled?.checked !== !1,
+            asrReplace: !!e.glossaryAsrReplace?.checked,
+            postReplace: glossaryFormUi?.readPostReplaceFromForm?.({
+                role: e.glossaryRole?.value || "term"
+            })
         });
         if (!r.ok) {
             d(r.error || "\u4FDD\u5B58\u6761\u76EE\u5931\u8D25", "err");
@@ -6096,41 +6120,27 @@ ${t.dualLineOrder||""}`;
         e.waveformLoading && (e.waveformLoading.classList.toggle("hidden", !i), e.waveformLoading.setAttribute("aria-hidden", i ? "false" : "true")), e.waveformLoadingText && (e.waveformLoadingText.textContent = s), e.waveformToggle && (e.waveformToggle.classList.toggle("is-loading", i), i ? e.waveformToggle.title = s : t.waveformEnabled && (e.waveformToggle.title = "\u6CE2\u5F62\u65F6\u95F4\u8F74\uFF1A\u5F00\u542F\uFF08\u9ED8\u8BA4\uFF09")), e.waveformRow && e.waveformRow.classList.toggle("is-loading", i)
     }
 
+    const waveView = j.waveform.createWaveformView({
+        getCanvas: () => e.timelineWaveform,
+        getTrack: () => e.waveformTrack || e.timelineTrack,
+        getWaveform: () => t.waveform,
+        getTimeline: () => t.timeline,
+        getMediaDurationMs: () => {
+            const dur = e.video && Number.isFinite(e.video.duration) ? e.video.duration : 0;
+            return dur > 0 ? Math.round(dur * 1000) : (t.timeline.durationMs || 0)
+        },
+        getVideoPath: () => t.videoPath || "",
+        getDpr: () => window.devicePixelRatio || 1,
+        canExtract: () => !!(p?.ffmpegExtractWaveform && t.videoPath && t.waveformEnabled && !t.waveform.loading),
+        extract: (req) => p.ffmpegExtractWaveform(ln({
+            path: t.videoPath,
+            ...req
+        }))
+    });
+
     function Ge() {
-        const n = e.timelineWaveform;
-        if (!n || !t.waveformEnabled) return;
-        const r = t.waveform.peaks,
-            i = e.waveformTrack || e.timelineTrack;
-        if (!i || !Array.isArray(r) || !r.length) {
-            const te = n.getContext?.("2d");
-            te && te.clearRect(0, 0, n.width || 1, n.height || 1);
-            return
-        }
-        const s = i.getBoundingClientRect(),
-            a = Math.max(1, Math.floor(s.width)),
-            o = Math.max(1, Math.floor(s.height)),
-            l = Math.min(2, window.devicePixelRatio || 1),
-            c = Math.floor(a * l),
-            u = Math.floor(o * l),
-            m = n.width !== c || n.height !== u;
-        m && (n.width = c, n.height = u, n.style.width = `${a}px`, n.style.height = `${o}px`);
-        const f = n.getContext("2d");
-        if (!f) return;
-        m && f.setTransform(l, 0, 0, l, 0, 0), f.clearRect(0, 0, a, o);
-        const g = o / 2;
-        f.fillStyle = "rgba(148, 163, 184, 0.9)";
-        const h = Math.max(1, (Number(t.waveform.durationSec) > 0 ? t.waveform.durationSec * 1e3 : t.timeline.durationMs) || 1),
-            v = Math.max(0, Math.floor(t.timeline.viewStartMs / h * r.length)),
-            y = Math.min(r.length, Math.ceil(t.timeline.viewEndMs / h * r.length)),
-            k = Math.max(1, y - v),
-            q = Math.max(1, Math.floor(k / a));
-        for (let te = 0; te < a; te += 1) {
-            const N = Math.min(r.length - 1, v + Math.floor(te / a * k));
-            let W = r[N] || 0;
-            for (let M = 1; M < q && N + M < r.length; M += 1) W = Math.max(W, r[N + M] || 0);
-            const B = Math.max(1, W * (o * .45));
-            f.fillRect(te, g - B, 1, B * 2)
-        }
+        if (!e.timelineWaveform || !t.waveformEnabled) return;
+        waveView.paint(), waveView.syncDetail()
     }
     async function Wn(n = {}) {
         const r = n.announce === !0;
@@ -6147,8 +6157,11 @@ ${t.dualLineOrder||""}`;
             return
         }
         const i = t.videoPath,
-            s = `${i}|${t.timeline.durationMs||0}`;
-        if (t.waveform.cacheKey === s && Array.isArray(t.waveform.peaks)) {
+            req = j.waveform.buildOverviewRequest({
+                mediaDurationMs: waveView.mediaDurationMs()
+            }),
+            s = `${i}|${req.cacheKey}`;
+        if (t.waveform.cacheKey === s && Array.isArray(t.waveform.peaks) && t.waveform.peaks.length) {
             ue(!1), Ge(), r && d("\u6CE2\u5F62\u5DF2\u5C31\u7EEA", "ok");
             return
         }
@@ -6161,8 +6174,7 @@ ${t.dualLineOrder||""}`;
         try {
             const o = await p.ffmpegExtractWaveform(ln({
                 path: i,
-                peaksPerSec: 20,
-                maxPeaks: 12e3
+                ...req
             }));
             if (a !== t.waveformLoadGen || t.videoPath !== i) {
                 ue(!1);
@@ -6180,7 +6192,7 @@ ${t.dualLineOrder||""}`;
                 ue(!1), o?.error ? d(o.error, "err") : d("\u6CE2\u5F62\u52A0\u8F7D\u5931\u8D25", "err");
                 return
             }
-            t.waveform.peaks = o.peaks, t.waveform.durationSec = Number(o.durationSec) || 0, t.waveform.videoPath = i, t.waveform.cacheKey = s, Ge(), ue(!1), d("\u6CE2\u5F62\u5DF2\u5C31\u7EEA", "ok")
+            j.waveform.assignOverview(t.waveform, o, waveView.mediaDurationMs()), t.waveform.videoPath = i, t.waveform.cacheKey = s, waveView.invalidateDetail(), waveView.paint(), waveView.syncDetail(), ue(!1), d("\u6CE2\u5F62\u5DF2\u5C31\u7EEA", "ok")
         } catch (o) {
             a === t.waveformLoadGen && t.videoPath === i && (ue(!1), d(o?.message || "\u6CE2\u5F62\u52A0\u8F7D\u5931\u8D25", "err"))
         } finally {
@@ -6932,6 +6944,8 @@ ${t.dualLineOrder||""}`;
         basename: G
     });
     let glossaryImportUi = null;
+    let glossaryFormUi = null;
+    let glossaryGendictUi = null;
 
     function bindGlossaryImportUiOnce() {
         if (glossaryImportUi) return glossaryImportUi;
@@ -6951,6 +6965,36 @@ ${t.dualLineOrder||""}`;
             getGlossaryScope: ko,
         });
         return glossaryImportUi;
+    }
+
+    function bindGlossaryFormUiOnce() {
+        if (glossaryFormUi) return glossaryFormUi;
+        glossaryFormUi = j.installGlossaryFormUi({
+            els: e,
+            glossaryCore: se,
+        });
+        return glossaryFormUi;
+    }
+
+    function bindGlossaryGendictUiOnce() {
+        if (glossaryGendictUi) return glossaryGendictUi;
+        glossaryGendictUi = j.installGlossaryGendictUi({
+            state: t,
+            els: e,
+            setStatus: d,
+            confirm: ie,
+            openModal: Q,
+            closeModal: K,
+            gendictCore: T.TransubGlossaryGendict,
+            glossaryCore: se,
+            refreshGlossaryUi: () => {
+                Mr();
+                et();
+                Fe();
+            },
+            saveGlossary: kr,
+        });
+        return glossaryGendictUi;
     }
     async function runEditorBilingualReview() {
         const n = T.TransubBilingualReview;
@@ -7981,6 +8025,12 @@ ${t.dualLineOrder||""}`;
             Number.isFinite(l) && l >= 0 && X(l)
         }), e.glossaryAddBtn?.addEventListener("click", Io), e.glossarySaveEntryBtn?.addEventListener("click", () => {
             Ao()
+        }), e.glossaryRole?.addEventListener("change", () => {
+            const s = e.glossaryRole.value;
+            if (s === "character" && e.glossaryPromptInject && e.glossaryPromptInject.value === "hit") e.glossaryPromptInject.value = "always";
+            if (s === "preReplace" && e.glossaryAsrReplace) e.glossaryAsrReplace.checked = !0;
+            if (s === "term" && e.glossaryPromptInject && e.glossaryPromptInject.value === "always") e.glossaryPromptInject.value = "hit";
+            glossaryFormUi?.syncPostReplaceVisibility?.(s, s === "postReplace")
         }), e.glossaryDeleteEntryBtn?.addEventListener("click", () => {
             Fo()
         }), e.glossaryImportBtn?.addEventListener("click", () => {
@@ -8743,16 +8793,34 @@ ${t.dualLineOrder||""}`;
             textPresetQuickSelect: document.getElementById("editorTextPresetQuickSelect"),
             glossaryCanonical: document.getElementById("editorGlossaryCanonical"),
             glossaryAliases: document.getElementById("editorGlossaryAliases"),
+            glossaryNote: document.getElementById("editorGlossaryNote"),
+            glossaryRole: document.getElementById("editorGlossaryRole"),
+            glossaryPromptInject: document.getElementById("editorGlossaryPromptInject"),
+            glossaryPostReplaceDetails: document.getElementById("editorGlossaryPostReplaceDetails"),
+            glossaryPostReplaceEnabled: document.getElementById("editorGlossaryPostReplaceEnabled"),
+            glossaryPostSrcInc: document.getElementById("editorGlossaryPostSrcInc"),
+            glossaryPostSrcExc: document.getElementById("editorGlossaryPostSrcExc"),
+            glossaryPostDstInc: document.getElementById("editorGlossaryPostDstInc"),
+            glossaryPostDstExc: document.getElementById("editorGlossaryPostDstExc"),
+            glossaryPostAudioEvent: document.getElementById("editorGlossaryPostAudioEvent"),
+            glossaryPostReplacePairs: document.getElementById("editorGlossaryPostReplacePairs"),
             glossaryCaseSensitive: document.getElementById("editorGlossaryCaseSensitive"),
             glossaryEnabled: document.getElementById("editorGlossaryEnabled"),
+            glossaryAsrReplace: document.getElementById("editorGlossaryAsrReplace"),
             glossaryAddBtn: document.getElementById("editorGlossaryAddBtn"),
             glossarySaveEntryBtn: document.getElementById("editorGlossarySaveEntryBtn"),
             glossaryDeleteEntryBtn: document.getElementById("editorGlossaryDeleteEntryBtn"),
             glossaryImportBtn: document.getElementById("editorGlossaryImportBtn"),
             glossaryAnilistBtn: document.getElementById("editorGlossaryAnilistBtn"),
-            glossaryBadPoolBtn: document.getElementById("editorGlossaryBadPoolBtn"),
             glossaryAnilistHelpSteps: document.getElementById("editorGlossaryAnilistHelpSteps"),
             glossaryAnilistHelpNote: document.getElementById("editorGlossaryAnilistHelpNote"),
+            gendictConfirmModal: document.getElementById("editorGendictConfirmModal"),
+            gendictConfirmIntro: document.getElementById("editorGendictConfirmIntro"),
+            gendictDraftList: document.getElementById("editorGendictDraftList"),
+            gendictSelectAllBtn: document.getElementById("editorGendictSelectAllBtn"),
+            gendictSelectNoneBtn: document.getElementById("editorGendictSelectNoneBtn"),
+            gendictConfirmBtn: document.getElementById("editorGendictConfirmBtn"),
+            gendictConfirmCancel: document.getElementById("editorGendictConfirmCancel"),
             anilistImportModal: document.getElementById("editorAnilistImportModal"),
             anilistImportTitle: document.getElementById("editorAnilistImportTitle"),
             anilistImportIntro: document.getElementById("editorAnilistImportIntro"),
@@ -8765,6 +8833,7 @@ ${t.dualLineOrder||""}`;
             anilistImportCancel: document.getElementById("editorAnilistImportCancel"),
             glossaryExportBtn: document.getElementById("editorGlossaryExportBtn"),
             glossaryScanBtn: document.getElementById("editorGlossaryScanBtn"),
+            glossaryGendictBtn: document.getElementById("editorGlossaryGendictBtn"),
             breakWordsBtn: document.getElementById("editorBreakWordsBtn"),
             splitOpenBreakWordsBtn: document.getElementById("editorSplitOpenBreakWordsBtn"),
             smartSplitOpenBreakWordsBtn: document.getElementById("editorSmartSplitOpenBreakWordsBtn"),
@@ -9109,7 +9178,7 @@ ${t.dualLineOrder||""}`;
 
     function daAfterFragments() {
         if (!(!p?.isDesktop || !document.getElementById("editorCueBody")))
-            if (Dl(), bindGlossaryImportUiOnce(), H?.bindUi?.(), Bt?.bindUi?.(), Bt?.refreshWorkspaceUi?.(), Tg?.bindUi?.(), As?.bindUi?.(), Ov?.bindUi?.(), Pd?.bindUi?.(), Bl?.wireUi?.(), Brt?.wireUi?.(), Bdel?.wireUi?.(), Bfill?.wireUi?.(), dl(), [e.splitModal, e.findReplaceModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.batchRetranslateModal, e.batchDeleteModal, e.fillerCheckModal, e.compressRepModal, e.viewingPunctModal, e.qcModal, e.glossaryModal, e.anilistImportModal, e.assStylesModal, e.textPresetsModal, e.workflowModal, e.breakWordsModal, e.retranscribeDurModal, e.shortcutsModal].forEach(n => {
+            if (Dl(), bindGlossaryImportUiOnce(), bindGlossaryFormUiOnce(), bindGlossaryGendictUiOnce(), H?.bindUi?.(), Bt?.bindUi?.(), Bt?.refreshWorkspaceUi?.(), Tg?.bindUi?.(), As?.bindUi?.(), Ov?.bindUi?.(), Pd?.bindUi?.(), Bl?.wireUi?.(), Brt?.wireUi?.(), Bdel?.wireUi?.(), Bfill?.wireUi?.(), dl(), [e.splitModal, e.findReplaceModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.batchRetranslateModal, e.batchDeleteModal, e.fillerCheckModal, e.compressRepModal, e.viewingPunctModal, e.qcModal, e.glossaryModal, e.gendictConfirmModal, e.anilistImportModal, e.assStylesModal, e.textPresetsModal, e.workflowModal, e.breakWordsModal, e.retranscribeDurModal, e.shortcutsModal].forEach(n => {
                     n?.classList.contains("hidden") && n.setAttribute("inert", "")
                 }), Ll(), vt(), wo(), Pr(), St.loadWorkflows(), ka(), void loadSystemFontsForAss(), p?.onTransubComputeTaskChanged?.(n => {
                     t.computeBusy = !!n?.busy, t.computeBusyLabel = n?.busy ? String(n.label || n.kind || "").trim() : "", t.computeBusySince = n?.busy ? Number(n.since) || Date.now() : 0, ar(), Qe()

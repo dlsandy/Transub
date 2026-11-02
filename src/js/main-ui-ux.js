@@ -159,6 +159,9 @@
             confirmSecondary.classList.remove('hidden');
         }
 
+        confirmTertiary.className = options.tertiaryVariant === 'button'
+            ? 'px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white'
+            : 'px-4 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100';
         if (options.tertiaryLabel) {
             confirmTertiary.textContent = options.tertiaryLabel;
             confirmTertiary.classList.remove('hidden');

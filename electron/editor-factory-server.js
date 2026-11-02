@@ -8,6 +8,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { buildHealthSnapshot } = require('./editor-factory-entitlement');
 const factoryHandlers = require('./editor-factory-handlers');
+const factoryClients = require('./editor-factory-clients');
 
 /** @type {import('http').Server | null} */
 let server = null;
@@ -19,6 +20,8 @@ let port = null;
 let factoryJsonPath = null;
 /** @type {Map<string, { kind: string, since: number, lockToken?: string }>} */
 const editorJobs = new Map();
+/** @type {'daemon'|'gui'} */
+let hostKind = 'gui';
 
 function defaultFactoryJsonPath() {
     try {
@@ -117,6 +120,12 @@ function buildHealth() {
             label: lock.label || null,
         };
     }
+    snap.host = hostKind;
+    const features = Array.isArray(snap.features) ? snap.features.slice() : [];
+    for (const f of ['clients/register', 'clients/heartbeat', 'clients/unregister']) {
+        if (!features.includes(f)) features.push(f);
+    }
+    snap.features = features;
     return snap;
 }
 
@@ -172,6 +181,32 @@ async function handleRequest(req, res) {
 
     if (!checkAuth(req)) {
         return json(res, 401, { ok: false, code: 'unauthorized', error: 'invalid token' });
+    }
+
+    if (method === 'POST' && p === '/editor/v1/clients/register') {
+        const body = await readBody(req).catch((err) => ({ __error: err }));
+        if (body.__error) return json(res, 400, { ok: false, code: body.__error.code || 'bad_request', error: body.__error.message });
+        const result = factoryClients.registerClient(body);
+        return json(res, result.ok ? 200 : 400, result);
+    }
+
+    if (method === 'POST' && p === '/editor/v1/clients/heartbeat') {
+        const body = await readBody(req).catch((err) => ({ __error: err }));
+        if (body.__error) return json(res, 400, { ok: false, code: body.__error.code || 'bad_request', error: body.__error.message });
+        const result = factoryClients.heartbeatClient(body);
+        const status = result.ok ? 200 : (result.code === 'not_found' ? 404 : 400);
+        return json(res, status, result);
+    }
+
+    if (method === 'POST' && p === '/editor/v1/clients/unregister') {
+        const body = await readBody(req).catch((err) => ({ __error: err }));
+        if (body.__error) return json(res, 400, { ok: false, code: body.__error.code || 'bad_request', error: body.__error.message });
+        const result = factoryClients.unregisterClient(body);
+        return json(res, result.ok ? 200 : 400, result);
+    }
+
+    if (method === 'GET' && p === '/editor/v1/clients') {
+        return json(res, 200, { ok: true, ...factoryClients.snapshot() });
     }
 
     if (method === 'POST' && p === '/editor/v1/abort') {
@@ -470,10 +505,47 @@ function clearFactoryJson(filePath) {
 }
 
 /**
- * @returns {Promise<{ ok: boolean, baseUrl?: string, token?: string, port?: number, error?: string }>}
+ * @param {{
+ *   factoryJsonPath?: string,
+ *   hostKind?: 'daemon'|'gui',
+ *   onIdleShutdown?: () => void,
+ *   registerUiClient?: boolean,
+ * }} [options]
+ * @returns {Promise<{ ok: boolean, baseUrl?: string, token?: string, port?: number, error?: string, already?: boolean }>}
  */
 function startEditorFactoryServer(options = {}) {
+    hostKind = options.hostKind === 'daemon' ? 'daemon' : 'gui';
+
+    const finishClients = (result) => {
+        try {
+            factoryClients.initFactoryClients({
+                hostKind,
+                onIdleShutdown: options.onIdleShutdown,
+            });
+            if (options.registerUiClient !== false && hostKind === 'gui') {
+                factoryClients.registerClient({
+                    kind: 'transub-ui',
+                    pid: process.pid,
+                    id: `transub-ui-${process.pid}`,
+                });
+            }
+        } catch (err) {
+            console.warn('[factory] clients init failed:', err?.message || err);
+        }
+        return result;
+    };
+
     if (server) {
+        try {
+            factoryClients.setHostKind(hostKind);
+            if (options.registerUiClient !== false && hostKind === 'gui') {
+                factoryClients.registerClient({
+                    kind: 'transub-ui',
+                    pid: process.pid,
+                    id: `transub-ui-${process.pid}`,
+                });
+            }
+        } catch (_) { /* ignore */ }
         return Promise.resolve({
             ok: true,
             baseUrl: `http://127.0.0.1:${port}`,
@@ -507,7 +579,7 @@ function startEditorFactoryServer(options = {}) {
                 server = null;
                 return resolve({ ok: false, error: `write factory.json failed: ${err.message}` });
             }
-            resolve({ ok: true, baseUrl, token, port, factoryJsonPath });
+            resolve(finishClients({ ok: true, baseUrl, token, port, factoryJsonPath }));
         });
     });
 }
@@ -517,6 +589,7 @@ function stopEditorFactoryServer() {
     return new Promise((resolve) => {
         const done = () => {
             clearFactoryJson(file);
+            try { factoryClients.disposeFactoryClients(); } catch (_) { /* ignore */ }
             token = null;
             port = null;
             factoryJsonPath = null;
@@ -534,6 +607,18 @@ function stopEditorFactoryServer() {
     });
 }
 
+function promoteFactoryHostToGui() {
+    hostKind = 'gui';
+    try {
+        factoryClients.setHostKind('gui');
+        factoryClients.registerClient({
+            kind: 'transub-ui',
+            pid: process.pid,
+            id: `transub-ui-${process.pid}`,
+        });
+    } catch (_) { /* ignore */ }
+}
+
 function getEditorFactoryStatus() {
     if (!server || !port) return { running: false };
     return {
@@ -548,6 +633,7 @@ module.exports = {
     startEditorFactoryServer,
     stopEditorFactoryServer,
     getEditorFactoryStatus,
+    promoteFactoryHostToGui,
     /** @private tests */
     _test: {
         handleRequest,

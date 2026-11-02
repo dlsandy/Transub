@@ -254,6 +254,23 @@ function createEngineBatchLoop(host) {
         invokeSender,
     );
 
+    // After job-start UI (dismisses「引擎启动中…」). Soft: timeout / failure does not block ASR.
+    try {
+        const { ensureLocalLayaForProTask } = require('./jev-laya-ensure');
+        appendEngineLogLine('[laya] 检查本机决策辅助（自动）…', invokeSender);
+        const laya = await ensureLocalLayaForProTask(merged, {
+            onLog: (line) => appendEngineLogLine(`[laya] ${line}`, invokeSender),
+        });
+        if (laya?.ok && (laya.installed || laya.started) && !laya.already && !laya.cached) {
+            appendEngineLogLine('[laya] 已自动安装/启动本机 Laya（决策辅助）', invokeSender);
+        } else if (laya && !laya.ok && !laya.skipped) {
+            appendEngineLogLine(
+                `[laya] 自动安装/启动未成功：${laya.error || 'unknown'}（任务继续，决策辅助可能回退）`,
+                invokeSender,
+            );
+        }
+    } catch (_) { /* soft */ }
+
     const results = [];
     let generated = 0;
     let failed = 0;
@@ -573,6 +590,27 @@ function createEngineBatchLoop(host) {
                 });
                 continue;
             }
+            {
+                let cacheMedia = false;
+                try {
+                    const mediaExt = require('../src/js/media-extensions-core');
+                    cacheMedia = !!mediaExt.isInternalTimingCachePath?.(mediaPath);
+                } catch { /* optional */ }
+                if (cacheMedia) {
+                    const errMsg = '内部时序缓存不能作为任务片源，请选择视频文件（*.mp4）';
+                    failed += 1;
+                    results.push({ ok: false, path: mediaPath, error: errMsg });
+                    sendProgress(invokeSender, {
+                        stage: 'error',
+                        index1,
+                        total: list.length,
+                        file: mediaPath,
+                        detail: errMsg,
+                        error: errMsg,
+                    });
+                    continue;
+                }
+            }
 
             const outDir = merged.outputMode === 'custom' && merged.outputDir
                 ? merged.outputDir
@@ -606,6 +644,69 @@ function createEngineBatchLoop(host) {
                     invokeSender,
                 );
             }
+            // Yue + 原文：强制听写。Yue + 简繁：启用普通话翻译（勿误降为 transcribe）。
+            try {
+                const tgt = require('../src/js/subtitle-target-lang-core');
+                const form = tgt.formValueFromTargetLang?.(
+                    tgt.resolveSubtitleTargetLang?.(fileMerged) || fileMerged.subtitleTargetLang,
+                ) || fileMerged.chineseSubtitleVariant || 'simplified';
+                const chipRaw = String(fileMerged.subtitleTargetChip || '').trim();
+                const chip = chipRaw || (fileMerged.task === 'transcribe' ? 'source' : form);
+                if (tgt.isYueSourceLanguage?.(fileMerged.language)) {
+                    if (tgt.yueTargetSkipsMachineTranslate?.(fileMerged.language, chip)) {
+                        if (fileMerged.task !== 'transcribe' && fileMerged.task !== 'dual') {
+                            fileMerged = { ...fileMerged, task: 'transcribe' };
+                            appendEngineLogLine(
+                                `[engine] #${index1}/${list.length} 粤语→原文：听写模式（跳过翻译）`,
+                                invokeSender,
+                            );
+                        }
+                    } else if (
+                        fileMerged.task === 'transcribe'
+                        && (
+                            tgt.isZhSubtitleFormValue?.(chip)
+                            || tgt.isZhSubtitleFormValue?.(form)
+                            || ['en', 'ja', 'ko'].includes(String(chip || '').toLowerCase())
+                        )
+                    ) {
+                        fileMerged = { ...fileMerged, task: 'translate' };
+                        appendEngineLogLine(
+                            `[engine] #${index1}/${list.length} 粤语→中文：启用普通话翻译`,
+                            invokeSender,
+                        );
+                    }
+                }
+            } catch { /* optional */ }
+
+            // Whole-file acoustic sniff + sliding bands (scene-adaptive VAD / later re-listen).
+            let itemAcousticPrep = null;
+            if (!fileMerged.skipAsr && !fileMerged.shelfEntryStage) {
+                try {
+                    const { prepareAcousticForItem } = require('./engine-acoustic-bands');
+                    sendProgress(invokeSender, {
+                        stage: 'transcribe',
+                        index1,
+                        total: list.length,
+                        file: mediaPath,
+                        detail: '声学探测…',
+                    });
+                    itemAcousticPrep = await prepareAcousticForItem({
+                        mediaPath,
+                        durationSec: Number(item.durationSec || item.duration) || 0,
+                        options: fileMerged,
+                        onLog: (line) => appendEngineLogLine(`[engine] ${line}`, invokeSender),
+                    });
+                    if (itemAcousticPrep?.options) {
+                        fileMerged = itemAcousticPrep.options;
+                    }
+                } catch (err) {
+                    appendEngineLogLine(
+                        `[engine] 声学探测跳过: ${err?.message || err}`,
+                        invokeSender,
+                    );
+                }
+            }
+
             if (!fileMerged.overwrite) {
                 const isDual = fileMerged.task === 'dual';
                 const writeTarget = fileMerged.outputWriteTarget !== false
@@ -704,6 +805,39 @@ function createEngineBatchLoop(host) {
                 continue;
             }
 
+            // preferEngineLlamaMt skips the batch-level adapter; Hy-MT / Pro-scale
+            // 推理翻译 still need external — lazy-start once when a file asks for it.
+            if (useExternalMt && !mtAdapter?.ok && typeof startEngineMtAdapter === 'function') {
+                try {
+                    if (!host.batchMtAbortController) {
+                        host.batchMtAbortController = new AbortController();
+                    }
+                    const launch = batchMtPlan.resolveBatchMtAdapterLaunch({
+                        batchWantsSmart: useSmartTranslate,
+                        sakuraModelId: fileMerged.engineMtModel,
+                        merged: fileMerged,
+                        list,
+                    });
+                    appendEngineLogLine(
+                        `[engine] #${index1}/${list.length} 本条需外部翻译适配器（引擎内 llama 不适用），正在启动…`,
+                        invokeSender,
+                    );
+                    mtAdapter = await startEngineMtAdapter({
+                        ...launch,
+                        signal: host.batchMtAbortController.signal,
+                        onProgress: (info) => {
+                            if (host.batchCancelled) return;
+                            const detail = info?.message || info?.detail || info?.phase || '翻译中';
+                            appendEngineLogLine(`[engine-translate] ${detail}`, invokeSender);
+                        },
+                    });
+                } catch (err) {
+                    mtAdapter = {
+                        ok: false,
+                        error: err?.message || String(err) || '外部 MT 适配器启动失败',
+                    };
+                }
+            }
             // Never silently fall through to Opus when Sakura/smart was requested but
             // the external adapter was not started (would look like "missing opus-mt-*").
             if (useExternalMt && !mtAdapter?.ok) {
@@ -857,7 +991,13 @@ function createEngineBatchLoop(host) {
                 task: engineTask,
                 mediaPath,
                 outputDir: outDir,
-                language: fileMerged.language || 'auto',
+                language: (() => {
+                    const song = fileMerged.singingKaraoke === true
+                        || String(fileMerged.activePresetId || '').trim() === 'zh-yue-qwen3-song';
+                    const lang = String(fileMerged.language || '').trim().toLowerCase();
+                    if (song && (!lang || lang === 'auto')) return 'yue';
+                    return fileMerged.language || 'auto';
+                })(),
                 asrModel: fileMerged.engineAsrModel || 'sensevoice-small',
                 mtModel: jobMtModel,
                 subFormats,
@@ -876,7 +1016,7 @@ function createEngineBatchLoop(host) {
                         return dualCore.normalizeTargetSubtitleNaming(fileMerged.targetSubtitleNaming);
                     } catch {
                         const raw = String(fileMerged.targetSubtitleNaming || '').trim().toLowerCase();
-                        return (raw === 'media' || raw === 'same' || raw === 'video') ? 'media' : 'lang';
+                        return (raw === 'lang' || raw === 'suffix' || raw === 'tagged') ? 'lang' : 'media';
                     }
                 })(),
                 outputWriteTarget: fileMerged.outputWriteTarget !== false
@@ -905,6 +1045,10 @@ function createEngineBatchLoop(host) {
                     return v === 'speed' ? 'speed' : 'quality';
                 })(),
                 qwenAsrBatchMode: resolveQwenAsrBatchModeForJob(fileMerged),
+                ...(fileMerged.asrTiming != null
+                    && String(fileMerged.asrTiming).trim() !== ''
+                    ? { asrTiming: String(fileMerged.asrTiming).trim() }
+                    : {}),
                 ...(vramHint.gpuTotalMiB ? vramHint : {}),
                 releaseGpuAfter,
                 includeWords: jobFlags.includeWords,
@@ -940,6 +1084,12 @@ function createEngineBatchLoop(host) {
                     && String(fileMerged.timingAlignModel).trim() !== ''
                     ? { timingAlignModel: String(fileMerged.timingAlignModel).trim() }
                     : {}),
+                ...(fileMerged.singingKaraoke === true
+                    || String(fileMerged.activePresetId || '').trim() === 'zh-yue-qwen3-song'
+                    ? { singingKaraoke: true }
+                    : fileMerged.singingKaraoke === false
+                        ? { singingKaraoke: false }
+                        : {}),
                 // LLM MT: skip built-in JA name lexicon protect (__GLOSS*__),
                 // which harms Sakura/smart quality vs the subtitle editor path.
                 ...(useExternalMt || useLlamaMt ? { builtinNames: false } : {}),
@@ -964,6 +1114,27 @@ function createEngineBatchLoop(host) {
                 sync: false,
             };
 
+            // Fail before ASR if dual/translate job still lacks mtLlama/mtExternal
+            // (engine defaults empty mtBackend→llama and only errors at开译).
+            try {
+                const { assertTranslateJobMtFields } = require('./engine-batch-item');
+                const mtGate = assertTranslateJobMtFields(jobBody, engineTask);
+                if (!mtGate.ok) {
+                    const errMsg = mtGate.error || '翻译后端配置无效';
+                    failed += 1;
+                    results.push(buildFailedItemResult(mediaPath, errMsg));
+                    sendProgress(invokeSender, {
+                        stage: 'failed',
+                        index1,
+                        total: list.length,
+                        file: mediaPath,
+                        error: errMsg,
+                        detail: errMsg,
+                    });
+                    continue;
+                }
+            } catch (_) { /* assert helper optional */ }
+
             const primaryAsr = String(fileMerged.engineAsrModel || 'sensevoice-small').trim()
                 || 'sensevoice-small';
             const asrCandidates = resolveAsrFailoverCandidates(
@@ -971,6 +1142,22 @@ function createEngineBatchLoop(host) {
                 fileMerged.engineInstallPath,
                 { perfProfile: fileMerged.perfProfile },
             );
+
+            // Item-1 MT/QC can leave llama warm; item-2 Demucs then OOMs. Free before each job.
+            // Demucs always needs engine VRAM cleared; otherwise honor releaseGpuAfter keep-warm.
+            try {
+                const needsDemucs = !!(fileMerged.filmAudioEnhance);
+                const releaseEngineGpu = needsDemucs
+                    || (i > 0 && fileMerged.releaseGpuAfter !== false);
+                await require('./local-llm-reclaim').reclaimComputeBeforeBatchItem(
+                    (line) => appendEngineLogLine(line, invokeSender),
+                    {
+                        baseUrl: ensure.baseUrl,
+                        releaseEngineGpu,
+                        reason: needsDemucs ? 'pre_demucs_batch_item' : 'pre_batch_item',
+                    },
+                );
+            } catch (_) { /* optional */ }
 
             sendProgress(invokeSender, {
                 stage: 'model',
@@ -1354,28 +1541,34 @@ function createEngineBatchLoop(host) {
                     const asrSoCore = require('../src/js/asr-second-opinion-core');
                     const { runAsrPostTranscribeHandoff } = require('./engine-batch-success-handoff');
                     const soMode = asrSoCore.normalizeAsrSecondOpinionOption(fileMerged.asrSecondOpinion);
+                    const asrForSo = runOutcome.asrModel || waited.asrModel || primaryAsr;
                     const includeSecondOpinion = soMode !== 'off' && (
                         soMode === 'on'
                         || asrSoCore.shouldRunAsrSecondOpinion({
                             asrSecondOpinion: soMode,
                             contentProfile: fileMerged.contentProfile || fileMerged.senseProfile,
-                            primaryAsr: runOutcome.asrModel || waited.asrModel || primaryAsr,
-                            engineAsrModel: runOutcome.asrModel || primaryAsr,
+                            primaryAsr: asrForSo,
+                            engineAsrModel: asrForSo,
                         })
                     );
                     const handoff = await runAsrPostTranscribeHandoff(jobResult, outPaths, {
-                        ...merged,
+                        ...fileMerged,
                         mediaPath,
                         primaryAsr: runOutcome.asrModel || waited.asrModel || primaryAsr,
                         engineAsrModel: runOutcome.asrModel || primaryAsr,
                         includeSecondOpinion,
+                        includeAcousticBandAdapt: true,
+                        acousticBands: itemAcousticPrep?.bands || [],
+                        senseAcoustic: itemAcousticPrep?.senseAcoustic || null,
+                        primaryAcousticHint: itemAcousticPrep?.primaryHint || 'neutral',
+                        durationSec: Number(item.durationSec || item.duration) || 0,
                         onProgress: (info) => {
                             sendProgress(invokeSender, {
                                 stage: 'transcribe',
                                 index1,
                                 total: list.length,
                                 file: mediaPath,
-                                detail: info?.detail || 'ASR 二意见…',
+                                detail: info?.detail || 'ASR 定稿…',
                             });
                         },
                     });
@@ -1390,7 +1583,7 @@ function createEngineBatchLoop(host) {
                 }
             }
 
-            // 字幕库：原文定稿后建立/刷新原文槽位（首次创建后内容不变）
+            // 字幕库：原文定稿后建立/刷新原文槽位（ASR 定稿交接 sync 原文←转录）
             // Skip when pre-MT handoff already registered original (avoid duplicate log).
             if (!runOutcome.preMtShelfSourceSaved) {
                 try {
@@ -1497,6 +1690,8 @@ function createEngineBatchLoop(host) {
                 outPaths.subtitlePath,
             ], {
                 ...merged,
+                engineTask,
+                sourceSubtitlePath: outPaths.sourceSubtitlePath || keptSourcePath || '',
                 sourceCues: jobResult?.cues?.source,
             }, {
                 onProgress: (info) => {
@@ -1647,6 +1842,19 @@ function createEngineBatchLoop(host) {
                             chineseSubtitleVariant: fileMerged.chineseSubtitleVariant
                                 || merged.chineseSubtitleVariant,
                             backupMode: 'off',
+                            glossaryConditionalPostReplace: fileMerged.glossaryConditionalPostReplace !== false,
+                            glossary: (() => {
+                                try {
+                                    const { readGlossaryByScope } = require('./glossary-data');
+                                    const g = readGlossaryByScope({
+                                        scope: 'merged',
+                                        subtitlePath: outPaths.sourceSubtitlePath || zhPath,
+                                    });
+                                    return g?.ok ? (g.glossary || null) : null;
+                                } catch {
+                                    return null;
+                                }
+                            })(),
                             // 推理/混合句级：首遍禁止整轨错位回正，否则易旋成「…」再触发数百条省略号直译。
                             skipDialogueContentShiftRepair: (() => {
                                 try {
@@ -1831,8 +2039,9 @@ function createEngineBatchLoop(host) {
                 try {
                     const {
                         refreshKeptTranscriptTimings,
-                        cuesHeadDivergesFromSnapshot,
+                        shouldAttemptKeptTranscriptTimingRefresh,
                         engineCuesToKeepCues,
+                        loadSubtitleAsEngineCues,
                     } = require('./transcript-keep');
                     const engJa = Array.isArray(jobResult?.cues?.source)
                         ? engineCuesToKeepCues(jobResult.cues.source)
@@ -1844,10 +2053,11 @@ function createEngineBatchLoop(host) {
                         const zhDoc = zhPath ? readSubtitleDocument(zhPath) : null;
                         if (zhDoc?.ok && Array.isArray(zhDoc.cues)) zhForRefresh = zhDoc.cues;
                     } catch { /* optional */ }
-                    const skipBorrow = engJa.length >= 8
-                        && Array.isArray(zhForRefresh)
-                        && zhForRefresh.length >= 8
-                        && cuesHeadDivergesFromSnapshot(zhForRefresh, engJa);
+                    const keptCuesForRefresh = loadSubtitleAsEngineCues(keptSourcePath);
+                    const skipBorrow = !shouldAttemptKeptTranscriptTimingRefresh(keptCuesForRefresh, {
+                        zhCues: zhForRefresh,
+                        engineJa: engJa,
+                    });
                     if (skipBorrow) {
                         appendEngineLogLine(
                             `[engine] 转录时间轴同步跳过：译文与引擎原文头/时间轴已漂移`,
@@ -2005,6 +2215,25 @@ function createEngineBatchLoop(host) {
             } catch (err) {
                 appendEngineLogLine(
                     `[engine] 任务收尾跳过: ${err.message || err}`,
+                    invokeSender,
+                );
+            }
+            // Beside-media `.transcribe.srt`: never create new film-adjacent copies
+            // (keep library owns `.transcribe.srt`; settings「原文」writes `.src.*`).
+            // Still refresh a leftover sidecar if present (START-655).
+            try {
+                const { syncMediaAdjacentTranscript } = require('./transcript-keep');
+                const authJa = String(outPaths.sourceSubtitlePath || keptSourcePath || '').trim();
+                const synced = syncMediaAdjacentTranscript(mediaPath, authJa);
+                if (synced?.synced) {
+                    appendEngineLogLine(
+                        `[engine] 已同步片旁原文轨 → ${path.basename(synced.path)}`,
+                        invokeSender,
+                    );
+                }
+            } catch (err) {
+                appendEngineLogLine(
+                    `[engine] 片旁原文同步跳过：${err.message || err}`,
                     invokeSender,
                 );
             }
@@ -2183,6 +2412,8 @@ function createEngineBatchLoop(host) {
                     asrAttempts: asrRun.asrAttempts,
                     asrFailedOver: asrRun.failedOver,
                     ...outPaths,
+                    ellipsisLeft: ellipsisGateLeft || 0,
+                    underfillLeft: Number(postTaskMeta?.underfillLeft) || 0,
                     qcIssueCount: Number(postTaskMeta.issueCount) || 0,
                     qcFixedMode: postTaskMeta.qcFixedMode || '',
                     qcFixedWritten: !!postTaskMeta.qcFixedWritten,

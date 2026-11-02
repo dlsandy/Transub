@@ -278,7 +278,7 @@
             return;
         }
 
-        setStatus('appUpdateStatus', uiTf('发现新版本 {version}', { version: formatVersion(res.latestVersion) }), 'info');
+        setStatus('appUpdateStatus', res.message || uiTf('发现新版本 {version}', { version: formatVersion(res.latestVersion) }), 'info');
         if (res.canAutoInstall && electron?.transubDownloadAppUpdate) {
             showEl('appDownloadBtn', true);
             const btn = $('appDownloadBtn');
@@ -290,12 +290,25 @@
             const incr = res.incrementalLikely
                 ? '检测到本地基线，将尝试增量更新。'
                 : '将按需下载全量或增量包。';
-            setMeta('appUpdateMeta', `${sourceHint}${nodeHint}${incr}已下载的模型、GPU/Demucs 支持库与 Advanced LLM 会保留。`);
+            const pendingHint = res.assetsPending
+                ? uiTf('（发布页已出现更新的 v{version}，完整安装包可能仍在上传）', {
+                    version: formatVersion(res.announcedVersion || res.latestVersion),
+                })
+                : '';
+            setMeta('appUpdateMeta', `${sourceHint}${nodeHint}${incr}${pendingHint}已下载的模型、GPU/Demucs 支持库与 Advanced LLM 会保留。`);
         } else {
             showEl('appOpenReleasesBtn', true);
             const btn = $('appOpenReleasesBtn');
             if (btn) btn.disabled = false;
-            setMeta('appUpdateMeta', `${sourceHint}请从发布页手动下载 zip 解压版。`);
+            let reason = '请从发布页手动下载 zip 解压版。';
+            if (res.assetsPending || !(Array.isArray(res.downloadUrls) && res.downloadUrls.length)) {
+                reason = '暂无可下载的安装包：发布页资源可能仍在上传，或尚未同步到当前节点。请稍后再试，或打开发布页确认附件。';
+            } else if (res.installKind === 'nsis' || res.installKind === 'portable') {
+                reason = '当前安装方式不支持应用内更新，请改用 zip 解压版。';
+            } else if (res.installKind === 'dev') {
+                reason = '开发模式仅检查版本，不会自动下载安装。';
+            }
+            setMeta('appUpdateMeta', `${sourceHint}${reason}`);
         }
     }
 

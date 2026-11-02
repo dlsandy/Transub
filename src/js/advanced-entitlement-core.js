@@ -26,6 +26,8 @@
     const FEATURE_QC_SMART_FIX = 'qcSmartFix';
     /** 转录语义校正：ASR 后 MT 前 LLM 修 JA 听写（非重转写） */
     const FEATURE_ASR_SEMANTIC_REPAIR = 'asrSemanticRepair';
+    /** Pro：Laya（开源 System One）结构化决策（忠实复核 / ASR 二票 / 语义校正门控等）；feature id 保留 jevDecision */
+    const FEATURE_JEV_DECISION = 'jevDecision';
     const FEATURE_ALL = '*';
 
     /** 同时绑定设备上限 */
@@ -130,6 +132,8 @@
             reconstructMock: false,
             /** safeStorage 加密后的 API Key（base64），非明文 */
             byokKeyBlob: '',
+            /** safeStorage 加密后的 TypeSafe / Jev API Key（base64） */
+            jevKeyBlob: '',
             licenseServerUrl: '',
             updatedAt: null,
         };
@@ -321,6 +325,7 @@
             llmSource: normalizeLlmSource(raw.llmSource),
             managedLlm: normalizeManagedLlm(raw.managedLlm, hints),
             byokKeyBlob: String(raw.byokKeyBlob || '').trim(),
+            jevKeyBlob: String(raw.jevKeyBlob || '').trim(),
             reconstructMock: !!raw.reconstructMock,
             licenseServerUrl: String(raw.licenseServerUrl || '').trim(),
             updatedAt: asIso(raw.updatedAt),
@@ -629,6 +634,7 @@
         FEATURE_ASS_STYLE_EXPORT,
         FEATURE_QC_SMART_FIX,
         FEATURE_ASR_SEMANTIC_REPAIR,
+        FEATURE_JEV_DECISION,
         FEATURE_ALL,
         MAX_DEVICES,
         TRANSFER_COOLDOWN_MS,

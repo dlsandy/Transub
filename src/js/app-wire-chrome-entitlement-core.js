@@ -153,6 +153,23 @@
             }
         };
 
+        if (typeof h.electron?.onAdvancedEntitlementChanged === 'function' && !h._advancedEntitlementChangeBound) {
+            h._advancedEntitlementChangeBound = true;
+            h.electron.onAdvancedEntitlementChanged((payload) => {
+                const entitled = !!payload?.entitled;
+                const freeInfo = (payload?.freePipelineTranslate && typeof payload.freePipelineTranslate === 'object')
+                    ? payload.freePipelineTranslate
+                    : { ok: false };
+                try {
+                    if (typeof h.setAdvancedEntitled === 'function') {
+                        h.setAdvancedEntitled(entitled, freeInfo);
+                        return;
+                    }
+                } catch (_) { /* fall through */ }
+                void h.refreshAdvancedEntitlement?.();
+            });
+        }
+
         return h;
     }
 

@@ -526,8 +526,8 @@
 
         function appendAppEngineDownloadProgressLog(text, { force = false } = {}) {
             if (getIsStandaloneSettings() || !els.logHost) return;
-            const line = String(text || '').trim();
-            if (!line) return;
+            const line = text == null ? '' : String(text).trim();
+            if (!line || line === 'undefined' || line === 'null') return;
             ensureLogExpanded();
             const now = Date.now();
             const renderApi = global.TransubLogPanelRender;

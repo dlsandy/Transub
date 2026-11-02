@@ -41,7 +41,10 @@ function registerExtensionsShelfIpc(register, _deps = {}) {
 
     register('transub-shelf-delete-media', async (_event, payload = {}) => {
         try {
-            const { deleteMedia } = require('./subtitle-shelf');
+            const { deleteMedia, deleteMediaMany } = require('./subtitle-shelf');
+            if (Array.isArray(payload?.mediaIds)) {
+                return deleteMediaMany(payload.mediaIds);
+            }
             return deleteMedia(payload?.mediaId || '');
         } catch (err) {
             return { ok: false, error: err.message || String(err) };

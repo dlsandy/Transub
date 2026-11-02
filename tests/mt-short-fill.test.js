@@ -67,6 +67,16 @@ describe('mt-short-fill-core', () => {
         assert.strictEqual(smart.fallbackShortJaCue('仕事だよ', { subtitleTargetLang: 'en' }), "It's work");
         assert.strictEqual(smart.fallbackShortJaCue('あつい…', { subtitleTargetLang: 'en' }), "It's hot…");
     });
+
+    it('fallbackShortJaCue covers soft-AV shorts in Korean', () => {
+        assert.strictEqual(smart.fallbackShortJaCue('違うよ', { subtitleTargetLang: 'ko' }), '아니야');
+        assert.strictEqual(smart.fallbackShortJaCue('やめて…', { subtitleTargetLang: 'ko' }), '그만해…');
+        assert.strictEqual(smart.fallbackShortJaCue('気持ちいい?', { subtitleTargetLang: 'ko' }), '기분 좋아?');
+        assert.strictEqual(smart.fallbackShortJaCue('行かないで', { subtitleTargetLang: 'ko' }), '가지 마');
+        assert.strictEqual(smart.fallbackShortJaCue('イッちゃう', { subtitleTargetLang: 'ko' }), '싸겠어');
+        // Must NOT map everyday いっ* stems to climax Korean.
+        assert.notStrictEqual(smart.fallbackShortJaCue('いっつもおちき', { subtitleTargetLang: 'ko' }), '싸겠어');
+    });
     it('does not treat real English dialogue as latin garbage on EN target', () => {
         const hit = sanitize.sanitizeMtCueText(
             'Understood',

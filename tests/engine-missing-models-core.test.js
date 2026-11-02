@@ -64,6 +64,16 @@ describe('engine-missing-models-core', () => {
             engineVadModel: 'silero-vad',
         }), ['qwen3-asr-1.7b-ja-anime-galgame']);
 
+        assert.deepStrictEqual(missing.collectRequiredModelIdsFromOptions({
+            engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame',
+            engineVadModel: 'firered-vad',
+            timingAlignModel: 'qwen3-forced-aligner-0.6b',
+        }), [
+            'qwen3-asr-1.7b-ja-anime-galgame',
+            'firered-vad',
+            'qwen3-forced-aligner-0.6b',
+        ]);
+
         const missingRows = missing.findMissingCatalogModels(
             ['anime-whisper', 'silero-vad', 'fsmn-vad'],
             [
@@ -81,6 +91,13 @@ describe('engine-missing-models-core', () => {
             [{ id: 'qwen3-asr-1.7b-ja-anime-galgame', name: 'Galgame', installed: true }],
         );
         assert.deepStrictEqual(skipBundled, []);
+        assert.deepStrictEqual(
+            missing.collectRequiredModelIdsFromOptions({
+                engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame',
+                engineVadModel: 'ten-vad',
+            }).filter((id) => id === 'ten-vad'),
+            [],
+        );
 
         const copy = missing.buildMissingModelsConfirmCopy({
             contextLabel: '预设「Anime Whisper」',

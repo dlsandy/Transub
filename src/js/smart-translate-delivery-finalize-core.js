@@ -36,10 +36,26 @@
         }
     }
 
+    function loadDurationCap() {
+        try {
+            return require('./cue-duration-cap-core');
+        } catch {
+            return null;
+        }
+    }
+
+    function loadEllipsisPolicy() {
+        try {
+            return require('./hymt-ellipsis-policy-core');
+        } catch {
+            return null;
+        }
+    }
+
     /**
      * @param {object[]} sourceCues JA
      * @param {object[]} translatedCues ZH
-     * @param {{ blankText?: string, pruneDebris?: boolean, scrubRecycle?: boolean, fillBlank?: boolean }} [options]
+     * @param {{ blankText?: string, pruneDebris?: boolean, scrubRecycle?: boolean, fillBlank?: boolean, capFillerDuration?: boolean }} [options]
      * @returns {{
      *   cues: object[],
      *   sourceCues: object[],
@@ -49,6 +65,7 @@
      *   scrubbed: number,
      *   pruned: number,
      *   filled: number,
+     *   durationCapped: number,
      *   measure: object|null,
      *   gateOk: boolean,
      *   flags: object,
@@ -64,12 +81,14 @@
         let scrubbed = 0;
         let pruned = 0;
         let filled = 0;
+        let durationCapped = 0;
         let srcOut = srcIn.map((c) => ({ ...c }));
         let zhOut = zhIn.map((c) => ({ ...c }));
 
         const sanitize = loadSanitize();
         const align = loadAlign();
         const recycle = loadRecycle();
+        const durationCap = loadDurationCap();
 
         // 1) Rematerialize onto JA timeline when counts differ or starts badly drift.
         //    Skip mild drift when index↔start already agree — rematerialize + blankText「…」
@@ -88,9 +107,25 @@
                 && srcOut.length
                 && (countDiff || drift || options.forceRematerialize === true)
             ) {
+                const dominantStartShare = (list) => {
+                    if (!Array.isArray(list) || list.length < 8) return 0;
+                    const counts = new Map();
+                    for (const c of list) {
+                        const sm = Math.round(Number(c?.startMs) || 0);
+                        counts.set(sm, (counts.get(sm) || 0) + 1);
+                    }
+                    let max = 0;
+                    for (const n of counts.values()) {
+                        if (n > max) max = n;
+                    }
+                    return max / list.length;
+                };
+                // Collapsed / dead axes must index-zip; startMs-join mega-glues (SAN-494).
+                const deadTimeline = dominantStartShare(zhOut) >= 0.5
+                    || dominantStartShare(srcOut) >= 0.5;
                 const laid = sanitize.rematerializeTranslatedOntoSource(srcOut, zhOut, {
                     blankText,
-                    preferIndex: false,
+                    preferIndex: deadTimeline,
                     fillFromSource: false,
                     mergeContainedFragments: false,
                 });
@@ -103,13 +138,32 @@
                     const blanksBefore = blankOf(zhOut);
                     const blanksAfter = blankOf(laid.cues);
                     const minted = blanksAfter - blanksBefore;
+                    // Abort if one long string was stamped onto most cues (same-start broadcast).
+                    let gluedBroadcast = false;
+                    if (laid.cues.length >= 8) {
+                        const tallies = new Map();
+                        for (const c of laid.cues) {
+                            const t = String(c?.text ?? '').trim();
+                            if (t.length < 80) continue;
+                            tallies.set(t, (tallies.get(t) || 0) + 1);
+                        }
+                        for (const n of tallies.values()) {
+                            if (n >= Math.ceil(laid.cues.length * 0.35)) {
+                                gluedBroadcast = true;
+                                break;
+                            }
+                        }
+                    }
                     // Abort rematerialize if it would mint mass 「…」 (credit soft-zip / drift).
                     if (
-                        laid.cues.length >= 8
-                        && minted > Math.ceil(laid.cues.length * 0.25)
-                        && blanksAfter / laid.cues.length > 0.35
+                        gluedBroadcast
+                        || (
+                            laid.cues.length >= 8
+                            && minted > Math.ceil(laid.cues.length * 0.25)
+                            && blanksAfter / laid.cues.length > 0.35
+                        )
                     ) {
-                        flags.rematerialize_aborted = minted;
+                        flags.rematerialize_aborted = gluedBroadcast ? 'glued_broadcast' : minted;
                     } else {
                         zhOut = laid.cues;
                         const laidChanged = Number(laid.changed);
@@ -173,7 +227,11 @@
                 const prunedPairs = sanitize.pruneAsrDebrisCuePairs(zhOut, srcOut, {
                     renumberIndexes: false,
                     // Blank in place by default so JA timeline length stays stable.
+                    // Pure moan→「嗯」pairs hard-drop both sides when noise-cleanup is on.
                     preserveSourceSlots: options.preserveSourceSlots !== false,
+                    postBatchRemoveNoise: options.postBatchRemoveNoise,
+                    dropUselessEllipsis: options.dropUselessEllipsis,
+                    dropTranslatedMoanFiller: options.dropTranslatedMoanFiller,
                 });
                 if (prunedPairs.dropped > 0) {
                     zhOut = prunedPairs.cues;
@@ -198,6 +256,36 @@
             } catch { /* optional */ }
         }
 
+        // 5b) Mid-dialogue うん/はい (≤2s between normal lines) → 嗯/是的
+        let ackFilled = 0;
+        if (options.fillDialogueAck !== false) {
+            try {
+                const ellipsis = loadEllipsisPolicy();
+                const ack = ellipsis?.applyDialogueBridgeAckFills?.(zhOut, srcOut);
+                if (ack?.filled > 0) {
+                    zhOut = ack.cues;
+                    ackFilled = ack.filled;
+                    flags.dialogue_ack = ackFilled;
+                    filled += ackFilled;
+                }
+            } catch { /* optional */ }
+        }
+
+        // 6) Cap filler / pure-moan display duration (IPZZ-980:「嗯」@7.5s from ん、ん)
+        if (options.capFillerDuration !== false && durationCap?.capFillerMoanCueDurations) {
+            try {
+                const capped = durationCap.capFillerMoanCueDurations(zhOut, srcOut, options);
+                if (capped.changed) {
+                    zhOut = capped.cues;
+                    if (Array.isArray(capped.sourceCues) && capped.sourceCues.length) {
+                        srcOut = capped.sourceCues;
+                    }
+                    durationCapped = Number(capped.capped) || 0;
+                    flags.duration_cap = durationCapped;
+                }
+            } catch { /* optional */ }
+        }
+
         const measure = align?.measureIndexStartAlignment?.(srcOut, zhOut) || null;
         const gateOk = !measure
             || measure.total < 24
@@ -211,6 +299,7 @@
         }
 
         const changed = rematerialized > 0 || realigned > 0 || scrubbed > 0 || pruned > 0 || filled > 0
+            || durationCapped > 0
             || zhOut.length !== zhIn.length;
         return {
             cues: zhOut,
@@ -221,6 +310,7 @@
             scrubbed,
             pruned,
             filled,
+            durationCapped,
             measure,
             gateOk,
             flags,

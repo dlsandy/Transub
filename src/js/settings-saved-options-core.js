@@ -130,13 +130,13 @@
                 }
                 return out;
             })(),
-            engineProfile: String(fields.engineProfile || 'balanced'),
+            engineProfile: String(fields.engineProfile || 'quality'),
             engineAsrModel: String(fields.engineAsrModel || 'qwen3-asr-1.7b-ja-anime-galgame'),
             engineOpusMtModel: opusMt,
             engineLlmMtModel: llmMt,
             engineMtModel: resolveMt(translateMode, opusMt, llmMt),
             translateMode,
-            engineVadModel: String(fields.engineVadModel || 'silero-vad'),
+            engineVadModel: String(fields.engineVadModel || 'firered-vad'),
             engineAutoStart: fields.engineAutoStart !== false,
             installPath: String(fields.installPath || '').trim(),
             device: String(fields.device || 'cuda'),
@@ -148,15 +148,15 @@
             // Sidecar write prefs (at least one of target/source kept on).
             outputWriteTarget: (() => {
                 const writeTarget = fields.outputWriteTarget !== false;
-                const writeSource = fields.outputWriteSource !== false;
+                const writeSource = fields.outputWriteSource === true;
                 return writeTarget || !writeSource;
             })(),
-            outputWriteSource: fields.outputWriteSource !== false,
+            outputWriteSource: fields.outputWriteSource === true,
             targetSubtitleNaming: norm.normalizeTargetSubtitleNaming
                 ? norm.normalizeTargetSubtitleNaming(fields.targetSubtitleNaming)
-                : (String(fields.targetSubtitleNaming || '').trim().toLowerCase() === 'media'
-                    ? 'media'
-                    : 'lang'),
+                : (String(fields.targetSubtitleNaming || '').trim().toLowerCase() === 'lang'
+                    ? 'lang'
+                    : 'media'),
             insertSoftwareCredit: fields.insertSoftwareCredit !== false,
             smartTranslate: translateTask && isProMode(translateMode),
             smartTranslateFaithfulTone: translateTask && !!fields.smartTranslateFaithfulTone,
@@ -172,17 +172,43 @@
                     translateStyleCustomNote: '',
                 }),
             smartTranslateHybridMt: translateMode === 'smart',
-            smartTranslatePlotPolish: isProMode(translateMode) && fields.smartTranslatePlotPolish !== false,
-            smartTranslateFaithfulVerify: isProMode(translateMode)
-                && fields.smartTranslateFaithfulVerify !== false,
-            smartTranslateAddressConsistency: isProMode(translateMode)
-                && fields.smartTranslateAddressConsistency !== false,
+            // Pipeline toggles are preferences, not mode flags. Clearing them while
+            // the form is on 推理翻译 made 混合翻译 come back with all three unchecked.
+            smartTranslatePlotPolish: fields.smartTranslatePlotPolish !== false,
+            smartTranslateFaithfulVerify: fields.smartTranslateFaithfulVerify !== false,
+            smartTranslateAddressConsistency: fields.smartTranslateAddressConsistency !== false,
             smartTranslatePolishSampleLimit: norm.clampPolishSampleLimit
                 ? norm.clampPolishSampleLimit(fields.smartTranslatePolishSampleLimitRaw)
                 : 36,
+            jevDecisionMode: norm.normalizeJevDecisionMode
+                ? norm.normalizeJevDecisionMode(fields.jevDecisionMode)
+                : 'auto',
+            jevDecisionEndpoint: norm.normalizeJevEndpointPref
+                ? norm.normalizeJevEndpointPref(fields.jevDecisionEndpoint || fields.jevEndpoint)
+                : (String(fields.jevDecisionEndpoint || fields.jevEndpoint || 'local').trim() || 'local'),
+            jevDecisionMinConfidence: norm.clampJevMinConfidence
+                ? norm.clampJevMinConfidence(fields.jevDecisionMinConfidenceRaw ?? fields.jevDecisionMinConfidence)
+                : 0.55,
             asrSecondOpinion: norm.normalizeAsrSecondOpinion
                 ? norm.normalizeAsrSecondOpinion(fields.asrSecondOpinion)
+                : 'auto',
+            hyMtWindowLines: norm.normalizeHyMtWindowLines
+                ? norm.normalizeHyMtWindowLines(fields.hyMtWindowLines)
+                : 'auto',
+            sensevoiceRichTags: norm.normalizeSensevoiceRichTags
+                ? norm.normalizeSensevoiceRichTags(fields.sensevoiceRichTags)
+                : 'sidecar',
+            sensevoiceEmotionMtStyle: norm.normalizeSensevoiceEmotionMtStyle
+                ? norm.normalizeSensevoiceEmotionMtStyle(fields.sensevoiceEmotionMtStyle)
                 : 'off',
+            sensevoiceSdhExport: !!fields.sensevoiceSdhExport,
+            glossaryPromptInjectMode: norm.normalizeGlossaryPromptInjectMode
+                ? norm.normalizeGlossaryPromptInjectMode(fields.glossaryPromptInjectMode)
+                : 'hitOnly',
+            glossaryAlwaysCharacterMax: norm.clampGlossaryAlwaysCharacterMax
+                ? norm.clampGlossaryAlwaysCharacterMax(fields.glossaryAlwaysCharacterMax)
+                : 8,
+            glossaryConditionalPostReplace: fields.glossaryConditionalPostReplace !== false,
             qualityPipelineMode: norm.normalizeQualityPipelineMode
                 ? norm.normalizeQualityPipelineMode(fields.qualityPipelineMode)
                 : 'auto',
@@ -190,10 +216,9 @@
                 ? norm.clampPostQcLoopMaxPasses(fields.postQcLoopMaxPassesRaw ?? fields.postQcLoopMaxPasses)
                 : (() => {
                     const n = Number(fields.postQcLoopMaxPassesRaw ?? fields.postQcLoopMaxPasses);
-                    if (!Number.isFinite(n)) return 1;
+                    if (!Number.isFinite(n)) return 2;
                     return Math.max(0, Math.min(2, Math.round(n)));
                 })(),
-            asrBadPoolDrafts: !!fields.asrBadPoolDrafts,
             asrSemanticRepair: entitled && norm.normalizeAsrSemanticRepair
                 ? norm.normalizeAsrSemanticRepair(fields.asrSemanticRepair)
                 : 'off',
@@ -201,6 +226,7 @@
                 ? 'full'
                 : 'auto',
             filmAudioEnhance: entitled && !!fields.filmAudioEnhance,
+            enhanceForVadOnly: entitled && !!fields.filmAudioEnhance && !!fields.enhanceForVadOnly,
             filmVadPreset: entitled && !!fields.filmVadPreset && !fields.filmAudioEnhance,
             filmVadThreshold: norm.optionalFiniteNumber
                 ? norm.optionalFiniteNumber(fields.filmVadThresholdRaw, { min: 0.05, max: 0.95 })
@@ -221,6 +247,14 @@
                 if (n <= 0) return 0;
                 return Math.max(0.1, Math.min(30, n));
             })(),
+            filmDemucsAutoSplitMinutes: norm.clampFilmDemucsAutoSplitMinutes
+                ? norm.clampFilmDemucsAutoSplitMinutes(fields.filmDemucsAutoSplitMinutesRaw
+                    ?? fields.filmDemucsAutoSplitMinutes)
+                : 120,
+            filmDemucsChunkMinutes: norm.clampFilmDemucsChunkMinutes
+                ? norm.clampFilmDemucsChunkMinutes(fields.filmDemucsChunkMinutesRaw
+                    ?? fields.filmDemucsChunkMinutes)
+                : 60,
             qcSmartLlmSplit: fields.qcSmartLlmSplit !== false,
             qcSmartRetranscribe: fields.qcSmartRetranscribe !== false,
             qcSmartSemanticReview: fields.qcSmartSemanticReview !== false,
@@ -250,6 +284,18 @@
                     return 'simplified';
                 }
                 return String(form || 'simplified');
+            })(),
+            // Visible 目标 chip (原文|简繁|en/ja/ko). Needed so yue+transcribe can
+            // distinguish 原文 vs 简体 (both use task=transcribe).
+            subtitleTargetChip: (() => {
+                if (norm.normalizeSubtitleTargetChipValue) {
+                    const chip = norm.normalizeSubtitleTargetChipValue(
+                        fields.subtitleTargetChip || fields.quickTargetLang || '',
+                    );
+                    if (chip) return chip;
+                }
+                const task = String(fields.task || '').trim();
+                return task === 'transcribe' ? 'source' : 'simplified';
             })(),
             subtitleTargetLang: (() => {
                 if (norm.normalizeSubtitleTargetLang) {
@@ -309,12 +355,18 @@
             beamSize: Number(fields.beamSize) || 1,
             vadEnabled: fields.vadEnabled !== false,
             vadSensitive: !!fields.vadSensitive,
-            vadThreshold: numOr(fields.vadThreshold, 0.45),
-            vadMinSpeechDurationMs: numOr(fields.vadMinSpeechDurationMs, 180),
-            vadMinSilenceDurationMs: numOr(fields.vadMinSilenceDurationMs, 500),
-            vadSpeechPadMs: numOr(fields.vadSpeechPadMs, 80),
+            vadThreshold: numOr(fields.vadThreshold, 0.3),
+            vadMinSpeechDurationMs: numOr(fields.vadMinSpeechDurationMs, 120),
+            vadMinSilenceDurationMs: numOr(fields.vadMinSilenceDurationMs, 280),
+            vadSpeechPadMs: numOr(fields.vadSpeechPadMs, 120),
             vadMaxSingleSegmentMs,
             vadAggressive: !!fields.vadAggressive && !fields.vadSensitive,
+            timingAlign: fields.timingAlign !== false,
+            timingAlignModel: norm.normalizeTimingAlignModel
+                ? norm.normalizeTimingAlignModel(fields.timingAlignModel)
+                : (String(fields.timingAlignModel || 'firered').trim() || 'firered'),
+            singingKaraoke: !!fields.singingKaraoke
+                || String(fields.activePresetId || '').trim() === 'zh-yue-qwen3-song',
             audioLightDenoise: !!fields.audioLightDenoise,
             perfProfile: (() => {
                 const v = String(fields.perfProfile || 'quality').trim().toLowerCase();
@@ -324,9 +376,9 @@
                 if (norm.normalizeQwenAsrBatchMode) {
                     return norm.normalizeQwenAsrBatchMode(fields.qwenAsrBatchMode);
                 }
-                const v = String(fields.qwenAsrBatchMode || 'auto').trim().toLowerCase();
-                if (v === 'conservative' || v === 'aggressive') return v;
-                return 'auto';
+                const v = String(fields.qwenAsrBatchMode || 'aggressive').trim().toLowerCase();
+                if (v === 'conservative' || v === 'auto') return v;
+                return 'aggressive';
             })(),
             ...(fields.twaiLegacy && typeof fields.twaiLegacy === 'object' ? fields.twaiLegacy : {}),
             targetChunkDurationS: Math.round(vadMaxSingleSegmentMs / 1000),
@@ -355,10 +407,10 @@
                 ? norm.normalizeStartupWindow(fields.startupWindow)
                 : (fields.startupWindow === 'editor' ? 'editor' : 'generator'),
             subtitleEditorBackend: (() => {
-                const raw = String(fields.subtitleEditorBackend ?? 'auto').trim().toLowerCase();
+                const raw = String(fields.subtitleEditorBackend ?? 'electron').trim().toLowerCase();
                 if (raw === 'external' || raw === 'native' || raw === 'csharp') return 'external';
-                if (raw === 'electron' || raw === 'builtin' || raw === 'internal') return 'electron';
-                return 'auto';
+                if (raw === 'auto') return 'auto';
+                return 'electron';
             })(),
             subtitleEditorPath: String(fields.subtitleEditorPath || '').trim(),
             uiLocale: norm.normalizeUiLocale
@@ -368,7 +420,7 @@
                     : 'zh-Hans'),
             autoUpdateCheckInterval: norm.normalizeAutoUpdateCheckInterval
                 ? norm.normalizeAutoUpdateCheckInterval(fields.autoUpdateCheckInterval)
-                : 'off',
+                : 'weekly',
             activePresetId: String(fields.activePresetId || '').trim(),
             activeComboPlanId: String(fields.activeComboPlanId || '').trim(),
             mtUseForm: !!fields.mtUseForm,
@@ -377,7 +429,7 @@
                 ? norm.normalizeExternalImportAction(fields.externalImportAction)
                 : 'list_when_idle',
             postBatchQc: fields.postBatchQc !== false,
-            postBatchQcFixMode: String(fields.postBatchQcFixMode || 'fix'),
+            postBatchQcFixMode: String(fields.postBatchQcFixMode || 'smart'),
             qcSilenceSplitChars: norm.clampQcSilenceSplitChars
                 ? norm.clampQcSilenceSplitChars(fields.qcSilenceSplitCharsRaw ?? fields.qcSilenceSplitChars)
                 : (() => {
@@ -449,6 +501,7 @@
         if (typeof mutex?.normalizeAudioOptionBundle === 'function') {
             const n = mutex.normalizeAudioOptionBundle(out);
             out.filmAudioEnhance = !!n.filmAudioEnhance && entitled;
+            out.enhanceForVadOnly = !!n.enhanceForVadOnly && out.filmAudioEnhance;
             out.filmVadPreset = !!n.filmVadPreset && entitled && !out.filmAudioEnhance;
             out.vadSensitive = !!n.vadSensitive;
             out.audioLightDenoise = !!n.audioLightDenoise;

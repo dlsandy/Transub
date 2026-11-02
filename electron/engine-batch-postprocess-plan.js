@@ -2,6 +2,9 @@
  * Resolve ZH subtitle paths + interjection drop flags for engine batch postprocess.
  */
 const path = require('path');
+const softViewing = (() => {
+    try { return require('../src/js/av-soft-viewing-policy-core'); } catch { return null; }
+})();
 
 function isTranslateLikeTask(task, engineTask) {
     return task === 'translate' || task === 'dual'
@@ -35,8 +38,9 @@ function collectUniqueZhSubtitlePaths(outPaths = {}, deps = {}) {
 }
 
 /**
- * Honor UI post-batch interjection / onomatopoeia modes for all titles
- * (including 番号 / av_soft). Soft-AV no longer forces a skip.
+ * Honor UI post-batch interjection / onomatopoeia modes.
+ * Soft-AV (`av_soft`) pins both to clear for watchability (SFX off-screen)
+ * unless `avSoftViewingRespectUserModes` is set.
  *
  * @param {object} [merged]
  * @returns {{
@@ -49,17 +53,31 @@ function collectUniqueZhSubtitlePaths(outPaths = {}, deps = {}) {
 function resolveInterjectionDropFlags(merged = {}) {
     // Prefer three-way viewing modes; legacy boolean only when mode fields absent.
     // Legacy must stay opt-in (`=== true`) so old saves without the flag do not suddenly drop cues.
-    const dropDiscourse = merged.postBatchInterjectionMode === 'clear'
-        || (merged.postBatchInterjectionMode == null
-            && merged.postBatchCompactPureInterjections === true);
-    const dropOnomatopoeia = merged.postBatchOnomatopoeiaMode === 'clear'
-        || (merged.postBatchOnomatopoeiaMode == null
-            && merged.postBatchCompactPureInterjections === true);
+    let interjectionMode = merged.postBatchInterjectionMode == null
+        ? (merged.postBatchCompactPureInterjections === true ? 'clear' : null)
+        : String(merged.postBatchInterjectionMode).trim().toLowerCase();
+    let onomatopoeiaMode = merged.postBatchOnomatopoeiaMode == null
+        ? (merged.postBatchCompactPureInterjections === true ? 'clear' : null)
+        : String(merged.postBatchOnomatopoeiaMode).trim().toLowerCase();
+    if (softViewing?.resolveAvSoftViewingCleanMode) {
+        if (interjectionMode === 'off' || interjectionMode === 'light' || interjectionMode === 'clear') {
+            interjectionMode = softViewing.resolveAvSoftViewingCleanMode(merged, interjectionMode);
+        } else if (softViewing.isAvSoftJob?.(merged)) {
+            interjectionMode = softViewing.resolveAvSoftViewingCleanMode(merged, 'clear');
+        }
+        if (onomatopoeiaMode === 'off' || onomatopoeiaMode === 'light' || onomatopoeiaMode === 'clear') {
+            onomatopoeiaMode = softViewing.resolveAvSoftViewingCleanMode(merged, onomatopoeiaMode);
+        } else if (softViewing.isAvSoftJob?.(merged)) {
+            onomatopoeiaMode = softViewing.resolveAvSoftViewingCleanMode(merged, 'clear');
+        }
+    }
+    const dropDiscourse = interjectionMode === 'clear';
+    const dropOnomatopoeia = onomatopoeiaMode === 'clear';
     return {
         dropDiscourse,
         dropOnomatopoeia,
         shouldCompact: dropDiscourse || dropOnomatopoeia,
-        // Kept for callers; always false — settings apply to AV soft / 番号 too.
+        // Kept for callers; soft no longer skips compact — it forces clear instead.
         softAvSkipped: false,
     };
 }

@@ -16,6 +16,7 @@ const { asString } = require('./ipc-validate');
  * @param {(doc: object, license: object) => { ok: boolean, doc?: object, error?: string }} [host.persistLicense]
  * @param {(patch: object) => { ok: boolean, doc?: object, error?: string }} [host.writeAdvancedDoc]
  * @param {() => void} host.syncMainWindowTitle
+ * @param {(status: object) => void} [host.notifyEntitlementChanged]
  * @param {(doc: object, deviceId: string) => object} host.publicStatus
  * @param {() => boolean} host.shouldUseLicenseServer
  * @param {() => boolean} host.isDevUnlockEnabled
@@ -51,6 +52,14 @@ function createAdvancedLicenseLifecycle(host = {}) {
         throw new Error('createAdvancedLicenseLifecycle: host.persistLicense or host.writeAdvancedDoc required');
     }
 
+    function afterLicenseChanged(status) {
+        host.syncMainWindowTitle();
+        if (typeof host.notifyEntitlementChanged !== 'function') return;
+        try {
+            host.notifyEntitlementChanged(status);
+        } catch { /* ignore */ }
+    }
+
     function persistLicense(doc, license) {
         if (typeof host.persistLicense === 'function') {
             return host.persistLicense(doc, license);
@@ -63,6 +72,7 @@ function createAdvancedLicenseLifecycle(host = {}) {
             llmSource: entitlement.normalizeLlmSource(doc.llmSource),
             managedLlm: entitlement.normalizeManagedLlm(doc.managedLlm),
             byokKeyBlob: asString(doc.byokKeyBlob, 16384),
+            jevKeyBlob: asString(doc.jevKeyBlob, 16384),
             licenseServerUrl: doc.licenseServerUrl || '',
             reconstructMock: !!doc.reconstructMock,
         });
@@ -125,7 +135,7 @@ function createAdvancedLicenseLifecycle(host = {}) {
             const saved = persistLicense(doc, license);
             if (!saved.ok) return { ok: false, error: saved.error };
             const status = host.publicStatus(saved.doc, deviceId);
-            host.syncMainWindowTitle();
+            afterLicenseChanged(status);
             try { require('./tdp-runtime').syncAppliedState(); } catch { /* ignore */ }
             return {
                 ok: true,
@@ -166,7 +176,7 @@ function createAdvancedLicenseLifecycle(host = {}) {
         if (!saved.ok) return { ok: false, error: saved.error };
 
         const status = host.publicStatus(saved.doc, deviceId);
-        host.syncMainWindowTitle();
+        afterLicenseChanged(status);
         try { require('./tdp-runtime').syncAppliedState(); } catch { /* ignore */ }
         return {
             ok: true,
@@ -224,12 +234,13 @@ function createAdvancedLicenseLifecycle(host = {}) {
                     });
                     const savedUnbound = persistLicense(doc, unbound);
                     try { require('./tdp-runtime').clearAppliedOverlay(); } catch { /* ignore */ }
-                    host.syncMainWindowTitle();
+                    const unboundStatus = host.publicStatus(savedUnbound.ok ? savedUnbound.doc : doc, deviceId);
+                    afterLicenseChanged(unboundStatus);
                     return {
                         ok: false,
                         error: remote.error || '本机未绑定，请先激活或换机',
                         code: 'device_unbound',
-                        status: host.publicStatus(savedUnbound.ok ? savedUnbound.doc : doc, deviceId),
+                        status: unboundStatus,
                     };
                 }
                 return {
@@ -250,20 +261,22 @@ function createAdvancedLicenseLifecycle(host = {}) {
                 // Persist server view so local entitlement matches unbound state.
                 const savedUnbound = persistLicense(doc, merged);
                 try { require('./tdp-runtime').clearAppliedOverlay(); } catch { /* ignore */ }
-                host.syncMainWindowTitle();
+                const unboundStatus = host.publicStatus(savedUnbound.ok ? savedUnbound.doc : doc, deviceId);
+                afterLicenseChanged(unboundStatus);
                 return {
                     ok: false,
                     error: '本机未绑定，请先激活或换机',
                     code: 'device_unbound',
-                    status: host.publicStatus(savedUnbound.ok ? savedUnbound.doc : doc, deviceId),
+                    status: unboundStatus,
                 };
             }
             const license = entitlement.markValidated(merged, Date.now());
             const saved = persistLicense(doc, license);
             if (!saved.ok) return { ok: false, error: saved.error };
-            host.syncMainWindowTitle();
+            const status = host.publicStatus(saved.doc, deviceId);
+            afterLicenseChanged(status);
             try { require('./tdp-runtime').syncAppliedState(); } catch { /* ignore */ }
-            return { ok: true, status: host.publicStatus(saved.doc, deviceId), serverBound: true };
+            return { ok: true, status, serverBound: true };
         }
 
         if (!entitlement.isDeviceBound(lic, deviceId)) {
@@ -281,9 +294,10 @@ function createAdvancedLicenseLifecycle(host = {}) {
         );
         const saved = persistLicense(doc, license);
         if (!saved.ok) return { ok: false, error: saved.error };
-        host.syncMainWindowTitle();
+        const status = host.publicStatus(saved.doc, deviceId);
+        afterLicenseChanged(status);
         try { require('./tdp-runtime').syncAppliedState(); } catch { /* ignore */ }
-        return { ok: true, status: host.publicStatus(saved.doc, deviceId) };
+        return { ok: true, status };
     }
 
     async function deactivateLicense() {
@@ -305,8 +319,9 @@ function createAdvancedLicenseLifecycle(host = {}) {
         try {
             require('./tdp-runtime').clearAppliedOverlay();
         } catch { /* ignore */ }
-        host.syncMainWindowTitle();
-        return { ok: true, status: host.publicStatus(saved.doc, deviceId) };
+        const status = host.publicStatus(saved.doc, deviceId);
+        afterLicenseChanged(status);
+        return { ok: true, status };
     }
 
     return {

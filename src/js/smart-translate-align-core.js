@@ -147,11 +147,43 @@
             const hit = byIndex.has(idx) ? byIndex.get(idx) : zhIn[i];
             const hitStart = Number(hit?.startMs);
             const keepZhStart = zhHasTimeline && Number.isFinite(hitStart);
+            const jaStart = Number(s?.startMs);
+            const jaEnd = Number(s?.endMs);
+            const zhEnd = Number(hit?.endMs);
+            let outStart = keepZhStart ? hitStart : s.startMs;
+            let outEnd = keepZhStart && Number.isFinite(zhEnd) ? zhEnd : s.endMs;
+            // MT / proportional split often inflates a short ZH line across a fat
+            // parent span (DLDSS-559 cue3). Prefer JA end when ZH duration is
+            // clearly longer than the source cue.
+            // Also clamp filler-only ZH (嗯/啊) that got stretched across multi-second spans.
+            let zhIsFillerStub = false;
+            try {
+                const sanitize = loadSanitize();
+                zhIsFillerStub = !!sanitize?.isFillerOnlyZh?.(String(hit?.text || ''));
+            } catch { /* optional */ }
+            if (
+                keepZhStart
+                && Number.isFinite(jaStart)
+                && Number.isFinite(jaEnd)
+                && Number.isFinite(hitStart)
+                && Number.isFinite(zhEnd)
+                && (
+                    (zhEnd - hitStart) > (jaEnd - jaStart) * 1.45 + 350
+                    || (
+                        zhIsFillerStub
+                        && (zhEnd - hitStart) >= 2500
+                        && (zhEnd - hitStart) > (jaEnd - jaStart) + 400
+                    )
+                )
+            ) {
+                outStart = s.startMs;
+                outEnd = s.endMs;
+            }
             return {
                 ...(hit && typeof hit === 'object' ? hit : {}),
                 index: idx,
-                startMs: keepZhStart ? hitStart : s.startMs,
-                endMs: keepZhStart && Number.isFinite(Number(hit?.endMs)) ? hit.endMs : s.endMs,
+                startMs: outStart,
+                endMs: outEnd,
                 text: hit != null ? String(hit.text ?? '') : '',
             };
         });

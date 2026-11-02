@@ -12,6 +12,8 @@
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function asrSecondOpinionFactory() {
     const DEFAULT_MAX_RANGES = 6;
+    /** Quality / soft-AV: more windows for Pro perceived source fix. */
+    const QUALITY_MAX_RANGES = 10;
     const DEFAULT_MIN_LOW_CUES = 2;
     /** Skip micro clips that rarely yield usable SenseVoice/Whisper output. */
     const DEFAULT_MIN_RANGE_MS = 1200;
@@ -19,6 +21,8 @@
     const DEFAULT_STRICT_LOW_THRESHOLD = 0.42;
     /** Inter-cue hole that may hide missed dialogue (soft / JA specialist). */
     const DEFAULT_MIN_GAP_MS = 8000;
+    /** After a lexical JA turn, shorter holes still hide self-intro / answers. */
+    const DEFAULT_DIALOGUE_GAP_MS = 2800;
     const DEFAULT_MAX_GAP_WINDOW_MS = 45000;
     const TARGET_BLANK_PLACEHOLDER = '…';
 
@@ -32,21 +36,41 @@
     }
 
     /**
-     * Default: off. Explicit auto/on enable; false/off disables.
+     * Default: auto (quality-oriented). Explicit off disables.
      * @returns {'off'|'auto'|'on'}
      */
     function normalizeAsrSecondOpinionOption(value) {
         if (value === false || value === 0) return 'off';
-        const s = String(value == null ? 'off' : value).trim().toLowerCase();
+        const s = String(value == null ? 'auto' : value).trim().toLowerCase();
         if (s === 'false' || s === '0' || s === 'off' || s === 'no') return 'off';
         if (s === 'true' || s === '1' || s === 'on' || s === 'always') return 'on';
         if (s === 'auto') return 'auto';
-        return 'off';
+        return 'auto';
     }
 
     function isSpeedPerfProfile(options = {}) {
         const v = String(options.perfProfile || '').trim().toLowerCase();
         return v === 'speed' || v === 'fast';
+    }
+
+    function isQualityPerfProfile(options = {}) {
+        const v = String(options.perfProfile || '').trim().toLowerCase();
+        return !v || v === 'quality' || v === 'balanced' || v === 'high';
+    }
+
+    function resolveAsrSecondOpinionMaxRanges(options = {}) {
+        if (Number.isFinite(Number(options.maxRanges))) {
+            return Math.max(1, Math.min(12, Number(options.maxRanges)));
+        }
+        const profile = String(options.contentProfile || options.senseProfile || '').toLowerCase();
+        if (profile === 'av_soft' || isQualityPerfProfile(options)) {
+            return QUALITY_MAX_RANGES;
+        }
+        try {
+            const policy = require('./quality-pipeline-policy-core');
+            if (policy?.isQualityPipelineActive?.(options)) return QUALITY_MAX_RANGES;
+        } catch { /* optional */ }
+        return DEFAULT_MAX_RANGES;
     }
 
     function shouldRunAsrSecondOpinion(options = {}) {
@@ -57,12 +81,18 @@
         // Speed profile skips auto extras; explicit "on" still runs.
         if (isSpeedPerfProfile(options) && mode !== 'on') return false;
         if (mode === 'on') return true;
+        // auto: soft-AV / JA specialist / quality pipeline / quality perf
         const profile = String(options.contentProfile || options.senseProfile || '').toLowerCase();
         if (profile === 'av_soft') return true;
         const asr = String(options.primaryAsr || options.engineAsrModel || '').toLowerCase();
         if (/anime-whisper|whisper-ja|kotoba|reazon|qwen3-asr|ja-anime|galgame/.test(asr)) {
             return true;
         }
+        if (isQualityPerfProfile(options)) return true;
+        try {
+            const policy = require('./quality-pipeline-policy-core');
+            if (policy?.isQualityPipelineActive?.(options)) return true;
+        } catch { /* optional */ }
         return false;
     }
 
@@ -95,7 +125,7 @@
         if (low.includes('qwen3-asr')) return 25;
         if (low.includes('sensevoice') || low.includes('whisper-tiny')
             || low.includes('whisper-large') || low.includes('parakeet')
-            || low.includes('cohere')) {
+            || low.includes('cohere') || low.includes('firered-asr2')) {
             return 10;
         }
         return 50;
@@ -110,10 +140,41 @@
         return low.includes('anime-whisper') || low.includes('kotoba-whisper');
     }
 
-    function shouldReusePrimaryAsrForSecondOpinion(modelId) {
+    function shouldReusePrimaryAsrForSecondOpinion(modelId, options = {}) {
+        if (options.reusePrimary === false) return false;
         const id = String(modelId || '').trim();
         if (!id) return false;
         return !isFragileCt2AsrForSecondOpinion(id);
+    }
+
+    function isQwenAsrId(modelId) {
+        return /qwen3-asr/i.test(String(modelId || ''));
+    }
+
+    /**
+     * Qwen Galgame already decoded the file; empty dialogue holes need a
+     * different family (Whisper large-v2 / JA), not another Qwen pass.
+     */
+    function shouldRunAsrDialogueGapFill(options = {}) {
+        if (isSpeedPerfProfile(options)) return false;
+        const asr = String(options.primaryAsr || options.engineAsrModel || '').toLowerCase();
+        if (!isQwenAsrId(asr)) return false;
+        const profile = String(options.contentProfile || options.senseProfile || '').toLowerCase();
+        return profile === 'av_soft' || /galgame|ja-anime/.test(asr);
+    }
+
+    function rankJaDialogueGapFillAsr(modelId) {
+        const low = String(modelId || '').trim().toLowerCase();
+        if (!low) return 999;
+        if (low.includes('anime-whisper') || low.includes('kotoba-whisper')) return 90;
+        if (low.includes('qwen3-asr')) return 50;
+        if (low === 'whisper-large-v2' || low.includes('whisper-large-v2')) return 1;
+        if (low.includes('whisper-ja')) return 2;
+        if (low.includes('whisper-large-v3') && !low.includes('turbo')) return 6;
+        if (low.includes('turbo')) return 12;
+        if (low.includes('sensevoice')) return 18;
+        if (low.includes('whisper-tiny')) return 25;
+        return rankSecondOpinionAsrSafety(low);
     }
 
     function listSecondOpinionAsrModels(primaryAsr, options = {}) {
@@ -153,7 +214,13 @@
         const max = Number(options.maxModels);
         const cap = Number.isFinite(max) && max >= 1 ? Math.min(6, Math.round(max)) : 0;
         const siblings = cap > 0 ? out.slice(0, cap) : out;
-        if (shouldReusePrimaryAsrForSecondOpinion(primary)) {
+        const reusePrimary = shouldReusePrimaryAsrForSecondOpinion(primary, options);
+        if (options.gapFill === true) {
+            const ranked = [...siblings].sort((a, b) => rankJaDialogueGapFillAsr(a) - rankJaDialogueGapFillAsr(b)
+                || String(a).localeCompare(String(b)));
+            return cap > 0 ? ranked.slice(0, cap) : ranked;
+        }
+        if (reusePrimary) {
             const plow = primary.toLowerCase();
             if (!installed || installed.has(plow)) {
                 const rest = siblings.filter((id) => id.toLowerCase() !== plow);
@@ -167,6 +234,23 @@
     function pickSecondOpinionAsrModel(primaryAsr, options = {}) {
         const list = listSecondOpinionAsrModels(primaryAsr, options);
         return list[0] || '';
+    }
+
+    function pickSecondOpinionAsrModelForRange(range, primaryAsr, opinionModels, options = {}) {
+        const models = Array.isArray(opinionModels) ? opinionModels : [];
+        if (!models.length) return '';
+        const src = String(range?.source || range?.kind || '');
+        const isGap = src === 'gap' || src === 'dialogue_gap' || range?.allowEmpty === true;
+        if (!isGap) return models[0] || '';
+        const primary = String(primaryAsr || '').trim().toLowerCase();
+        const gapList = listSecondOpinionAsrModels(primaryAsr, {
+            ...options,
+            gapFill: true,
+            candidates: models,
+            reusePrimary: false,
+        });
+        const hit = gapList.find((id) => String(id || '').toLowerCase() !== primary);
+        return hit || models.find((id) => String(id || '').toLowerCase() !== primary) || models[0] || '';
     }
 
     /**
@@ -205,6 +289,130 @@
             return { useOpinion: true, reason: 'prefer_opinion', cues: opinion };
         }
         return { useOpinion: false, reason: 'keep_primary', cues: primary };
+    }
+
+    /**
+     * Heuristic kept primary but texts differ — worth a Laya Choice.
+     */
+    function isAmbiguousSecondOpinionKeep(winner, primaryCues, opinionCues) {
+        if (!winner || winner.useOpinion) return false;
+        if (String(winner.reason || '') !== 'keep_primary') return false;
+        const primary = (Array.isArray(primaryCues) ? primaryCues : [])
+            .map((c) => String(c?.text || '').trim())
+            .filter(Boolean);
+        const opinion = (Array.isArray(opinionCues) ? opinionCues : [])
+            .map((c) => String(c?.text || '').trim())
+            .filter(Boolean);
+        if (!primary.length || !opinion.length) return false;
+        const pJoined = primary.join('\n');
+        const oJoined = opinion.join('\n');
+        if (pJoined === oJoined) return false;
+        // Near-identical after whitespace collapse → not ambiguous
+        if (pJoined.replace(/\s+/g, '') === oJoined.replace(/\s+/g, '')) return false;
+        return true;
+    }
+
+    function getJevDecisionApi() {
+        try {
+            return (typeof module !== 'undefined' && module.exports)
+                ? require('./jev-decision-core')
+                : (typeof globalThis !== 'undefined' && globalThis.TransubJevDecision);
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Build System One Choice questions for ambiguous ASR windows.
+     * @param {Array<{ id?: string, primaryText: string, opinionText: string, startMs?: number, endMs?: number }>} windows
+     */
+    function buildSecondOpinionJevRequest(windows) {
+        const jev = getJevDecisionApi();
+        const list = Array.isArray(windows) ? windows : [];
+        const items = [];
+        const questions = {};
+        const stateWindows = [];
+        list.forEach((w, i) => {
+            const id = String(w?.id || `w${i}`);
+            const primaryText = String(w?.primaryText || '').trim();
+            const opinionText = String(w?.opinionText || '').trim();
+            if (!primaryText || !opinionText || primaryText === opinionText) return;
+            const clip = jev?.clipForDecision
+                ? (t) => jev.clipForDecision(t, 240)
+                : (t) => String(t).slice(0, 240);
+            const pClip = clip(primaryText);
+            const oClip = clip(opinionText);
+            items.push({
+                id,
+                primaryText,
+                opinionText,
+                startMs: w.startMs,
+                endMs: w.endMs,
+            });
+            stateWindows.push({
+                id,
+                primary: pClip,
+                opinion: oClip,
+                startMs: w.startMs,
+                endMs: w.endMs,
+            });
+            const q = jev?.buildChoiceQuestion
+                ? jev.buildChoiceQuestion({
+                    instructions: [
+                        'Two ASR transcripts cover the same audio window.',
+                        'Pick which is more accurate and complete for spoken dialogue',
+                        '(prefer real speech over scrap, loops, or hallucinated filler).',
+                        `Primary:\n${pClip}`,
+                        `Second opinion:\n${oClip}`,
+                    ].join('\n'),
+                    criteria: {
+                        primary: 'Keep the primary ASR transcript',
+                        opinion: 'Use the second-opinion ASR transcript',
+                    },
+                })
+                : {
+                    type: 'choice',
+                    instructions: `Pick better ASR. Primary:\n${pClip}\nOpinion:\n${oClip}`,
+                    criteria: {
+                        primary: 'Keep primary',
+                        opinion: 'Use second opinion',
+                    },
+                };
+            questions[id] = q;
+        });
+        return {
+            state: {
+                task: 'asr_second_opinion_winner',
+                windows: stateWindows,
+            },
+            questions,
+            items,
+        };
+    }
+
+    function partitionSecondOpinionJevAnswers(answers, windows, minConfidence) {
+        const jev = getJevDecisionApi();
+        const list = Array.isArray(windows) ? windows : [];
+        if (jev?.partitionBinaryChoices) {
+            const part = jev.partitionBinaryChoices(answers, list, {
+                minConfidence,
+                acceptChoices: ['opinion'],
+                rejectChoices: ['primary'],
+                idOf: (item, i) => String(item?.id || `w${i}`),
+            });
+            return {
+                useOpinion: part.accept,
+                keepPrimary: part.reject,
+                undecided: part.undecided,
+                decided: part.decided,
+            };
+        }
+        return {
+            useOpinion: [],
+            keepPrimary: [],
+            undecided: list,
+            decided: 0,
+        };
     }
 
     function isScrapOrLoopText(text) {
@@ -282,6 +490,29 @@
         ));
     }
 
+    function jaCueLooksLexicalDialogue(text) {
+        const t = String(text || '').replace(/\s+/g, '');
+        if (!t) return false;
+        if (/(です|ます|ですか|ですね|出身|自己|紹介|じゃない|センチ|けど)/.test(t)) return true;
+        let kanji = 0;
+        for (const ch of t) {
+            const c = ch.codePointAt(0);
+            if (c >= 0x4e00 && c <= 0x9fff) kanji += 1;
+        }
+        return kanji >= 2;
+    }
+
+    function jaCueLooksMoanSfx(text) {
+        const t = String(text || '').replace(/[。．.!！?？、,\s…·・♪[\]\-—]+/g, '');
+        if (!t) return true;
+        const moan = 'んンぁァあアっッはぁハふフぅゥうウー〜～';
+        let n = 0;
+        for (const ch of t) {
+            if (moan.includes(ch)) n += 1;
+        }
+        return n / t.length >= 0.55;
+    }
+
     function clampGapWindow(startMs, endMs, options = {}) {
         const minMs = Math.max(
             400,
@@ -322,6 +553,7 @@
                 i,
                 startMs: Number(c?.startMs) || 0,
                 endMs: Math.max(Number(c?.startMs) || 0, Number(c?.endMs) || 0),
+                text: String(c?.text || ''),
             }))
             .filter((c) => c.endMs > c.startMs)
             .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
@@ -330,6 +562,10 @@
         const minGap = Math.max(
             3000,
             Math.min(60000, Number(options.minGapMs) || DEFAULT_MIN_GAP_MS),
+        );
+        const dialogueGap = Math.max(
+            1200,
+            Math.min(minGap, Number(options.dialogueGapMs) || DEFAULT_DIALOGUE_GAP_MS),
         );
         const mediaMs = Math.max(
             0,
@@ -343,9 +579,18 @@
         for (let i = 0; i < list.length - 1; i += 1) {
             const gapStart = list[i].endMs;
             const gapEnd = list[i + 1].startMs;
-            if (gapEnd - gapStart < minGap) continue;
+            const gapDur = gapEnd - gapStart;
+            const prevLexical = jaCueLooksLexicalDialogue(list[i].text)
+                && !jaCueLooksMoanSfx(list[i].text);
+            const nextLexical = jaCueLooksLexicalDialogue(list[i + 1].text)
+                && !jaCueLooksMoanSfx(list[i + 1].text);
+            const need = (prevLexical || nextLexical) ? dialogueGap : minGap;
+            if (gapDur < need) continue;
             const win = clampGapWindow(gapStart, gapEnd, options);
-            if (win) out.push(win);
+            if (win) {
+                win.source = (prevLexical || nextLexical) ? 'dialogue_gap' : 'gap';
+                out.push(win);
+            }
         }
 
         const trailStart = list[list.length - 1].endMs;
@@ -354,7 +599,7 @@
             if (trail) out.push(trail);
         }
 
-        const maxGaps = Math.max(0, Math.min(12, Number(options.maxGapWindows) || 4));
+        const maxGaps = Math.max(0, Math.min(12, Number(options.maxGapWindows) || 6));
         return out.slice(0, maxGaps);
     }
 
@@ -441,7 +686,7 @@
     }
 
     function rangesFromIndexes(list, indexes, options = {}) {
-        const maxRanges = Math.max(1, Math.min(12, Number(options.maxRanges) || DEFAULT_MAX_RANGES));
+        const maxRanges = resolveAsrSecondOpinionMaxRanges(options);
         if (typeof options.buildRanges === 'function') {
             return options.buildRanges(list, indexes, {
                 maxRanges,
@@ -495,7 +740,7 @@
      */
     function planAsrSecondOpinion(cues, lowConfidenceIndexes, options = {}) {
         const list = Array.isArray(cues) ? cues : [];
-        const maxRanges = Math.max(1, Math.min(12, Number(options.maxRanges) || DEFAULT_MAX_RANGES));
+        const maxRanges = resolveAsrSecondOpinionMaxRanges(options);
         const minLow = Math.max(1, Math.min(20, Number(options.minLowCues) || DEFAULT_MIN_LOW_CUES));
         const annotations = Array.isArray(options.annotations) ? options.annotations : null;
         const rawLow = [...new Set((Array.isArray(lowConfidenceIndexes) ? lowConfidenceIndexes : [])
@@ -542,9 +787,58 @@
         const hallucSet = new Set(hallucIndexes);
         const lowOnly = orderByBand(lowIndexes.filter((i) => !hallucSet.has(i)));
 
-        const gapWindows = shouldIncludeTimelineGaps(options)
+        const gapWindows = (shouldIncludeTimelineGaps(options) || options.gapOnly === true)
             ? findTimelineGapWindows(list, options.mediaDurationMs, options)
             : [];
+        const dialogueGaps = gapWindows.filter((g) => g.source === 'dialogue_gap');
+
+        if (options.gapOnly === true) {
+            if (!dialogueGaps.length) {
+                return {
+                    ok: false,
+                    ranges: [],
+                    lowIndexes,
+                    hallucIndexes: [],
+                    gapWindowCount: gapWindows.length,
+                    rawLowIndexes: rawLow,
+                    reason: 'no_dialogue_gaps',
+                    maxRanges,
+                };
+            }
+            const gapRanges = tagRanges(dialogueGaps, 'dialogue_gap', 1);
+            const filteredOnly = filterSecondOpinionRanges(gapRanges, list, options);
+            const rangesOnly = filteredOnly.ranges;
+            if (!rangesOnly.length) {
+                return {
+                    ok: false,
+                    ranges: [],
+                    lowIndexes,
+                    hallucIndexes: [],
+                    gapWindowCount: dialogueGaps.length,
+                    rawLowIndexes: rawLow,
+                    skippedRanges: filteredOnly.skipped,
+                    reason: filteredOnly.skipped.length ? 'ranges_too_short' : 'no_ranges',
+                    maxRanges,
+                };
+            }
+            return {
+                ok: true,
+                ranges: rangesOnly,
+                lowIndexes,
+                hallucIndexes: [],
+                gapWindowCount: dialogueGaps.length,
+                rawLowIndexes: rawLow,
+                skippedRanges: filteredOnly.skipped,
+                maxRanges,
+                planStats: {
+                    hallucCueCount: 0,
+                    riskyLowCueCount: 0,
+                    gapWindowCount: dialogueGaps.length,
+                    scheduledRanges: rangesOnly.length,
+                    gapOnly: true,
+                },
+            };
+        }
 
         const enoughLow = lowIndexes.length >= minLow;
         const hasHalluc = hallucIndexes.length > 0;
@@ -579,7 +873,7 @@
             effectiveMax = Math.min(maxRanges, riskCap);
         }
 
-        // Priority: hallucination → risky low → timeline gaps.
+        // Priority: hallucination → dialogue holes → risky low → long gaps.
         const hallucRanges = tagRanges(
             rangesFromIndexes(list, hallucIndexes, { ...options, maxRanges: effectiveMax }),
             'hallucination',
@@ -590,9 +884,17 @@
             'low_confidence',
             2,
         );
-        const gapRanges = tagRanges(gapWindows, 'gap', 3);
+        const dialogueGapRanges = tagRanges(dialogueGaps, 'dialogue_gap', 1);
+        const otherGapRanges = tagRanges(
+            gapWindows.filter((g) => g.source !== 'dialogue_gap'),
+            'gap',
+            3,
+        );
 
-        let ranges = mergeRangesByPriority([hallucRanges, lowRanges, gapRanges], effectiveMax);
+        let ranges = mergeRangesByPriority(
+            [hallucRanges, dialogueGapRanges, lowRanges, otherGapRanges],
+            effectiveMax,
+        );
         const filtered = filterSecondOpinionRanges(ranges, list, options);
         ranges = filtered.ranges;
 
@@ -630,25 +932,37 @@
 
     return {
         DEFAULT_MAX_RANGES,
+        QUALITY_MAX_RANGES,
         DEFAULT_MIN_LOW_CUES,
         DEFAULT_MIN_RANGE_MS,
         DEFAULT_STRICT_LOW_THRESHOLD,
         DEFAULT_MIN_GAP_MS,
+        DEFAULT_DIALOGUE_GAP_MS,
         DEFAULT_MAX_GAP_WINDOW_MS,
         TARGET_BLANK_PLACEHOLDER,
         normalizeAsrSecondOpinionOption,
         isSpeedPerfProfile,
+        isQualityPerfProfile,
+        resolveAsrSecondOpinionMaxRanges,
         shouldRunAsrSecondOpinion,
+        shouldRunAsrDialogueGapFill,
         shouldIncludeTimelineGaps,
         pickSecondOpinionAsrModel,
+        pickSecondOpinionAsrModelForRange,
         listSecondOpinionAsrModels,
         rankSecondOpinionAsrSafety,
+        rankJaDialogueGapFillAsr,
         isFragileCt2AsrForSecondOpinion,
         shouldReusePrimaryAsrForSecondOpinion,
         chooseSecondOpinionWinner,
+        isAmbiguousSecondOpinionKeep,
+        buildSecondOpinionJevRequest,
+        partitionSecondOpinionJevAnswers,
         isScrapOrLoopText,
         isSecondOpinionRiskCue,
         findHallucinationRiskIndexes,
+        jaCueLooksLexicalDialogue,
+        jaCueLooksMoanSfx,
         findTimelineGapWindows,
         selectSecondOpinionIndexes,
         shouldSkipSecondOpinionRange,

@@ -71,6 +71,36 @@ describe('advanced-llm-download mirrors', () => {
         assert.strictEqual(ordered[1], github);
     });
 
+    it('orderDownloadUrlsByProbe soft-prefers CN gh-proxy over GitHub when domestic', () => {
+        const {
+            isDomesticPreferredDownloadUrl,
+            isDirectGithubDownloadUrl,
+        } = require('../electron/advanced-llm-download');
+        const github = 'https://github.com/ggml-org/llama.cpp/releases/download/b11029/llama.zip';
+        const proxy = 'https://gh-proxy.com/https://github.com/ggml-org/llama.cpp/releases/download/b11029/llama.zip';
+        assert.ok(isDirectGithubDownloadUrl(github));
+        assert.ok(!isDirectGithubDownloadUrl(proxy));
+        assert.ok(isDomesticPreferredDownloadUrl(proxy));
+        assert.ok(!isDomesticPreferredDownloadUrl(github));
+        const ordered = orderDownloadUrlsByProbe([
+            { url: github, ok: true, latencyMs: 70, bytesPerSec: 600_000 },
+            { url: proxy, ok: true, latencyMs: 90, bytesPerSec: 480_000 },
+        ], [github, proxy], { preferDomestic: true });
+        assert.strictEqual(ordered[0], proxy);
+        assert.strictEqual(ordered[1], github);
+    });
+
+    it('orderDownloadUrlsByProbe prefers clearly faster GitHub over slow CN proxy', () => {
+        const github = 'https://github.com/ggml-org/llama.cpp/releases/download/b11029/llama.zip';
+        const proxy = 'https://gh-proxy.com/https://github.com/ggml-org/llama.cpp/releases/download/b11029/llama.zip';
+        const ordered = orderDownloadUrlsByProbe([
+            { url: github, ok: true, latencyMs: 120, bytesPerSec: 2_000_000 },
+            { url: proxy, ok: true, latencyMs: 80, bytesPerSec: 80_000 },
+        ], [github, proxy], { preferDomestic: true });
+        assert.strictEqual(ordered[0], github);
+        assert.strictEqual(ordered[1], proxy);
+    });
+
     it('labels known mirror hosts', () => {
         const official = 'https://huggingface.co/x';
         assert.strictEqual(downloadSourceLabel('https://hf-mirror.com/x', official), 'HF 镜像');

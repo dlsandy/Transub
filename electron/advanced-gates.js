@@ -123,11 +123,23 @@ function requireAsrSemanticRepair() {
     return requireFeature(entitlement.FEATURE_CONTEXT_RECONSTRUCT);
 }
 
+/**
+ * Jev 决策辅助（现为开源 Laya System One）：jevDecision，或兼容 smartTranslate / contextReconstruct。
+ */
+function requireJevDecision() {
+    const gate = requireFeature(entitlement.FEATURE_JEV_DECISION);
+    if (gate.ok) return gate;
+    const smart = requireFeature(entitlement.FEATURE_SMART_TRANSLATE);
+    if (smart.ok) return smart;
+    return requireFeature(entitlement.FEATURE_CONTEXT_RECONSTRUCT);
+}
+
 module.exports = {
     isDevUnlockEnabled,
     requireFeature,
     requireSmartTranslate,
     requireFilmAudioEnhance,
     requireAsrSemanticRepair,
+    requireJevDecision,
     evaluateFreeWithInstall,
 };

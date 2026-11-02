@@ -90,4 +90,22 @@ describe('scene-presets-core', () => {
         assert.strictEqual(core.normalizeSecondary('all'), 'builtin');
         assert.strictEqual(core.normalizeSecondary('custom'), 'custom');
     });
+
+    it('strips settings-only film audio keys from preset options', () => {
+        assert.ok(core.PRESET_SKIP_KEYS.includes('filmAudioEnhance'));
+        assert.ok(core.PRESET_SKIP_KEYS.includes('enhanceForVadOnly'));
+        const cleaned = core.sanitizePresetOptions({
+            language: 'ja',
+            filmAudioEnhance: true,
+            enhanceForVadOnly: true,
+            filmVadPreset: true,
+        });
+        assert.strictEqual(cleaned.language, 'ja');
+        assert.strictEqual(cleaned.filmVadPreset, true);
+        assert.strictEqual(cleaned.filmAudioEnhance, undefined);
+        assert.strictEqual(cleaned.enhanceForVadOnly, undefined);
+        assert.ok(!core.EDITABLE_OPTION_FIELDS.some((f) => (
+            f.key === 'filmAudioEnhance' || f.key === 'enhanceForVadOnly'
+        )));
+    });
 });

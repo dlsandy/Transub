@@ -89,9 +89,5 @@ npm run asr:crop-lexicon -- --in=THUOCL_diming.txt --format=thuocl --limit=200 -
 ### 引擎接入
 
 - 全局术语表 + **设置开启「术语写入 prompt」** → 批次 job 携带 `initialPrompt` / `hotwords`。
-- 仅 `asrReplace: true` 的条目（热词/坏句池）→ 额外作为 `asrGlossary` 在转写后做 wrong→correct。
+- 仅 `asrReplace: true` 的条目（热词/误听）→ 额外作为 `asrGlossary` 在转写后做 wrong→correct。
 - AniList 角色名默认只参与 prompt，不会把英文别名当误听替换。
-
-```bash
-npm run asr:bad-pool-glossary
-```

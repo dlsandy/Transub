@@ -43,6 +43,7 @@
         '勿为全角半角标点、句读点、空格差异而改写；若无同音误听/缺词/明显误听，必须原样返回。',
         '勿为书面语法通顺而改写口语；口语省略、重复、语气词应保留。',
         '保持每条 index 不变，不要合并或拆分，不要改时间轴。',
+        '邻条窜句（优先修）：若本条尾部重复了下一条开头的实词片段，或下一条是上一条尾部回声，只删掉本条多出来的尾部（或让回声条回到贴合其自身的短听写），不要把内容挪到别的 index，不要合并条目。',
         '保留语气词与拟声；勿把有语义对白压成单字语气词。',
         '不确定时原样返回；改动宜小；输出语言必须与输入一致，不要翻译。',
     ].join('');
@@ -335,6 +336,24 @@
             else if (conf < threshold && suspicious) score += 2;
             else if (conf < threshold && text.length >= 12) score += 1;
         }
+        // Quality-pipeline risk bands / holds: prefer Pro semantic repair budget here.
+        const bandByIndex = options.bandByIndex || options.cueRiskBands || null;
+        const holdSet = options.holdIndexSet instanceof Set
+            ? options.holdIndexSet
+            : new Set(
+                (Array.isArray(options.holdIndexes) ? options.holdIndexes : [])
+                    .map((n) => Number(n))
+                    .filter((n) => Number.isInteger(n)),
+            );
+        const cueIdx = Number.isInteger(Number(cue?.index)) ? Number(cue.index) : index;
+        const band = String(
+            (bandByIndex && (bandByIndex[cueIdx] ?? bandByIndex[String(cueIdx)]))
+            || cue?.band
+            || cue?.riskBand
+            || '',
+        ).toLowerCase();
+        if (band === 'red' || holdSet.has(cueIdx) || holdSet.has(index)) score += 5;
+        else if (band === 'yellow') score += 3;
         if (text.length <= 2 && /[ぁ-んァ-ン]/.test(text)) score -= 2;
         if (text.length <= 2 && /^[A-Za-z]{1,3}$/.test(text)) score -= 2;
         if (/^[ぁ-んァ-ンー〜～!！?？…]+$/.test(text) && text.length <= 8) score -= 1;
@@ -416,8 +435,9 @@
             ctx.filmLanguageLine || buildFilmLanguageLine({ key: ctx.langKey, source: 'inferred' }),
             profile.outputRule,
             '保持每条字幕的 index 不变，不要合并或拆分条目，不要改时间轴。',
-            '只做听写忠实的小修：同音误字、缺词、明显误听、断句错误。',
+            '只做听写忠实的小修：同音误字、缺词、明显误听、断句错误、邻条尾部窜入。',
             '禁止仅修改标点、全角半角或句读点；若无听写错误，text 必须与输入完全一致。',
+            '邻条：下一条开头若已完整出现在上一条句尾，应删上一条句尾重复部分；不要合并/拆分 index。',
             '不要编造剧情、不要添加原文没有的信息。',
             '保留语气词、拟声与口语风格；专名不确定时保持原样。',
             '只输出 JSON，不要 Markdown，不要解释。格式：',
@@ -531,6 +551,152 @@
             return { ok: false, reason: 'script_drift' };
         }
         return { ok: true };
+    }
+
+    function getJevDecisionApi() {
+        try {
+            return (typeof module !== 'undefined' && module.exports)
+                ? require('./jev-decision-core')
+                : (typeof globalThis !== 'undefined' && globalThis.TransubJevDecision);
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Soft length-drift band: heuristics rejected, but Laya may still accept.
+     */
+    function isSoftLengthDriftCandidate(before, after, options = {}) {
+        const prev = String(before || '').trim();
+        const next = String(after || '').trim();
+        if (!prev || !next || prev === next || prev.length < 4) return false;
+        const hard = validateRepairUpdate(prev, next, options);
+        if (hard.ok || hard.reason !== 'length_drift') return false;
+        const softMax = Number(options.layaSoftMaxLengthRatio) || 3.0;
+        const softMin = Number(options.layaSoftMinLengthRatio) || 0.32;
+        const ratio = next.length / Math.max(1, prev.length);
+        return ratio <= softMax && ratio >= softMin;
+    }
+
+    /**
+     * Validate-ok but substantial edit → ask Laya accept/revert before commit.
+     */
+    function repairEditNeedsLayaGate(before, after, options = {}) {
+        const prev = String(before || '').trim();
+        const next = String(after || '').trim();
+        if (!prev || !next || prev === next) return false;
+        const check = validateRepairUpdate(prev, next, options);
+        if (!check.ok) return isSoftLengthDriftCandidate(prev, next, options);
+        if (prev.length < 4) return false;
+        const ratio = next.length / Math.max(1, prev.length);
+        if (ratio < 0.9 || ratio > 1.15) return true;
+        const delta = Math.abs(prev.length - next.length);
+        return delta >= Math.max(4, Math.ceil(prev.length * 0.2));
+    }
+
+    /**
+     * @param {Array<{ index: number, before: string, after: string }>} candidates
+     */
+    function buildRepairGateJevRequest(candidates) {
+        const jev = getJevDecisionApi();
+        const list = Array.isArray(candidates) ? candidates : [];
+        const items = [];
+        const questions = {};
+        const stateCues = [];
+        list.forEach((row, i) => {
+            const index = Number(row?.index);
+            if (!Number.isInteger(index) || index < 0) return;
+            const before = String(row?.before || '').trim();
+            const after = String(row?.after || '').trim();
+            if (!before || !after || before === after) return;
+            const id = `r${index}`;
+            const clip = jev?.clipForDecision
+                ? (t) => jev.clipForDecision(t, 220)
+                : (t) => String(t).slice(0, 220);
+            const bClip = clip(before);
+            const aClip = clip(after);
+            items.push({ id, index, before, after });
+            stateCues.push({ id, index, before: bClip, after: aClip });
+            questions[id] = jev?.buildChoiceQuestion
+                ? jev.buildChoiceQuestion({
+                    instructions: [
+                        'ASR semantic repair proposed a new transcript for one subtitle cue.',
+                        'Accept only if the new text is a clearer/more accurate transcription of the same speech',
+                        '(same language/script; no invented plot; no over-shortening).',
+                        `Before:\n${bClip}`,
+                        `After:\n${aClip}`,
+                    ].join('\n'),
+                    criteria: {
+                        accept: 'Keep the repaired text',
+                        revert: 'Reject the repair; keep the original',
+                    },
+                })
+                : {
+                    type: 'choice',
+                    instructions: `Accept ASR repair?\nBefore:\n${bClip}\nAfter:\n${aClip}`,
+                    criteria: { accept: 'Keep repair', revert: 'Keep original' },
+                };
+        });
+        return {
+            state: { task: 'asr_semantic_repair_gate', cues: stateCues },
+            questions,
+            items,
+        };
+    }
+
+    function partitionRepairGateJevAnswers(answers, candidates, minConfidence) {
+        const jev = getJevDecisionApi();
+        const list = Array.isArray(candidates) ? candidates : [];
+        if (jev?.partitionBinaryChoices) {
+            return jev.partitionBinaryChoices(answers, list, {
+                minConfidence,
+                acceptChoices: ['accept'],
+                rejectChoices: ['revert', 'reject'],
+                idOf: (item, i) => String(item?.id || `r${item?.index ?? i}`),
+            });
+        }
+        return { accept: [], reject: [], undecided: list, decided: 0 };
+    }
+
+    /**
+     * Split LLM updates into direct-apply vs Laya-gated.
+     * Soft length-drift candidates are included in the Laya bucket (not hard-rejected yet).
+     */
+    function splitRepairUpdatesForLayaGate(cues, updates, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        const direct = [];
+        const gated = [];
+        const hardReject = [];
+        for (const row of Array.isArray(updates) ? updates : []) {
+            const index = Number(row?.index);
+            if (!Number.isInteger(index) || index < 0 || index >= list.length) continue;
+            const after = String(row?.text ?? '').trim();
+            const before = String(list[index]?.text || '').trim();
+            if (!after || after === before) continue;
+            const check = validateRepairUpdate(before, after, options);
+            if (check.ok) {
+                if (repairEditNeedsLayaGate(before, after, options)) {
+                    gated.push({ index, before, after, text: after, id: `r${index}` });
+                } else {
+                    direct.push({ index, text: after });
+                }
+                continue;
+            }
+            if (check.reason === 'trivial') continue;
+            if (isSoftLengthDriftCandidate(before, after, options)) {
+                gated.push({
+                    index,
+                    before,
+                    after,
+                    text: after,
+                    id: `r${index}`,
+                    softLengthDrift: true,
+                });
+                continue;
+            }
+            hardReject.push({ index, reason: check.reason });
+        }
+        return { direct, gated, hardReject };
     }
 
     function extractJsonObject(text) {
@@ -819,6 +985,11 @@
         buildRepairUserPrompt,
         buildRepairChatMessages,
         validateRepairUpdate,
+        isSoftLengthDriftCandidate,
+        repairEditNeedsLayaGate,
+        buildRepairGateJevRequest,
+        partitionRepairGateJevAnswers,
+        splitRepairUpdatesForLayaGate,
         parseRepairResponse,
         applyRepairUpdates,
         mockRepairUpdates,

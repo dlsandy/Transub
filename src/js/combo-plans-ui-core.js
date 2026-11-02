@@ -100,6 +100,7 @@
                 translateMode: readFilterValue('translateMode', ''),
                 pro: readFilterValue('pro', 'all') || 'all',
                 group: readFilterValue('group', ''),
+                query: String($('comboPlansSearch')?.value || '').trim(),
             };
             return filters;
         }
@@ -122,6 +123,8 @@
             setFilterChip('translateMode', '');
             setFilterChip('pro', 'all');
             setFilterChip('group', '');
+            const search = $('comboPlansSearch');
+            if (search) search.value = '';
         }
 
         function syncChipLabel() {
@@ -129,13 +132,16 @@
             if (!labelEl) return;
             const id = String(getActiveComboPlanId() || '').trim();
             if (!id) {
-                labelEl.textContent = uiTx('推荐');
+                labelEl.textContent = '';
+                labelEl.hidden = true;
+                labelEl.classList.add('hidden');
                 return;
             }
             const hit = plans.find((p) => p.id === id) || fullPlanCache.get(id);
-            labelEl.textContent = hit?.name
-                ? String(hit.name).slice(0, 8)
-                : id.slice(0, 10);
+            const name = hit?.name ? String(hit.name).slice(0, 8) : id.slice(0, 10);
+            labelEl.hidden = false;
+            labelEl.classList.remove('hidden');
+            labelEl.textContent = name;
         }
 
         function filteredPlans() {
@@ -164,7 +170,12 @@
             listEl.innerHTML = rows.map((p) => {
                 const pair = coreApi.formatComboPlanLangPair?.(p) || '';
                 const mode = coreApi.translateModeLabel?.(p.translateMode) || p.translateMode;
-                const hw = coreApi.hardwareTierLabel?.(p.hardware?.tier) || p.hardware?.tier || '';
+                const vram = Number(p.hardware?.minVramGb);
+                const ram = Number(p.hardware?.minSystemRamGb);
+                const hwNeed = [
+                    Number.isFinite(vram) && vram > 0 ? `显存 ≥${vram}GB` : (p.hardware?.tier === 'cpu' ? '无独显' : ''),
+                    Number.isFinite(ram) && ram > 0 ? `内存 ≥${ram}GB` : '',
+                ].filter(Boolean).join(' · ');
                 const proBadge = p.requiresPro
                     ? '<span class="combo-plan-pro-badge ml-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1">Pro</span>'
                     : '';
@@ -172,12 +183,12 @@
                 return `<button type="button" class="combo-plan-card w-full text-left px-3 py-2.5 rounded-lg border border-gray-200 hover:border-violet-200 hover:bg-violet-50/40 transition${active}" data-combo-plan-id="${esc(p.id)}">
                     <div class="flex items-start justify-between gap-2">
                         <span class="text-sm font-medium text-gray-900 leading-snug">${esc(p.name)}${proBadge}</span>
-                        <span class="shrink-0 text-[10px] text-gray-500">${esc(hw)}</span>
                     </div>
                     <div class="mt-1 flex flex-wrap gap-1.5 text-[11px] text-gray-600">
                         <span class="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5">${esc(pair)}</span>
                         <span class="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5">${esc(mode)}</span>
                     </div>
+                    ${hwNeed ? `<p class="mt-1.5 text-[11px] text-gray-700">硬件：${esc(hwNeed)}</p>` : ''}
                     ${p.summary ? `<p class="mt-1 text-[11px] text-gray-500 line-clamp-2">${esc(p.summary)}</p>` : ''}
                 </button>`;
             }).join('');
@@ -526,6 +537,17 @@
         function bind() {
             if (bound || typeof document === 'undefined') return;
             bound = true;
+            document.addEventListener('input', (e) => {
+                if (e.target?.id !== 'comboPlansSearch') return;
+                renderList();
+            });
+            document.addEventListener('click', (e) => {
+                const chip = e.target?.closest?.('#comboPlanChipBtn');
+                if (!chip) return;
+                e.preventDefault();
+                e.stopPropagation();
+                openModal();
+            }, true);
             document.addEventListener('click', (e) => {
                 const apply = e.target?.closest?.('#comboPlansApplyBtn');
                 if (apply) {
@@ -536,12 +558,6 @@
                         showToast(err?.message || String(err), 'err');
                         setPhase('browse');
                     });
-                    return;
-                }
-                const chip = e.target?.closest?.('#comboPlanChipBtn');
-                if (chip) {
-                    e.preventDefault();
-                    openModal();
                     return;
                 }
                 const btn = e.target?.closest?.('button');

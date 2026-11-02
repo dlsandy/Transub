@@ -20,6 +20,14 @@ function testDanglingAndFragment() {
     assert.ok(endsWithDangling('I went to'));
     assert.ok(isFragmentCue('的'));
     assert.ok(isFragmentCue('and'));
+    // Short kana crumbs / orphan tails stay fragments
+    assert.ok(isFragmentCue('ぇ'));
+    assert.ok(isFragmentCue('ちゅ'));
+    assert.ok(isFragmentCue('だだだ'));
+    assert.ok(isFragmentCue('から'));
+    assert.ok(isFragmentCue('しい'));
+    // Lexical hiragana nouns must not be wiped as pure-kana crumbs (MARR food cue)
+    assert.ok(!isFragmentCue('こんにゃく'));
     const ok = analyzeTextFluency('你好吗');
     assert.ok(!ok.flags.includes('dangling'), '语气词结尾不算残缺');
 }
@@ -150,6 +158,8 @@ function testHallucinationCleanup() {
     ));
     const { isSymbolOnlyCue, isSoundEffectCue } = require('../src/js/subtitle-fluency-core');
     assert.ok(isSymbolOnlyCue('◆ ◆ ◆ ◆ ◆ ◆'));
+    assert.ok(isSymbolOnlyCue('}'));
+    assert.ok(isSymbolOnlyCue('＋'));
     assert.ok(isSoundEffectCue('◆ ◆ ◆'));
     assert.strictEqual(normalizeAsrText("All right , let ' s do this"), "All right, let's do this");
     assert.strictEqual(normalizeAsrText('and for 1 0 years'), 'and for 10 years');
@@ -158,6 +168,36 @@ function testHallucinationCleanup() {
     assert.strictEqual(normalizeAsrText("I ' been the one"), 'I been the one');
     assert.strictEqual(normalizeAsrText("I ' m pretty"), "I'm pretty");
     assert.strictEqual(normalizeAsrText("we don ' t really"), "we don't really");
+    const {
+        stripAsrDecorativeTrailingEllipsis,
+        stripAsrDecorativeTrailingEllipsisInCues,
+    } = require('../src/js/subtitle-fluency-core');
+    assert.strictEqual(stripAsrDecorativeTrailingEllipsis('時給もなかなかいいし…'), '時給もなかなかいいし');
+    assert.strictEqual(stripAsrDecorativeTrailingEllipsis('wait...'), 'wait');
+    assert.strictEqual(
+        stripAsrDecorativeTrailingEllipsis('そんなことないけど…ホント?'),
+        'そんなことないけど…ホント?',
+    );
+    assert.strictEqual(stripAsrDecorativeTrailingEllipsis('…'), '…');
+    assert.strictEqual(stripAsrDecorativeTrailingEllipsis('んんっ…!'), 'んんっ!');
+    const ellBatch = stripAsrDecorativeTrailingEllipsisInCues([
+        { startMs: 0, endMs: 1000, text: '私、友達が少ないから…' },
+        { startMs: 1000, endMs: 2000, text: '主婦の方と友達になれたらいいな' },
+    ]);
+    assert.strictEqual(ellBatch.changed, 1);
+    assert.strictEqual(ellBatch.cues[0].text, '私、友達が少ないから');
+    assert.strictEqual(ellBatch.cues[1].text, '主婦の方と友達になれたらいいな');
+    const keepMid = stripAsrDecorativeTrailingEllipsisInCues([
+        { startMs: 0, endMs: 1000, text: 'でも…静かにできない?' },
+    ]);
+    assert.strictEqual(keepMid.changed, 0);
+    assert.strictEqual(keepMid.cues[0].text, 'でも…静かにできない?');
+    const keepTurn = stripAsrDecorativeTrailingEllipsisInCues([
+        { startMs: 0, endMs: 1000, text: 'そんなことないけど…' },
+        { startMs: 1050, endMs: 1800, text: 'ホント?' },
+    ]);
+    assert.strictEqual(keepTurn.changed, 0);
+    assert.strictEqual(keepTurn.cues[0].text, 'そんなことないけど…');
     const cues = [
         { startMs: 0, endMs: 500, text: '完毕' },
         { startMs: 1000, endMs: 3000, text: '正常对白内容。' },
@@ -348,6 +388,80 @@ function testSimplifyViewingPunctuation() {
     assert.strictEqual(batch.stats.cueTouched, 1);
     assert.strictEqual(batch.cues[0].text, '走吧');
     assert.strictEqual(batch.cues[1].text, '好的');
+
+    // Tone-stretch ~~ must survive viewing punct (not rewrite to …).
+    const tilde = simplifyViewingPunctuationInText('~~', { level: 'light' });
+    assert.strictEqual(tilde.text, '~~');
+}
+
+function testStripTrailingZhSentencePeriod() {
+    const {
+        stripTrailingZhSentencePeriod,
+        stripTrailingZhSentencePeriodInCues,
+        normalizeBlankMtPlaceholder,
+    } = require('../src/js/subtitle-fluency-core');
+
+    assert.strictEqual(stripTrailingZhSentencePeriod('我回来了。'), '我回来了');
+    assert.strictEqual(stripTrailingZhSentencePeriod('可以吗？'), '可以吗？');
+    assert.strictEqual(stripTrailingZhSentencePeriod('太棒了！'), '太棒了！');
+    assert.strictEqual(normalizeBlankMtPlaceholder('~~'), '~~');
+    assert.strictEqual(normalizeBlankMtPlaceholder('～～'), '～～');
+
+    const batch = stripTrailingZhSentencePeriodInCues([
+        { index: 0, text: '走吧。' },
+        { index: 1, text: '~~' },
+        { index: 2, text: '好的吗？' },
+        { index: 3, text: '字幕由 Transub Pro 生成 [ www.transub.cc ]' },
+    ]);
+    assert.ok(batch.stats.cueTouched >= 1);
+    assert.strictEqual(batch.cues[0].text, '走吧');
+    assert.strictEqual(batch.cues[1].text, '~~');
+    assert.strictEqual(batch.cues[2].text, '好的吗？');
+    assert.ok(batch.cues[3].text.includes('www.transub.cc'));
+}
+
+function testAsrEchoDedupe() {
+    const {
+        isAsrEchoPair,
+        dedupeAsrEchoCues,
+        summarizeAsrEchoDedupe,
+    } = require('../src/js/subtitle-fluency-core');
+
+    assert.ok(isAsrEchoPair('つまり、この勃起は…', 'この勃起は…'));
+    assert.ok(isAsrEchoPair('奥さん見てたら、こんなに…', 'こんなに…'));
+    assert.ok(isAsrEchoPair('やまんできない…!', 'ああ、やまんできない…!'));
+    assert.ok(!isAsrEchoPair('気持ちいい…', '旦那とどっちが気持ちいい?'));
+    assert.ok(!isAsrEchoPair('よかった。', 'よかったら、一緒に'));
+
+    const out = dedupeAsrEchoCues([
+        { startMs: 373398, endMs: 374509, text: 'つまり、この勃起は…' },
+        { startMs: 375048, endMs: 376368, text: 'この勃起は…' },
+        { startMs: 377414, endMs: 378644, text: '奥さんの勃起だよ…' },
+    ]);
+    assert.strictEqual(out.removed, 1);
+    assert.deepStrictEqual(out.cues.map((c) => c.text), [
+        'つまり、この勃起は…',
+        '奥さんの勃起だよ…',
+    ]);
+    assert.ok(summarizeAsrEchoDedupe(out.stats).includes('回声'));
+
+    // Short reactive exact echo across >4s (気持ちいい｜気持ちいい?)
+    const reactive = dedupeAsrEchoCues([
+        { startMs: 0, endMs: 800, text: '気持ちいい' },
+        { startMs: 6000, endMs: 6800, text: '気持ちいい?' },
+        { startMs: 9000, endMs: 9600, text: 'だめ' },
+        { startMs: 15000, endMs: 15600, text: 'だめ' },
+    ]);
+    assert.strictEqual(reactive.removed, 2, JSON.stringify(reactive));
+    assert.strictEqual(reactive.cues.length, 2);
+    assert.ok(/気持ちいい/.test(reactive.cues[0].text), reactive.cues[0].text);
+    assert.strictEqual(String(reactive.cues[1].text).trim(), 'だめ');
+    // Bare ん stacks must not wide-gap dedupe
+    const nn = dedupeAsrEchoCues([
+        { startMs: 0, endMs: 200, text: 'ん' },
+        { startMs: 8000, endMs: 8200, text: 'ん' },
+    ]);
+    assert.strictEqual(nn.removed, 0, JSON.stringify(nn));
 }
 
 function testJaFragmentStitch() {
@@ -357,6 +471,10 @@ function testJaFragmentStitch() {
         isFragmentCue,
         endsJaBroken,
         startsJaContinuation,
+        endsJaPrenominalIncomplete,
+        startsJaNounContinuation,
+        shouldStitchJaFragmentPair,
+        stitchAlignedJaZhFragmentPairs,
     } = require('../src/js/subtitle-fluency-core');
 
     assert.ok(endsJaBroken('あはは恥ずかしいのいやちょっと恥ずかしいっす恥ずかしいご'));
@@ -383,6 +501,228 @@ function testJaFragmentStitch() {
     // Do not glue a normal sentence onto a following うん
     assert.ok(stitched.cues.some((c) => String(c.text).trim() === 'うん…'));
     assert.ok(summarizeJaStitch(stitched.stats).includes('拼接'));
+}
+
+function testMarrAsrFragmentFalsePositiveGuard() {
+    const {
+        isFragmentCue,
+        shouldStitchJaFragmentPair,
+        stitchJaFragmentCues,
+        removeNoiseFromCues,
+    } = require('../src/js/subtitle-fluency-core');
+    const { isPureMoanOrSfxJa, isDeterministicAsrDebrisJa } = require('../src/js/hymt-ellipsis-policy-core');
+
+    assert.ok(!isFragmentCue('こんにゃく'));
+    assert.ok(!isPureMoanOrSfxJa('こんにゃく'), 'food noun must not match んにゃ moan scrap');
+    assert.ok(!isDeterministicAsrDebrisJa('こんにゃく'));
+    assert.ok(shouldStitchJaFragmentPair('から', 'みが好きです', 40));
+    assert.ok(shouldStitchJaFragmentPair('たぶん名物のじゃ', 'こんにゃく', 40));
+    assert.ok(shouldStitchJaFragmentPair('こんにゃく', '味噌田楽です。', 40));
+
+    const cues = [
+        { startMs: 5040846, endMs: 5042868, text: 'たぶん名物のじゃ' },
+        { startMs: 5042908, endMs: 5043992, text: 'こんにゃく' },
+        { startMs: 5044032, endMs: 5046204, text: '味噌田楽です。' },
+        { startMs: 5280872, endMs: 5283800, text: '私はレバーというけど' },
+        { startMs: 5284508, endMs: 5285062, text: 'から' },
+        { startMs: 5285102, endMs: 5286726, text: 'みが好きです' },
+        { startMs: 6000000, endMs: 6001500, text: 'ちゅ' },
+        { startMs: 6002000, endMs: 6003500, text: 'だだだ' },
+    ];
+    const stitched = stitchJaFragmentCues(cues, { phraseStitch: true });
+    assert.ok(
+        stitched.cues.some((c) => String(c.text).includes('からみが好き')),
+        JSON.stringify(stitched.cues.map((c) => c.text)),
+    );
+    assert.ok(
+        stitched.cues.some((c) => /名物のじゃこんにゃく味噌田楽です/.test(String(c.text))),
+        '名物のじゃ＋こんにゃく＋味噌田楽 must stitch: ' + JSON.stringify(stitched.cues.map((c) => c.text)),
+    );
+    const cleaned = removeNoiseFromCues(stitched.cues, {
+        removeEmpty: true,
+        removeFragments: true,
+        removeSoundEffects: true,
+        removeSymbolOnly: true,
+        removeHallucinations: true,
+    });
+    assert.ok(
+        cleaned.cues.some((c) => String(c.text).includes('こんにゃく')),
+        'lexical こんにゃく must survive noise drop',
+    );
+    assert.ok(
+        cleaned.cues.some((c) => String(c.text).includes('からみが好き')),
+        'orphan から must stitch before drop',
+    );
+    assert.ok(!cleaned.cues.some((c) => String(c.text).trim() === 'ちゅ'));
+    assert.ok(!cleaned.cues.some((c) => String(c.text).trim() === 'だだだ'));
+}
+
+function testJaPhrasePrenominalStitch() {
+    const {
+        endsJaPrenominalIncomplete,
+        startsJaNounContinuation,
+        shouldStitchJaFragmentPair,
+        stitchJaFragmentCues,
+        stitchAlignedJaZhFragmentPairs,
+    } = require('../src/js/subtitle-fluency-core');
+
+    assert.ok(endsJaPrenominalIncomplete('今日はお父さんが好きな'));
+    assert.ok(endsJaPrenominalIncomplete('好きな'));
+    assert.ok(startsJaNounContinuation('サバの味噌煮とローストビーフです'));
+    assert.ok(shouldStitchJaFragmentPair(
+        '今日はお父さんが好きな',
+        'サバの味噌煮とローストビーフです',
+        200,
+    ));
+    // Terminal い-adjective + food: do NOT stitch (false-merge risk)
+    assert.ok(!endsJaPrenominalIncomplete('たまらない'));
+    assert.ok(!shouldStitchJaFragmentPair('たまらない', '美味い', 100));
+    // Turn opening after prenominal: do NOT stitch
+    assert.ok(!shouldStitchJaFragmentPair('好きな', 'いや違うよ', 100));
+    // Sentence-final 「…るな」must NOT count as 連体な
+    assert.ok(!endsJaPrenominalIncomplete('痛みに染みるな'));
+    assert.ok(!shouldStitchJaFragmentPair('痛みに染みるな', 'マジ、なんなんだよ', 200));
+    // Verbal nominalizer 「してるの」must NOT stitch onto next clause
+    assert.ok(!endsJaPrenominalIncomplete('浮気してるの'));
+    assert.ok(!shouldStitchJaFragmentPair('浮気してるの', '気付いてないんだでも思ってる?', 40));
+    // Good prenominal の / demonstrative
+    assert.ok(endsJaPrenominalIncomplete('ここの'));
+    assert.ok(shouldStitchJaFragmentPair('ここの', '川のところで取れるんだって', 20));
+    assert.ok(endsJaPrenominalIncomplete('みたいな'));
+    assert.ok(shouldStitchJaFragmentPair('みたいな', '言ってた優香が…', 90));
+    // Orphan connective tail + continuation (辛みが好き split as から｜みが好き)
+    assert.ok(shouldStitchJaFragmentPair('から', 'みが好きです', 40));
+    assert.ok(!shouldStitchJaFragmentPair('から', 'うん…', 40), 'do not glue orphan onto turn opener');
+    // Multi-mora hiragana noun head after prenominal
+    assert.ok(startsJaNounContinuation('こんにゃく'));
+    assert.ok(!startsJaNounContinuation('うん'));
+
+    // Line-wrap ellipsis: incomplete stem… + continuation → merge
+    const {
+        endsAsrEllipsisLineWrap,
+        startsAsrEllipsisWrapContinuation,
+        joinAsrCueTexts,
+    } = require('../src/js/subtitle-fluency-core');
+    assert.ok(endsAsrEllipsisLineWrap('こちらの…'));
+    assert.ok(endsAsrEllipsisLineWrap('情報を外に漏らした場合…'));
+    assert.ok(endsAsrEllipsisLineWrap('時給もなかなかいいし…'));
+    assert.ok(!endsAsrEllipsisLineWrap('お待たせいたしました…'), 'decorative complete');
+    assert.ok(startsAsrEllipsisWrapContinuation('雇用契約書。'));
+    assert.ok(!startsAsrEllipsisWrapContinuation('まあ、好きにしろよ'));
+    assert.ok(!startsAsrEllipsisWrapContinuation('ホント?'));
+    assert.ok(shouldStitchJaFragmentPair('こちらの…', '雇用契約書。', 80));
+    assert.ok(shouldStitchJaFragmentPair('情報を外に漏らした場合…', '損害賠償を請求する場合が', 120));
+    assert.ok(!shouldStitchJaFragmentPair('んて思って…', 'まあ、好きにしろよ', 100));
+    assert.ok(!shouldStitchJaFragmentPair('そんなことないけど…', 'ホント?', 60));
+    assert.ok(!shouldStitchJaFragmentPair('お待たせいたしました…', '弊社はデータ入力', 80));
+    assert.strictEqual(joinAsrCueTexts('こちらの…', '雇用契約書。'), 'こちらの雇用契約書。');
+
+    const wrapJa = [
+        { startMs: 0, endMs: 1000, text: 'こちらの…' },
+        { startMs: 1050, endMs: 2200, text: '雇用契約書。' },
+        { startMs: 3000, endMs: 4000, text: 'そんなことないけど…' },
+        { startMs: 4050, endMs: 4800, text: 'ホント?' },
+        { startMs: 6000, endMs: 7000, text: 'お待たせいたしました…' },
+        { startMs: 7100, endMs: 8500, text: '弊社はデータ入力です' },
+    ];
+    const wrapStitched = stitchJaFragmentCues(wrapJa);
+    assert.ok(wrapStitched.cues.some((c) => String(c.text) === 'こちらの雇用契約書。'));
+    assert.ok(wrapStitched.cues.some((c) => String(c.text).trim() === 'そんなことないけど…'));
+    assert.ok(wrapStitched.cues.some((c) => String(c.text).trim() === 'ホント?'));
+    assert.ok(wrapStitched.cues.some((c) => String(c.text).trim() === 'お待たせいたしました…'));
+
+    const ja = [
+        { startMs: 0, endMs: 1200, text: '今日はお父さんが好きな' },
+        { startMs: 1300, endMs: 3200, text: 'サバの味噌煮とローストビーフです' },
+        { startMs: 4000, endMs: 4800, text: 'この' },
+        { startMs: 4900, endMs: 5600, text: '嫁さん' },
+        { startMs: 7000, endMs: 7800, text: 'たまらない' },
+        { startMs: 7900, endMs: 8600, text: '美味い' },
+    ];
+    const stitched = stitchJaFragmentCues(ja);
+    assert.ok(stitched.mergedPairs >= 2, JSON.stringify(stitched.stats));
+    assert.ok(stitched.stats.phraseMerged >= 2, JSON.stringify(stitched.stats));
+    assert.ok(stitched.cues.some((c) => String(c.text).includes('好きなサバの味噌煮')));
+    assert.ok(stitched.cues.some((c) => String(c.text).includes('この嫁さん')));
+    assert.ok(stitched.cues.some((c) => String(c.text).trim() === 'たまらない'));
+    assert.ok(stitched.cues.some((c) => String(c.text).trim() === '美味い'));
+
+    const zh = [
+        { startMs: 0, endMs: 1200, text: '今天是爸爸喜欢的' },
+        { startMs: 1300, endMs: 3200, text: '青花鱼味噌煮和烤牛肉' },
+        { startMs: 4000, endMs: 4800, text: '这' },
+        { startMs: 4900, endMs: 5600, text: '位太太' },
+        { startMs: 7000, endMs: 7800, text: '受不了' },
+        { startMs: 7900, endMs: 8600, text: '真好吃' },
+    ];
+    const paired = stitchAlignedJaZhFragmentPairs(zh, ja);
+    assert.strictEqual(paired.zhCues.length, paired.jaCues.length);
+    assert.ok(paired.mergedPairs >= 2);
+    assert.ok(paired.zhCues.some((c) => String(c.text).includes('喜欢的青花鱼')));
+    assert.ok(paired.zhCues.some((c) => String(c.text).includes('这位太太')));
+    assert.ok(paired.zhCues.some((c) => String(c.text).trim() === '受不了'));
+
+    // Orphan ZH particle cue attaches to previous
+    // ZH-only prenominal when JA is already one cue (MARR 爱喝酒的｜青豆腐)
+    const {
+        shouldAttachZhTrailingParticle,
+        shouldStitchZhPrenominalPair,
+        stitchZhPrenominalCues,
+        endsZhPrenominalIncomplete,
+        startsZhNounContinuation,
+        isFragmentCue,
+    } = require('../src/js/subtitle-fluency-core');
+    assert.ok(shouldAttachZhTrailingParticle('就在不久前才介绍过', '吗', 80));
+    assert.ok(!shouldAttachZhTrailingParticle('好的', '吗', 80));
+    const zhParts = stitchZhPrenominalCues([
+        { startMs: 0, endMs: 1000, text: '就在不久前才介绍过' },
+        { startMs: 1050, endMs: 1200, text: '吗' },
+        { startMs: 2000, endMs: 2500, text: '嗯' },
+    ]);
+    assert.ok(zhParts.mergedPairs >= 1);
+    assert.ok(zhParts.cues.some((c) => String(c.text) === '就在不久前才介绍过吗'));
+
+    // Count mismatch: rematerialize ZH by time over JA merge spans
+    const zhShort = [
+        { startMs: 0, endMs: 1200, text: '今天是爸爸喜欢的' },
+        { startMs: 1300, endMs: 3200, text: '青花鱼味噌煮和烤牛肉' },
+        { startMs: 7000, endMs: 7800, text: '受不了' },
+    ];
+    const jaLong = [
+        { startMs: 0, endMs: 1200, text: '今日はお父さんが好きな' },
+        { startMs: 1300, endMs: 3200, text: 'サバの味噌煮とローストビーフです' },
+        { startMs: 4000, endMs: 4500, text: 'そうか' },
+        { startMs: 7000, endMs: 7800, text: 'たまらない' },
+    ];
+    const remat = stitchAlignedJaZhFragmentPairs(zhShort, jaLong);
+    assert.ok(!remat.skipped || remat.reason === 'count_mismatch_rematerialized');
+    assert.ok(remat.mergedPairs >= 1);
+    assert.ok(remat.jaCues.some((c) => String(c.text).includes('好きなサバ')));
+    assert.ok(remat.zhCues.some((c) => String(c.text).includes('喜欢的青花鱼')));
+
+    assert.ok(endsZhPrenominalIncomplete('呐，爱喝酒的'));
+    assert.ok(startsZhNounContinuation('青豆腐'));
+    assert.ok(!endsZhPrenominalIncomplete('是的'));
+    assert.ok(!startsZhNounContinuation('感觉很可疑'));
+    // Clause openers after attributive「…的」must not stitch (ATID-649 的容我)
+    assert.ok(!startsZhNounContinuation('容我向各位介绍'));
+    assert.ok(!startsZhNounContinuation('请放心吧'));
+    assert.ok(!shouldStitchZhPrenominalPair(
+        '小崎喜欢的',
+        '容我向各位介绍一位可爱的女孩。',
+        80,
+    ));
+    const zhOnly = stitchZhPrenominalCues([
+        { startMs: 0, endMs: 1000, text: '呐，爱喝酒的' },
+        { startMs: 1200, endMs: 2000, text: '青豆腐' },
+        { startMs: 3000, endMs: 4000, text: '奈绪做的' },
+        { startMs: 4050, endMs: 5000, text: '呐，味噌煮青花鱼好好吃啊。' },
+    ]);
+    assert.ok(zhOnly.mergedPairs >= 1);
+    assert.ok(zhOnly.cues.some((c) => String(c.text).includes('爱喝酒的青豆腐')));
+    assert.ok(zhOnly.cues.some((c) => String(c.text).trim() === '奈绪做的'));
+    assert.ok(isFragmentCue('なさい'));
+    assert.ok(isFragmentCue('吧'));
 }
 
 function testRemoveAlignedNoiseFromCuePairs() {
@@ -477,6 +817,17 @@ function testDropPureInterjectionPairs() {
     assert.ok(isPureInterjectionJa('うふふ'));
     assert.ok(isPureInterjectionJa('んっ…んっ'));
     assert.ok(isPureInterjectionJa('はぁ♡'));
+    // Soft-AV shelf: sokuon stacks often split with 、 (was miss: token class lacked っ / んんっ).
+    assert.ok(isPureInterjectionJa('んっ、んんっ…'));
+    assert.ok(isPureInterjectionJa('あっ、ああっ!'));
+    assert.ok(isPureInterjectionJa('はぁっ、はぁっ'));
+    assert.ok(isPureInterjectionJa('あんっ、あんっ'));
+    assert.ok(isPureInterjectionJa('あ、ああっ!'));
+    assert.ok(isPureInterjectionJa('んんっ'));
+    assert.ok(isPureInterjectionJa('ああっ'));
+    assert.ok(isPureInterjectionJa('はぁっ'));
+    assert.ok(isPureInterjectionJa('ほらっほらっ'));
+    assert.ok(isPureInterjectionJa('あらら'));
     assert.ok(isPureInterjectionJa('はい'));
     assert.ok(isPureInterjectionJa('そう'));
     assert.ok(isPureInterjectionJa('よしよし'));
@@ -488,6 +839,7 @@ function testDropPureInterjectionPairs() {
     assert.ok(!isPureInterjectionJa('いい'));
     assert.ok(!isPureInterjectionJa('あっ…いい'));
     assert.ok(!isPureInterjectionJa('あっ、いい'));
+    assert.ok(!isPureInterjectionJa('そうです'));
     assert.ok(isPureInterjectionZh('嗯'));
     assert.ok(isPureInterjectionZh('哈啊'));
     assert.ok(isPureInterjectionZh('…'));
@@ -531,16 +883,32 @@ function testDropPureInterjectionPairs() {
         { startMs: 4900, endMs: 5400, text: '啊……' },
     ];
     const dropped = dropPureInterjectionPairs(zh, ja);
-    // Classic fillers + はい/そう; leading うん kept when next cue is substantive (context bridge).
+    // Classic fillers + はい/そう; leading うん needs BOTH dialogue neighbors (≤2s bridge) — drop.
     // あっ…いい kept (semantic いい)
-    assert.strictEqual(dropped.dropped, 5);
-    assert.strictEqual(dropped.zhCues.length, 4);
-    assert.strictEqual(dropped.jaCues.length, 4);
+    assert.strictEqual(dropped.dropped, 6);
+    assert.strictEqual(dropped.zhCues.length, 3);
+    assert.strictEqual(dropped.jaCues.length, 3);
     assert.ok(dropped.zhCues.some((c) => /没问题/.test(c.text)));
     assert.ok(dropped.zhCues.some((c) => c.text === '等一下'));
-    assert.ok(dropped.jaCues.some((c) => c.text === 'うん'));
+    assert.ok(!dropped.jaCues.some((c) => c.text === 'うん'));
     assert.ok(dropped.jaCues.some((c) => /いい/.test(c.text)));
     assert.ok(summarizePureInterjectionDrop(2).includes('清除'));
+
+    // Mid-dialogue はい within 2s → keep and gloss 是的
+    const bridge = dropPureInterjectionPairs(
+        [
+            { startMs: 0, endMs: 1000, text: '可以吗？' },
+            { startMs: 1100, endMs: 1400, text: '好的' },
+            { startMs: 1600, endMs: 2200, text: '那就拜托了' },
+        ],
+        [
+            { startMs: 0, endMs: 1000, text: 'これでいいですか' },
+            { startMs: 1100, endMs: 1400, text: 'はい' },
+            { startMs: 1600, endMs: 2200, text: 'お願いします' },
+        ],
+    );
+    assert.strictEqual(bridge.dropped, 0);
+    assert.strictEqual(bridge.zhCues[1].text, '是的');
 
     const timed = dropPureInterjectionPairs(
         [{ startMs: 0, endMs: 2200, text: '哈啊' }],
@@ -770,8 +1138,18 @@ describe("subtitle-fluency", () => {
     it("simplify viewing punctuation", () => {
         testSimplifyViewingPunctuation();
     });
+    it("strips trailing ZH sentence periods and normalizes ~~ blanks", () => {
+        testStripTrailingZhSentencePeriod();
+    });
+    it("dedupe ASR echo leftovers", () => {
+        testAsrEchoDedupe();
+    });
     it("stitch JA ASR fragments", () => {
         testJaFragmentStitch();
+        testJaPhrasePrenominalStitch();
+    });
+    it("keeps lexical kana / stitches orphan から (MARR ASR false-pos)", () => {
+        testMarrAsrFragmentFalsePositiveGuard();
     });
     it("drop pure interjection pairs", () => {
         testDropPureInterjectionPairs();

@@ -83,10 +83,22 @@ function findEngineBundledFfmpeg(installPath) {
 }
 
 /**
+ * Allow Intel + LLVM OpenMP in one process (ROCm torch + ctranslate2/numba on Windows).
+ * Without this, anime-whisper after FireRedVAD aborts with OMP Error #15 / exit 3.
+ */
+function injectOpenMpCompatEnv(env) {
+    const next = { ...(env || {}) };
+    if (!next.KMP_DUPLICATE_LIB_OK) {
+        next.KMP_DUPLICATE_LIB_OK = 'TRUE';
+    }
+    return next;
+}
+
+/**
  * Prepend nvidia-* wheel bin dirs (cublas64_12.dll etc.) so CT2/Whisper can use GPU.
  */
 function injectNvidiaCudaPathEnv(env, engineInstallPath = '') {
-    const next = { ...(env || {}) };
+    const next = injectOpenMpCompatEnv(env || {});
     try {
         const root = path.resolve(String(engineInstallPath || '').trim() || '.');
         const candidates = [
@@ -131,7 +143,7 @@ function injectNvidiaCudaPathEnv(env, engineInstallPath = '') {
 }
 
 function injectFfmpegPathEnv(env, ffmpegPathSetting, engineInstallPath = '') {
-    const next = { ...env };
+    const next = injectOpenMpCompatEnv(env || {});
     try {
         const ffmpegBridge = require('./ffmpeg-bridge');
         const resolved = ffmpegBridge.resolveFfmpegForExecution(ffmpegPathSetting);
@@ -167,6 +179,7 @@ module.exports = {
     resolveEngineRuntimePython,
     resolveEngineEntrypoints,
     findEngineBundledFfmpeg,
+    injectOpenMpCompatEnv,
     injectNvidiaCudaPathEnv,
     injectFfmpegPathEnv,
 };

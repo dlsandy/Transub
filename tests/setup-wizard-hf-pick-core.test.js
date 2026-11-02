@@ -20,14 +20,14 @@ describe('setup-wizard-hf-pick-core', () => {
             }),
             /回退/,
         );
-        assert.ok(hf.formatHfPickStatus(null).includes('自动测速'));
+        assert.ok(hf.formatHfPickStatus(null).includes('国内镜像'));
     });
 
     it('createSetupWizardHfPick caches ensurePicked result', async () => {
         let calls = 0;
         const api = hf.createSetupWizardHfPick({
             electron: {
-                async transubPickHfEndpoint() {
+                async transubEnsureFirstRunHfEndpoint() {
                     calls += 1;
                     return {
                         ok: true,

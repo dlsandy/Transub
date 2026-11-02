@@ -29,6 +29,31 @@ describe('hymt-translate-core', () => {
         assert.doesNotMatch(msgs[0].content, /拟声参考/);
     });
 
+    it('appends SenseVoice emotion hint when enabled', () => {
+        const msgs = hymt.buildHyMtChatMessages(
+            [{ index: 0, text: '待って', emotion: 'ANGRY' }],
+            {
+                sensevoiceEmotionMtStyle: 'hint',
+                sensevoiceRichTags: 'sidecar',
+                contentProfile: 'general',
+                avGlossary: false,
+                nsfwLexicon: false,
+            },
+        );
+        assert.match(msgs[0].content, /急促|语气/);
+        const off = hymt.buildHyMtChatMessages(
+            [{ index: 0, text: '待って', emotion: 'ANGRY' }],
+            {
+                sensevoiceEmotionMtStyle: 'off',
+                sensevoiceRichTags: 'sidecar',
+                contentProfile: 'general',
+                avGlossary: false,
+                nsfwLexicon: false,
+            },
+        );
+        assert.doesNotMatch(off[0].content, /急促有力/);
+    });
+
     it('uses translateStylePreset in Hy-MT Style clause', () => {
         const msgs = hymt.buildHyMtChatMessages(
             [{ index: 0, text: 'こんにちは' }],
@@ -44,14 +69,31 @@ describe('hymt-translate-core', () => {
         assert.match(msgs[0].content, /新闻|旁白|纪录片/);
     });
 
+    it('soft-AV prefs include culinary readings (からみ / レバー / こんにゃく)', () => {
+        const msgs = hymt.buildHyMtChatMessages(
+            [{ index: 0, text: 'からみが好きです' }],
+            {
+                contentProfile: 'av_soft',
+                sakuraNsfwPrompt: true,
+                nsfwLexicon: false,
+                avGlossary: false,
+                avActorGlossary: false,
+            },
+        );
+        assert.match(msgs[0].content, /饮食语境/);
+        assert.match(msgs[0].content, /からみ/);
+        assert.match(msgs[0].content, /レバー/);
+        assert.match(msgs[0].content, /こんにゃく/);
+    });
+
     it('soft-AV mundane vs adult Style hints', () => {
         const mundane = hymt.buildHyMtChatMessages(
             [{ index: 0, text: 'うん' }, { index: 1, text: 'そうだね' }],
             { contentProfile: 'av_soft', sakuraNsfwPrompt: true, nsfwLexicon: false, avGlossary: false, avActorGlossary: false },
         );
-        assert.match(mundane[0].content, /保留等量的换行分隔符/);
+        assert.match(mundane[0].content, /按相同编号逐行输出|相同编号/);
         assert.match(mundane[0].content, /禁止臆造成人向/);
-        assert.match(mundane[0].content, /うん/);
+        assert.match(mundane[0].content, /1\.\s*うん/);
         assert.doesNotMatch(mundane[0].content, /【翻译任务】/);
         assert.doesNotMatch(mundane[0].content, /【待翻译文本】/);
 
@@ -149,22 +191,59 @@ describe('hymt-translate-core', () => {
     it('resolveHyMtInferenceOptions adapts context; soft disables prompt cache', () => {
         assert.strictEqual(hymt.HYMT_SUBTITLE_CONTEXT_SIZE, 8192);
         assert.strictEqual(hymt.HYMT_SUBTITLE_CONTEXT_SIZE_FAST, 4096);
-        assert.strictEqual(hymt.HYMT_WINDOW_LINES_SOFT, 1);
-        assert.strictEqual(hymt.HYMT_WINDOW_LINES_DEFAULT, 1);
+        assert.strictEqual(hymt.HYMT_WINDOW_LINES_SOFT, 3);
+        assert.strictEqual(hymt.HYMT_WINDOW_LINES_DEFAULT, 3);
+        assert.strictEqual(hymt.HYMT_WINDOW_LINES_TIGHT, 2);
+        assert.strictEqual(hymt.HYMT_WINDOW_LINES_SPEED, 1);
         assert.strictEqual(hymt.HYMT_MAX_TERMINOLOGY, 16);
         const soft = hymt.resolveHyMtInferenceOptions({ contentProfile: 'av_soft' });
         assert.strictEqual(soft.contextSize, 8192);
         assert.strictEqual(soft.cachePrompt, false);
-        assert.strictEqual(soft.windowLines, 1);
+        assert.strictEqual(soft.windowLines, 3);
         const plain = hymt.resolveHyMtInferenceOptions({ contentProfile: 'general' });
         assert.strictEqual(plain.contextSize, 4096);
-        assert.strictEqual(plain.windowLines, 1);
+        assert.strictEqual(plain.windowLines, 3);
         assert.strictEqual(plain.cachePrompt, true);
+        const speed = hymt.resolveHyMtInferenceOptions({
+            contentProfile: 'general',
+            perfProfile: 'speed',
+        });
+        assert.strictEqual(speed.windowLines, 1);
+        const forced = hymt.resolveHyMtInferenceOptions({
+            contentProfile: 'general',
+            hyMtWindowLines: '2',
+        });
+        assert.strictEqual(forced.windowLines, 2);
         const tight = hymt.resolveHyMtInferenceOptions({
             contentProfile: 'av_soft',
             glossaryTerms: Array.from({ length: 20 }, (_, i) => ({ term: `a${i}`, translation: `b${i}` })),
         });
         assert.strictEqual(tight.windowLines, hymt.HYMT_WINDOW_LINES_TIGHT);
+    });
+
+    it('pack/parse numbered Hy-MT multi-cue I/O', () => {
+        const cues = [
+            { index: 10, text: 'こんにちは' },
+            { index: 11, text: 'お願いします' },
+            { index: 12, text: 'はい' },
+        ];
+        const packed = hymt.packHyMtNumberedSource(cues);
+        assert.strictEqual(packed, '1. こんにちは\n2. お願いします\n3. はい');
+        const parsed = hymt.parseHyMtNumberedOutput(
+            '1. 你好\n2. 拜托了\n3. 是的',
+            cues,
+        );
+        assert.strictEqual(parsed.ok, true);
+        assert.strictEqual(parsed.numbered, true);
+        assert.strictEqual(parsed.lineCountMismatch, false);
+        assert.deepStrictEqual(parsed.cues.map((c) => c.text), ['你好', '拜托了', '是的']);
+        const sparse = hymt.parseHyMtNumberedOutput('你好\n拜托了\n是的', cues);
+        assert.strictEqual(sparse.ok, false);
+        assert.strictEqual(sparse.numbered, false);
+        const missing = hymt.parseHyMtNumberedOutput('1. 你好\n2. 拜托了', cues);
+        assert.strictEqual(missing.ok, true);
+        assert.strictEqual(missing.lineCountMismatch, true);
+        assert.strictEqual(missing.cues[2].text, '');
     });
 
     it('buildHyMtChatMessages uses minimal template for blank retry', () => {
@@ -182,8 +261,15 @@ describe('hymt-translate-core', () => {
             [{ index: 0, text: 'あ' }, { index: 1, text: 'い' }],
             { contentProfile: 'general' },
         );
-        assert.match(multi[0].content, /保留等量换行/);
+        assert.match(multi[0].content, /相同编号|1\.\s*2/);
+        assert.match(multi[0].content, /1\.\s*あ/);
         assert.match(multi[0].content, /自然口语化/);
+        const official = hymt.buildOfficialHyMtChatMessages(
+            [{ index: 0, text: 'あ' }, { index: 1, text: 'い' }, { index: 2, text: 'う' }],
+            { contentProfile: 'general' },
+        );
+        assert.match(official[0].content, /按相同编号逐行输出/);
+        assert.match(official[0].content, /1\.\s*あ\n2\.\s*い\n3\.\s*う/);
     });
 
     it('mundane hospital chunk skips soft NSFW style; adult chunk keeps it', () => {
@@ -229,7 +315,13 @@ describe('hymt-translate-core', () => {
     it('sakura core routes hy-mt2 ids to hymt family and messages', () => {
         assert.strictEqual(catalog.resolvePromptFamily('hy-mt2-7b'), 'hymt');
         assert.strictEqual(catalog.resolvePromptFamily('hy-mt2-1.8b'), 'hymt');
-        for (const modelId of ['hy-mt2-7b', 'hy-mt2-1.8b']) {
+        for (const modelId of [
+            'hy-mt2-7b',
+            'hy-mt2-1.8b',
+            'hy-mt2-30b-a3b-heretic',
+            'hy-mt2-30b-a3b-heretic-mini',
+            'hy-mt2-30b-a3b-heretic-quality',
+        ]) {
             const msgs = sakuraCore.buildChatMessages(
                 [{ index: 0, text: 'テスト' }],
                 {
@@ -243,6 +335,47 @@ describe('hymt-translate-core', () => {
             assert.strictEqual(msgs.length, 1);
             assert.match(msgs[0].content, /太郎 翻译成 太郎君/);
         }
+    });
+
+    it('yue source asks for Mandarin rewrite (not Cantonese passthrough)', () => {
+        const msgs = hymt.buildHyMtChatMessages(
+            [{ index: 0, text: '拥有呢个世界一切嘅' }],
+            {
+                language: 'yue',
+                contentProfile: 'general',
+                avGlossary: false,
+                nsfwLexicon: false,
+            },
+        );
+        assert.match(msgs[0].content, /粤语书面语/);
+        assert.match(msgs[0].content, /普通话/);
+        assert.match(msgs[0].content, /拥有呢个世界一切嘅/);
+        assert.match(msgs[0].content, /勿保留粤语用字|勿照抄粤语/);
+        assert.strictEqual(hymt.resolveHyMtStyleHint({ language: 'yue' }), hymt.HYMT_STYLE_YUE_TO_MANDARIN);
+
+        const hunyuan = hymt.buildHunyuanMtChatMessages(
+            [{ index: 0, text: '佢喺行刑前对大家' }],
+            { language: 'yue', subtitleTargetLang: 'zh-Hans' },
+        );
+        assert.match(hunyuan[0].content, /粤语书面语/);
+        assert.match(hunyuan[0].content, /普通话/);
+    });
+
+    it('infers Yue→Mandarin prompt from Cantonese particles when language collapsed to zh', () => {
+        const cues = [
+            { index: 0, text: '拥有呢个世界一切嘅' },
+            { index: 1, text: '佢喺行刑前对大家' },
+        ];
+        assert.ok(hymt.cuesLookLikeWrittenCantonese(cues));
+        assert.ok(hymt.shouldUseYueToMandarinPrompt({ language: 'zh' }, cues));
+        const msgs = hymt.buildHyMtChatMessages(cues, {
+            language: 'zh',
+            contentProfile: 'general',
+            avGlossary: false,
+            nsfwLexicon: false,
+        });
+        assert.match(msgs[0].content, /粤语书面语/);
+        assert.match(msgs[0].content, /普通话/);
     });
 
     it('routes Hunyuan Chimera abliterated to hunyuan direct-translate prompts', () => {

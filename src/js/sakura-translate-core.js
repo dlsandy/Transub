@@ -34,14 +34,38 @@
     } catch (_) {
         tgCore = null;
     }
-    const api = factory(nsfwLex, avGlossary, hymtCore, tgCore);
+    let murasakiCore = null;
+    try {
+        murasakiCore = (typeof module !== 'undefined' && module.exports)
+            ? require('./murasaki-translate-core')
+            : (global && global.TransubMurasakiTranslate);
+    } catch (_) {
+        murasakiCore = null;
+    }
+    let orionCore = null;
+    try {
+        orionCore = (typeof module !== 'undefined' && module.exports)
+            ? require('./orion-translate-core')
+            : (global && global.TransubOrionTranslate);
+    } catch (_) {
+        orionCore = null;
+    }
+    let indexCore = null;
+    try {
+        indexCore = (typeof module !== 'undefined' && module.exports)
+            ? require('./index-translate-core')
+            : (global && global.TransubIndexTranslate);
+    } catch (_) {
+        indexCore = null;
+    }
+    const api = factory(nsfwLex, avGlossary, hymtCore, tgCore, murasakiCore, orionCore, indexCore);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubSakuraTranslate = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function sakuraTranslateFactory(nsfwLex, avGlossary, hymtCore, tgCore) {
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function sakuraTranslateFactory(nsfwLex, avGlossary, hymtCore, tgCore, murasakiCore, orionCore, indexCore) {
     const DEFAULT_WINDOW_LINES = 8;
 
     /** Default: short, anti-hallucination, line-safe. Meaning first, then fluency. */
@@ -54,6 +78,34 @@
         '每行只输出对应那一行的译文，禁止把多行挤进一行，禁止无意义叠词循环。',
         '原文仅为纯语气/拟声时可译为对应短语气词；有完整语义时须译全句，句末语气词可保留。',
     ].join('');
+
+    /** Qwen / general LLM: Cantonese written → Mandarin Simplified. */
+    const YUE_SYSTEM_PROMPT = [
+        '你是一个粤语书面语到普通话简体中文的字幕翻译模型：须将粤语特有用法改写为普通话，禁止照抄粤语原文；',
+        '先忠实还原语意（不漏译、不错译、不摘要），再以通顺自然口语表达。',
+        '联系上下文正确使用人称代词；不擅自添加原文中没有的代词、人名、称呼或旁白。',
+        '专有名词仅使用原文已出现的写法或术语表译名；禁止臆造角色名。',
+        '每行只输出对应那一行的译文，禁止把多行挤进一行，禁止无意义叠词循环。',
+    ].join('');
+
+    function loadTargetLangCore() {
+        try {
+            return (typeof module !== 'undefined' && module.exports)
+                ? require('./subtitle-target-lang-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleTargetLang : null);
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function shouldUseYueMandarinPrompts(options = {}, cues = null) {
+        const tgt = loadTargetLangCore();
+        if (typeof tgt?.shouldUseYueToMandarinPrompt === 'function') {
+            return !!tgt.shouldUseYueToMandarinPrompt(options, cues);
+        }
+        const lang = String(options.language || options.sourceLanguage || '').trim().toLowerCase();
+        return lang === 'yue' || lang === 'zh-yue' || lang === 'cantonese';
+    }
 
     /**
      * Official GalTransl v3.7 / v4 system (SakuraLLM). Extra subtitle line-rules
@@ -78,19 +130,25 @@
         const opts = options && typeof options === 'object' ? options : {};
         const explicit = String(opts.promptFamily || '').trim().toLowerCase();
         if (explicit === 'galtransl') return 'galtransl';
+        if (explicit === 'murasaki') return 'murasaki';
+        if (explicit === 'orion') return 'orion';
         if (explicit === 'ln-korean' || explicit === 'lnkorean') return 'ln-korean';
         if (explicit === 'ln-ko2ja' || explicit === 'lnko2ja' || explicit === 'ko2ja') return 'ln-ko2ja';
         if (explicit === 'hymt') return 'hymt';
         if (explicit === 'hunyuan' || explicit === 'hunyuan-mt') return 'hunyuan';
+        if (explicit === 'index' || explicit === 'indextranslate' || explicit === 'index-translate') return 'index';
         if (explicit === 'translategemmasub' || explicit === 'translate-gemma-sub') return 'translategemmasub';
         if (explicit === 'translategemma' || explicit === 'translate-gemma') return 'translategemma';
         if (explicit === 'sakura') return 'sakura';
         const modelId = String(opts.modelId || opts.engineMtModel || '').trim();
         if (/galtransl/i.test(modelId)) return 'galtransl';
+        if (murasakiCore?.isMurasakiModel?.(modelId) || /murasaki/i.test(modelId)) return 'murasaki';
+        if (orionCore?.isOrionModel?.(modelId) || /orion[-_]?qwen|^orion-/i.test(modelId)) return 'orion';
         if (/ln[-_]?korean|sakura[-_]?ln[-_]?korean/i.test(modelId)) return 'ln-korean';
         if (/ln[-_]?ko2ja|sakura[-_]?ln[-_]?ko2ja|ko2ja/i.test(modelId)) return 'ln-ko2ja';
         if (hymtCore?.isHunyuanMtModel?.(modelId)) return 'hunyuan';
         if (hymtCore?.isHyMtModel?.(modelId)) return 'hymt';
+        if (indexCore?.isIndexTranslateModel?.(modelId) || /index[-_]?translate/i.test(modelId)) return 'index';
         if (tgCore?.isTranslateGemmaSubModel?.(modelId)) return 'translategemmasub';
         if (tgCore?.isTranslateGemmaOfficialModel?.(modelId)) return 'translategemma';
         try {
@@ -113,7 +171,7 @@
         const family = typeof options === 'string'
             ? resolvePromptFamily({ promptFamily: options, modelId: options })
             : resolvePromptFamily(options && typeof options === 'object' ? options : {});
-        if (family !== 'galtransl') return {};
+        if (family !== 'galtransl' && family !== 'murasaki' && family !== 'orion') return {};
         return {
             unstickCrossCueZh: true,
             unstickInventWipe: false,
@@ -132,6 +190,9 @@
         const family = resolvePromptFamily(options);
         if (family === 'galtransl') {
             return GALTRANSL_SYSTEM_PROMPT;
+        }
+        if (family === 'murasaki') {
+            return murasakiCore?.SCRIPT_SYSTEM_PROMPT || '';
         }
         // KO specialists are not trained on JA NSFW system dumps.
         if (family === 'ln-korean') return LN_KOREAN_SYSTEM_PROMPT;
@@ -152,7 +213,9 @@
     function shouldUseNsfwPrompt(options = {}) {
         const opts = options && typeof options === 'object' ? options : {};
         const family = resolvePromptFamily(opts);
-        if (family === 'ln-korean' || family === 'ln-ko2ja') return false;
+        if (family === 'ln-korean' || family === 'ln-ko2ja' || family === 'murasaki' || family === 'orion' || family === 'index') {
+            return false;
+        }
         if (opts.sakuraNsfwPrompt === false || opts.nsfwPrompt === false) return false;
         if (opts.sakuraNsfwPrompt === true || opts.nsfwPrompt === true) return true;
         if (opts.faithfulTone || opts.smartTranslateFaithfulTone) return true;
@@ -177,6 +240,19 @@
         const family = resolvePromptFamily(options);
         if (family === 'ln-korean') return LN_KOREAN_SYSTEM_PROMPT;
         if (family === 'ln-ko2ja') return LN_KO2JA_SYSTEM_PROMPT;
+        // Default / Qwen family: Yue→Mandarin lock (not JA→ZH wording).
+        if (
+            family !== 'galtransl' && family !== 'murasaki' && family !== 'orion' && family !== 'hymt' && family !== 'hunyuan'
+            && family !== 'index'
+            && family !== 'translategemma' && family !== 'translategemmasub'
+            && shouldUseYueMandarinPrompts(options)
+        ) {
+            return YUE_SYSTEM_PROMPT;
+        }
+        if (family === 'murasaki' && murasakiCore?.resolveSystemPrompt) {
+            return murasakiCore.resolveSystemPrompt(options);
+        }
+        if (family === 'orion') return '';
         let base;
         if (shouldUseNsfwPrompt(options)) base = resolveNsfwSystemPrompt(options);
         else base = family === 'galtransl' ? GALTRANSL_SYSTEM_PROMPT : SYSTEM_PROMPT;
@@ -196,12 +272,20 @@
 
     function normalizeCueList(cues) {
         if (!Array.isArray(cues)) return [];
-        return cues.map((c, i) => ({
-            index: Number.isInteger(Number(c?.index)) ? Number(c.index) : i,
-            startMs: c?.startMs,
-            endMs: c?.endMs,
-            text: String(c?.text ?? '').replace(/\r\n/g, '\n').trim(),
-        }));
+        return cues.map((c, i) => {
+            const out = {
+                index: Number.isInteger(Number(c?.index)) ? Number(c.index) : i,
+                startMs: c?.startMs,
+                endMs: c?.endMs,
+                text: String(c?.text ?? '').replace(/\r\n/g, '\n').trim(),
+            };
+            // SenseVoice rich tags (optional) — keep for emotion MT style / postReplace.
+            if (c?.emotion != null && String(c.emotion).trim()) out.emotion = String(c.emotion).trim();
+            const evt = c?.audioEvent ?? c?.audio_event;
+            if (evt != null && String(evt).trim()) out.audioEvent = String(evt).trim();
+            if (c?.senseLang != null && String(c.senseLang).trim()) out.senseLang = String(c.senseLang).trim();
+            return out;
+        });
     }
 
     function chunkCues(cues, options = {}) {
@@ -274,7 +358,8 @@
         if (opts.avGlossary === true || opts.avActorGlossary === true) return true;
         // GalTransl already knows soft-AV JA; SakuraDict substring injects (セックス→做爱
         // inside セックスレス) poison the official empty-glossary template.
-        if (resolvePromptFamily(opts) === 'galtransl') return false;
+        if (resolvePromptFamily(opts) === 'galtransl' || resolvePromptFamily(opts) === 'murasaki'
+            || resolvePromptFamily(opts) === 'orion') return false;
         if (shouldUseNsfwPrompt(opts)) return true;
         const profile = String(opts.contentProfile || opts.senseProfile || '').trim().toLowerCase();
         if (profile === 'av_soft') return true;
@@ -283,7 +368,42 @@
     }
 
     function resolveGlossaryTermsForPrompt(options = {}, sourceText = '') {
-        let user = Array.isArray(options.glossaryTerms) ? options.glossaryTerms : [];
+        let user = Array.isArray(options.glossaryTerms) ? options.glossaryTerms.slice() : [];
+        // Murasaki v0.3: force hit-only (coverage retry + prompt cache).
+        const forceHitOnly = resolvePromptFamily(options) === 'murasaki';
+        const injectMode = forceHitOnly
+            ? 'hitOnly'
+            : options.glossaryPromptInjectMode;
+        // Hit-only / character-cap when a full glossary document is available.
+        try {
+            const glossCore = (typeof module !== 'undefined' && module.exports)
+                ? require('./subtitle-glossary-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleGlossary : null);
+            if (glossCore?.selectGlossaryTermsForBatch && options.glossary && typeof options.glossary === 'object') {
+                const selected = glossCore.selectGlossaryTermsForBatch(options.glossary, sourceText, {
+                    glossaryPromptInjectMode: injectMode,
+                    glossaryAlwaysCharacterMax: options.glossaryAlwaysCharacterMax,
+                    maxTerms: Number(options.maxGlossaryTerms) || 48,
+                });
+                if (Array.isArray(selected) && selected.length) {
+                    user = selected;
+                } else if (
+                    forceHitOnly
+                    || glossCore.normalizeGlossaryPromptInjectMode?.(injectMode) === 'hitOnly'
+                ) {
+                    // Keep non-empty user terms only if they hit; otherwise empty is OK.
+                    user = (user || []).filter((t) => {
+                        const term = String(t?.term || t?.src || '').trim();
+                        return term && String(sourceText || '').includes(term);
+                    });
+                }
+            } else if (forceHitOnly) {
+                user = (user || []).filter((t) => {
+                    const term = String(t?.term || t?.src || '').trim();
+                    return term && String(sourceText || '').includes(term);
+                });
+            }
+        } catch { /* optional */ }
         const targetOpts = {
             targetLang: options.targetLang || options.subtitleTargetLang,
             subtitleTargetLang: options.subtitleTargetLang || options.targetLang,
@@ -313,7 +433,7 @@
         // GalTransl official template expects an empty glossary by default; injecting
         // NSFW stems (セックス→做爱) poisons compounds like セックスレス.
         const family = resolvePromptFamily(options);
-        if (family === 'galtransl' || family === 'ln-korean' || family === 'ln-ko2ja') {
+        if (family === 'galtransl' || family === 'murasaki' || family === 'orion' || family === 'ln-korean' || family === 'ln-ko2ja') {
             return user;
         }
         return nsfwLex.mergeNsfwGlossaryTerms(user, sourceText, {
@@ -333,7 +453,15 @@
         const joined = list.map((c) => c.text || '').join('\n');
         const glossaryTerms = resolveGlossaryTermsForPrompt(options, joined);
         const glossary = formatGlossaryBlock(glossaryTerms, { maxTerms: 48 });
-        const user = `根据以下术语表（可以为空）：\n${glossary}\n\n将下面的日文文本根据对应关系和备注翻译成中文：${joined}`;
+        let user = `根据以下术语表（可以为空）：\n${glossary}\n\n将下面的日文文本根据对应关系和备注翻译成中文：${joined}`;
+        try {
+            const emoApi = (typeof module !== 'undefined' && module.exports)
+                ? require('./sensevoice-emotion-mt-style-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSensevoiceEmotionMtStyle : null);
+            if (emoApi?.appendEmotionHintToUserContent) {
+                user = emoApi.appendEmotionHintToUserContent(user, list, options);
+            }
+        } catch { /* optional */ }
         return [
             { role: 'system', content: resolveSystemPrompt({ ...options, promptFamily: 'galtransl' }) },
             { role: 'user', content: user },
@@ -365,6 +493,12 @@
         if (family === 'galtransl') {
             return buildGalTranslChatMessages(chunkCuesList, options);
         }
+        if (family === 'murasaki' && murasakiCore?.buildMurasakiChatMessages) {
+            return murasakiCore.buildMurasakiChatMessages(chunkCuesList, options);
+        }
+        if (family === 'orion' && orionCore?.buildOrionChatMessages) {
+            return orionCore.buildOrionChatMessages(chunkCuesList, options);
+        }
         if (family === 'ln-korean') {
             return buildLnKoreanChatMessages(chunkCuesList, options);
         }
@@ -383,6 +517,9 @@
         if (family === 'hymt' && hymtCore?.buildHyMtChatMessages) {
             return hymtCore.buildHyMtChatMessages(chunkCuesList, options);
         }
+        if (family === 'index' && indexCore?.buildIndexChatMessages) {
+            return indexCore.buildIndexChatMessages(chunkCuesList, options);
+        }
         const list = normalizeCueList(chunkCuesList);
         const joined = list.map((c) => c.text || '').join('\n');
         const nsfw = shouldUseNsfwPrompt(options);
@@ -400,10 +537,8 @@
         const styleCore = loadTranslateStyleCore();
         const stylePrefix = styleCore?.buildStyleUserPrefix?.(options) || '';
         let targetLabel = '中文';
+        const tgt = loadTargetLangCore();
         try {
-            const tgt = (typeof module !== 'undefined' && module.exports)
-                ? require('./subtitle-target-lang-core')
-                : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleTargetLang : null);
             if (tgt?.resolveSubtitleTargetLang && tgt?.subtitleTargetLangLabel) {
                 const lang = tgt.resolveSubtitleTargetLang(options);
                 if (lang && !tgt.isZhSubtitleTarget(lang)) {
@@ -411,12 +546,23 @@
                 }
             }
         } catch { /* keep 中文 */ }
+        const useYue = shouldUseYueMandarinPrompts(options, list);
+        const sourcePhrase = useYue ? '粤语书面语' : '日文文本';
+        const destPhrase = useYue ? '普通话简体中文（勿照抄粤语）' : targetLabel;
         const userBody = prefix
-            ? `${prefix}\n将下面的日文文本${glossary ? '根据对应关系和备注' : ''}翻译成${targetLabel}。${lineRule}\n${joined}`
-            : `将下面的日文文本翻译成${targetLabel}。${lineRule}\n${joined}`;
-        const user = `${stylePrefix}${userBody}`;
+            ? `${prefix}\n将下面的${sourcePhrase}${glossary ? '根据对应关系和备注' : ''}翻译成${destPhrase}。${lineRule}\n${joined}`
+            : `将下面的${sourcePhrase}翻译成${destPhrase}。${lineRule}\n${joined}`;
+        let user = `${stylePrefix}${userBody}`;
+        try {
+            const emoApi = (typeof module !== 'undefined' && module.exports)
+                ? require('./sensevoice-emotion-mt-style-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSensevoiceEmotionMtStyle : null);
+            if (emoApi?.appendEmotionHintToUserContent) {
+                user = emoApi.appendEmotionHintToUserContent(user, list, options);
+            }
+        } catch { /* optional */ }
         return [
-            { role: 'system', content: resolveSystemPrompt(options) },
+            { role: 'system', content: resolveSystemPrompt({ ...options, cues: list }) },
             { role: 'user', content: user },
         ];
     }
@@ -478,6 +624,12 @@
         if (hymtCore?.stripHyMtLeak) {
             lines = lines.map((line) => hymtCore.stripHyMtLeak(line));
         }
+        if (indexCore?.stripIndexLeak) {
+            lines = lines.map((line) => indexCore.stripIndexLeak(line));
+        }
+        if (murasakiCore?.stripMurasakiLeak) {
+            lines = lines.map((line) => murasakiCore.stripMurasakiLeak(line));
+        }
 
         // Always peel leading/trailing /no_think control lines before length math —
         // otherwise surplus truncate keeps the control token and drops the last real cue
@@ -502,6 +654,8 @@
             const sanitize = sanitizeApi;
             const looksLeak = sanitize?.looksLikePromptLeak;
             const looksHyMtLeak = hymtCore?.looksLikeHyMtPromptLeak;
+            const looksIndexLeak = indexCore?.looksLikeIndexPromptLeak;
+            const looksMuraLeak = murasakiCore?.looksLikeMurasakiPromptLeak;
             const looksTgLeak = tgCore?.looksLikeTranslateGemmaPromptLeak;
             lineIsLeak = (line) => {
                 const t = String(line || '').trim();
@@ -509,6 +663,8 @@
                 if (isControlLine(t)) return true;
                 if (typeof looksTgLeak === 'function' && looksTgLeak(t)) return true;
                 if (typeof looksHyMtLeak === 'function' && looksHyMtLeak(t)) return true;
+                if (typeof looksIndexLeak === 'function' && looksIndexLeak(t)) return true;
+                if (typeof looksMuraLeak === 'function' && looksMuraLeak(t)) return true;
                 if (typeof sanitize?.looksLikeEnMtMetaLeak === 'function' && sanitize.looksLikeEnMtMetaLeak(t)) {
                     return true;
                 }
@@ -589,6 +745,18 @@
                         text = tgCore.preserveTrailingEllipsis(c.text, text);
                     }
                 }
+                // Murasaki-family wipe only (bare … / leak). Do NOT call
+                // finalizeMurasakiCue here — it strips trailing「。」for every
+                // family via shared parseLineAlignedOutput (smart-translate etc.).
+                if (typeof murasakiCore?.isMurasakiUnusableZh === 'function'
+                    && murasakiCore.isMurasakiUnusableZh(text)) {
+                    text = '';
+                } else if (
+                    typeof murasakiCore?.looksLikeFeelGoodStemDrop === 'function'
+                    && murasakiCore.looksLikeFeelGoodStemDrop(c.text, text)
+                ) {
+                    text = '';
+                }
                 return {
                     index: c.index,
                     text,
@@ -654,12 +822,25 @@
         [/お出かけ|出かけ/, ['出门', '出去']],
         [/上司|部下/, ['上司', '下属', '上下级']],
         [/先輩|センパイ|せんぱい/, ['前辈', '学长', '学姐']],
+        // Soft spoken JA→ZH (store / body / short directives) — catch silent +1 without digits.
+        [/お客様|お客さん/, ['客人', '客户', '顾客']],
+        [/(?:そんな)?顔/, ['表情', '脸']],
+        [/ルール|規則|お店のルール/, ['规矩', '规则']],
+        [/出番/, ['上场', '出场']],
+        [/怒[らりつ]/, ['骂', '生气', '责怪', '怒']],
+        [/コンビニ/, ['便利店', '便利商店']],
+        [/シャワー/, ['洗澡', '淋浴']],
+        [/ストーカー/, ['跟踪', '跟踪狂', '跟踪癖']],
+        [/忘れ物/, ['忘带', '落下', '东西']],
+        [/印象/, ['印象']],
+        [/マッサージ/, ['按摩']],
     ];
 
     function assessPositionalAlignQuality(sourceCues, translatedCues) {
         const src = normalizeCueList(sourceCues);
         const zhList = Array.isArray(translatedCues) ? translatedCues : [];
-        if (src.length < 3) return { suspicious: false };
+        // Window=2 must also audit (Hy-MT numbered multi-cue); only skip single-cue.
+        if (src.length < 2) return { suspicious: false };
         const byIndex = new Map();
         for (const u of zhList) {
             const idx = Number(u?.index);
@@ -746,6 +927,39 @@
                 offset1: sNeg,
             };
         }
+
+        // Cross-cue needle: ZH@i matches JA[i+1] needles but not JA[i] (classic soft-AV +1).
+        let crossNext = 0;
+        let selfHit = 0;
+        let crossChecked = 0;
+        for (let i = 0; i < src.length - 1; i += 1) {
+            const zh = zhTexts[i] || '';
+            if (!zh || /^…+$/.test(zh)) continue;
+            const selfNeedles = extractSemanticNeedles(src[i].text);
+            const nextNeedles = extractSemanticNeedles(src[i + 1].text);
+            if (!nextNeedles.length) continue;
+            crossChecked += 1;
+            const hitSelf = selfNeedles.length > 0 && selfNeedles.some((n) => zh.includes(n));
+            const hitNext = nextNeedles.some((n) => zh.includes(n));
+            if (hitSelf) selfHit += 1;
+            if (hitNext && !hitSelf) crossNext += 1;
+        }
+        if (
+            crossChecked >= 2
+            && crossNext >= 2
+            && crossNext > selfHit
+        ) {
+            return {
+                suspicious: true,
+                reason: 'offset_plus_one_cross_needle',
+                crossNext,
+                selfHit,
+                crossChecked,
+                offset0: s0,
+                offset1: s1,
+            };
+        }
+
         // Opening soft-AV scramble: many strong needles miss at offset 0 without a clean +1 win.
         if (s0.checks >= 4 && s0.hits / s0.checks <= 0.35) {
             return {
@@ -952,6 +1166,10 @@
             const idx = Number(u?.index);
             if (Number.isInteger(idx)) byIndex.set(idx, String(u?.text ?? '').trim());
         }
+        // includeBlank (default true): empty / punct / ellipsis also count as "bad".
+        // Hybrid outer hard-reject must pass includeBlank:false — leftover blanks after
+        // 省略号直译 are not positional shifts (XVSR-898 false sakura_misaligned storm).
+        const includeBlank = options.includeBlank !== false;
         const bad = new Set();
         let sanitize = null;
         try {
@@ -965,7 +1183,7 @@
             if (!ja) continue;
             const zh = byIndex.has(c.index) ? byIndex.get(c.index) : '';
             if (!zh) {
-                bad.add(c.index);
+                if (includeBlank) bad.add(c.index);
                 continue;
             }
             if (typeof sanitize?.looksLikeFilmingZhInvent === 'function'
@@ -988,7 +1206,7 @@
                 bad.add(c.index);
                 continue;
             }
-            if (isBlankOrPunctTranslation(zh, ja)) bad.add(c.index);
+            if (includeBlank && isBlankOrPunctTranslation(zh, ja)) bad.add(c.index);
         }
 
         const windowSize = Math.max(3, Math.min(12, Number(options.windowSize) || 8));
@@ -1017,11 +1235,15 @@
                 }
                 // Hard literal ±1 digit/kata shift: only mark cues that fail anchors at 0
                 // or already look empty/invent — never wipe a whole healthy island.
-                if (reason === 'offset_plus_one' || reason === 'offset_minus_one') {
+                if (
+                    reason === 'offset_plus_one'
+                    || reason === 'offset_minus_one'
+                    || reason === 'offset_plus_one_cross_needle'
+                ) {
                     for (const c of slice) {
                         const zh = byIndex.has(c.index) ? byIndex.get(c.index) : '';
-                        if (!zh || isBlankOrPunctTranslation(zh, c.text)) {
-                            bad.add(c.index);
+                        if (!zh || isLiteralBlankTranslation(zh)) {
+                            if (includeBlank) bad.add(c.index);
                             continue;
                         }
                         if (typeof sanitize?.looksLikeFilmingZhInvent === 'function'
@@ -1040,6 +1262,53 @@
             }
         }
         return [...bad].filter((n) => Number.isInteger(n)).sort((a, b) => a - b);
+    }
+
+    /**
+     * Hybrid outer gate: hard-reject only on invent/misattach/shift density.
+     * Blank / ellipsis leftovers after 省略号直译 must not discard a whole batch.
+     * @returns {{
+     *   hardReject: boolean,
+     *   bad: number[],
+     *   structural: number[],
+     *   blankOnly: number[],
+     *   badRatio: number,
+     *   structuralRatio: number,
+     *   sourceCount: number,
+     * }}
+     */
+    function assessHybridAlignGate(sourceCues, translatedCues, options = {}) {
+        const src = normalizeCueList(sourceCues);
+        const sourceCount = src.filter((c) => String(c?.text || '').trim()).length;
+        const bad = collectMisalignedCueIndexes(src, translatedCues, {
+            ...options,
+            includeBlank: true,
+        });
+        const structural = collectMisalignedCueIndexes(src, translatedCues, {
+            ...options,
+            includeBlank: false,
+        });
+        const structuralSet = new Set(structural.map((n) => Number(n)));
+        const blankOnly = bad.filter((n) => !structuralSet.has(Number(n)));
+        const minBad = Number.isFinite(Number(options.minBad))
+            ? Math.max(1, Math.round(Number(options.minBad)))
+            : 8;
+        const maxRatio = Number.isFinite(Number(options.maxRatio))
+            ? Math.max(0.05, Math.min(0.9, Number(options.maxRatio)))
+            : 0.25;
+        const structuralRatio = sourceCount ? structural.length / sourceCount : 0;
+        const badRatio = sourceCount ? bad.length / sourceCount : 0;
+        // Hard reject only when structural misalign is dense — blank storms salvage.
+        const hardReject = structural.length >= minBad && structuralRatio >= maxRatio;
+        return {
+            hardReject,
+            bad,
+            structural,
+            blankOnly,
+            badRatio,
+            structuralRatio,
+            sourceCount,
+        };
     }
 
     return {
@@ -1075,5 +1344,6 @@
         collectCuesForEllipsisQuickDirect,
         assessNeighborParaphraseBleed,
         collectMisalignedCueIndexes,
+        assessHybridAlignGate,
     };
 }));

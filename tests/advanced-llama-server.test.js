@@ -149,6 +149,17 @@ describe('advanced-llama-server version probe', () => {
         );
     });
 
+    it('getDefaultRuntimeId prefers SYCL for Intel Arc hints', () => {
+        assert.strictEqual(
+            catalog.getDefaultRuntimeId('win32', 'x64', { preferSycl: true }),
+            'win-sycl-x64',
+        );
+        assert.strictEqual(
+            catalog.getDefaultRuntimeId('linux', 'x64', { preferSycl: true }),
+            'ubuntu-sycl-x64',
+        );
+    });
+
     it('getDefaultRuntimeId matches CUDA major from hints', () => {
         assert.strictEqual(
             catalog.getDefaultRuntimeId('win32', 'x64', { preferCuda: true, cudaVersion: '13.3' }),
@@ -158,6 +169,15 @@ describe('advanced-llama-server version probe', () => {
             catalog.getDefaultRuntimeId('win32', 'x64', { preferCuda: true, cudaVersion: '12.8' }),
             'win-cuda12-x64',
         );
+    });
+
+    it('treats newer-than-pin llama builds as satisfied, not outdated', () => {
+        assert.strictEqual(llamaServer.isRuntimeTagOutdated('b12000', 'b11029'), false);
+        assert.strictEqual(llamaServer.isRuntimeTagOutdated('b10000', 'b11029'), true);
+        assert.strictEqual(llamaServer.isRuntimeTagSatisfied('b12000', 'b11029'), true);
+        assert.strictEqual(llamaServer.isRuntimeTagSatisfied('b11029', 'b11029'), true);
+        assert.strictEqual(llamaServer.isRuntimeTagSatisfied('b10000', 'b11029'), false);
+        assert.strictEqual(llamaServer.compareRuntimeBuildTags('b12000', 'b11029'), 1);
     });
 
     it('probes local runtime binary when present', () => {
@@ -336,5 +356,69 @@ describe('advanced-llama-server GPU handoff', () => {
         assert.strictEqual(llamaServer.resolveAutoCpuOnGpuBusy({ autoCpuOnGpuBusy: true }), true);
         assert.strictEqual(llamaServer.resolveAutoCpuOnGpuBusy({ allowCpuFallback: true }), true);
         assert.strictEqual(llamaServer.resolveAutoCpuOnGpuBusy({ allowCpuFallback: false }), false);
+    });
+
+    it('cancel before runtime install stops the install immediately', async () => {
+        llamaServer.clearRuntimeInstallCancel();
+        try {
+            const idle = llamaServer.cancelRuntimeInstall();
+            assert.strictEqual(idle.cancelled, true);
+            const res = await llamaServer.ensureRuntimeInstalled({
+                runtimeId: 'win-cuda13-x64',
+                force: true,
+                reinstall: true,
+            });
+            assert.strictEqual(res.ok, false);
+            assert.strictEqual(res.code, 'cancelled');
+        } finally {
+            llamaServer.clearRuntimeInstallCancel();
+        }
+    });
+
+    it('ensureLlamaServer clears stale runtime install cancel latch', async () => {
+        llamaServer.clearRuntimeInstallCancel();
+        try {
+            llamaServer.cancelRuntimeInstall();
+            const res = await llamaServer.ensureLlamaServer({
+                modelId: 'nonexistent-model-for-latch-test',
+            });
+            assert.strictEqual(res.ok, false);
+            assert.notStrictEqual(res.code, 'cancelled');
+        } finally {
+            llamaServer.clearRuntimeInstallCancel();
+        }
+    });
+
+    it('engine idle-stop cancel only fires when armed', async () => {
+        const llmClient = require('../electron/engine-llm-client');
+        const calls = [];
+        const orig = llmClient.scheduleLlmIdleStop;
+        llmClient.scheduleLlmIdleStop = async (baseUrl, opts = {}) => {
+            calls.push({ baseUrl, ...opts });
+            return { ok: true };
+        };
+        try {
+            llamaServer.markLlmOwnedByEngine('http://127.0.0.1:8765', { port: 39281 });
+            assert.strictEqual(llamaServer.isDelegatedEngineIdleArmed(), false);
+            llamaServer.clearIdleStopTimer();
+            assert.strictEqual(calls.length, 0, 'unarmed clear must not POST cancel');
+
+            llamaServer.scheduleIdleStop(60_000);
+            assert.strictEqual(llamaServer.isDelegatedEngineIdleArmed(), true);
+            assert.ok(calls.some((c) => c.delayMs === 60_000 && !c.cancel));
+
+            const beforeClear = calls.length;
+            llamaServer.clearIdleStopTimer();
+            assert.strictEqual(llamaServer.isDelegatedEngineIdleArmed(), false);
+            assert.strictEqual(calls.length, beforeClear + 1);
+            assert.strictEqual(calls[calls.length - 1].cancel, true);
+
+            llamaServer.clearIdleStopTimer();
+            assert.strictEqual(calls.length, beforeClear + 1, 'second clear must not re-cancel');
+        } finally {
+            llmClient.scheduleLlmIdleStop = orig;
+            llamaServer.markLlmOwnedLocal();
+            llamaServer.clearIdleStopTimer();
+        }
     });
 });

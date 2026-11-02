@@ -935,6 +935,25 @@ tr.cue-row-low-conf .col-idx { position: relative; }
     vertical-align: middle;
 }
 tr.cue-row-selected .low-conf-dot { background: #fff; color: var(--ed-warn-text); }
+.cue-rich-badge {
+    display: inline-block;
+    margin-right: 0.28rem;
+    padding: 0.05rem 0.28rem;
+    border-radius: 0.25rem;
+    font-size: 0.58rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    vertical-align: 0.05em;
+    line-height: 1.2;
+}
+.cue-rich-emo {
+    background: color-mix(in srgb, var(--ed-accent) 18%, transparent);
+    color: var(--ed-accent);
+}
+.cue-rich-evt {
+    background: color-mix(in srgb, var(--ed-muted) 22%, transparent);
+    color: var(--ed-muted);
+}
 .cue-cps-cell { font-size: 0.65rem; color: var(--ed-muted); font-variant-numeric: tabular-nums; }
 .cue-cps-cell.hot { color: var(--ed-warn-text); font-weight: 600; }
 
@@ -1019,11 +1038,60 @@ tr.cue-row-selected .low-conf-dot { background: #fff; color: var(--ed-warn-text)
 .glossary-entry-item .g-alias { color: var(--ed-muted); display: block; margin-top: 0.1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .glossary-form { display: grid; gap: 0.4rem; margin-bottom: 0.55rem; }
 .glossary-form label { font-size: 0.65rem; color: var(--ed-muted); }
-.glossary-form input[type="text"] {
+.glossary-form input[type="text"],
+.glossary-form select {
     width: 100%; border: 1px solid var(--ed-border); border-radius: 0.375rem;
     padding: 0.35rem 0.5rem; font-size: 0.75rem; background: var(--ed-surface); color: var(--ed-text);
 }
-.glossary-form-row { display: flex; align-items: center; gap: 0.75rem; font-size: 0.72rem; color: var(--ed-muted); }
+.glossary-form-row { display: flex; align-items: center; gap: 0.75rem; font-size: 0.72rem; color: var(--ed-muted); flex-wrap: wrap; }
+.glossary-form-meta label { display: flex; flex-direction: column; gap: 0.2rem; min-width: 8.5rem; flex: 1; }
+.glossary-entry-item .g-role {
+    margin-left: 0.35rem;
+    font-weight: 500;
+    font-size: 0.65rem;
+    color: var(--ed-muted);
+}
+.glossary-post-replace {
+    margin: 0.15rem 0 0.25rem;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.375rem;
+    background: var(--ed-surface-2);
+}
+.glossary-post-replace > summary {
+    cursor: pointer;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--ed-text);
+    list-style: none;
+}
+.glossary-post-replace > summary::-webkit-details-marker { display: none; }
+.glossary-post-replace-hint {
+    margin: 0.35rem 0 0.45rem;
+    font-size: 0.62rem;
+    color: var(--ed-muted);
+    line-height: 1.4;
+}
+.glossary-post-replace-enable {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    gap: 0.35rem;
+    margin-bottom: 0.35rem;
+    font-size: 0.7rem;
+}
+.glossary-post-replace textarea {
+    width: 100%;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.375rem;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.75rem;
+    background: var(--ed-surface);
+    color: var(--ed-text);
+    resize: vertical;
+    min-height: 3.2rem;
+    font-family: inherit;
+}
 .glossary-scope-list { display: flex; flex-wrap: wrap; gap: 0.65rem; margin-bottom: 0.55rem; font-size: 0.72rem; color: var(--ed-muted); }
 .glossary-scope-list label { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
 .glossary-scope-list label.opacity-50 { opacity: 0.55; cursor: not-allowed; }
@@ -1038,6 +1106,45 @@ tr.cue-row-selected .low-conf-dot { background: #fff; color: var(--ed-warn-text)
 .glossary-import-help ol { margin: 0.45rem 0 0 1.1rem; padding: 0; line-height: 1.45; }
 .glossary-import-help li + li { margin-top: 0.25rem; }
 .glossary-import-help .glossary-import-note { margin: 0.45rem 0 0; font-size: 0.65rem; color: var(--ed-muted); }
+.gendict-confirm-panel { width: min(32rem, 96vw); }
+.gendict-confirm-intro { font-size: 0.72rem; color: var(--ed-muted); line-height: 1.45; margin-bottom: 0.45rem; }
+.gendict-toolbar { display: flex; gap: 0.4rem; margin-bottom: 0.45rem; }
+.gendict-draft-list {
+    max-height: min(50vh, 22rem);
+    overflow: auto;
+    display: grid;
+    gap: 0.35rem;
+    margin-bottom: 0.55rem;
+}
+.gendict-draft-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.45rem;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.375rem;
+    background: var(--ed-surface);
+    cursor: default;
+}
+.gendict-draft-fields { flex: 1; display: grid; gap: 0.2rem; min-width: 0; }
+.gendict-draft-fields .gendict-canonical {
+    width: 100%;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.3rem;
+    padding: 0.3rem 0.45rem;
+    font-size: 0.78rem;
+    background: var(--ed-surface-2);
+    color: var(--ed-text);
+}
+.gendict-alias { font-size: 0.65rem; color: var(--ed-muted); }
+.gendict-always {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.68rem;
+    color: var(--ed-muted);
+}
+.gendict-empty { font-size: 0.72rem; color: var(--ed-muted); }
 .anilist-import-panel { width: min(28rem, 96vw); }
 .anilist-import-panel .anilist-import-intro { font-size: 0.72rem; color: var(--ed-muted); line-height: 1.45; margin-bottom: 0.55rem; }
 .anilist-import-panel ol { margin: 0 0 0.65rem 1.15rem; padding: 0; font-size: 0.7rem; color: var(--ed-muted); line-height: 1.45; }
@@ -1957,12 +2064,6 @@ textarea.recon-review-after {
     outline: 1px solid var(--ed-accent); outline-offset: 1px; border-radius: 0.2rem;
 }
 .editor-mode-tools .editor-target-lang { margin-right: 0.15rem; }
-.editor-deprecation-banner {
-    display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;
-    padding: 0.35rem 0.85rem; font-size: 12px; line-height: 1.35;
-    color: var(--ed-warn-text); background: var(--ed-warn-bg);
-    border-bottom: 1px solid color-mix(in srgb, var(--ed-warn-text) 25%, transparent);
-}
 .sr-only {
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
     overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;

@@ -424,6 +424,66 @@
         return /^(?:\.\.\.|……|…|[。．.、，,\s…·•\-—_~～]+)$/.test(t);
     }
 
+    /**
+     * Spoken ZH rarely needs a terminal full stop. Strip trailing 。／．／.
+     * Keep ？！…； leave pure blank placeholders alone.
+     */
+    function stripTrailingZhSentencePeriod(text) {
+        let out = String(text ?? '');
+        const trimmed = out.trim();
+        if (!trimmed) return out;
+        if (isBlankMtPlaceholderText(trimmed)) {
+            return /^(?:\.\.\.|……|…)$/.test(trimmed) ? '…' : trimmed;
+        }
+        if (isSoftwareCreditProtectedText(trimmed)) return out;
+        out = out.replace(/[。．]+(\s*)$/gu, '$1');
+        out = out.replace(/(?<=[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff])\.+(\s*)$/gu, '$1');
+        out = out.replace(/[。．]+(?=\n)/gu, '');
+        out = out.replace(/(?<=[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff])\.+(?=\n)/gu, '');
+        return out.replace(/[ \t]+\n/g, '\n').replace(/\s+$/u, '');
+    }
+
+    /**
+     * Canonicalize empty / classic ellipsis stubs only.
+     * Do NOT rewrite tone-stretch「~~」「～～」— those are intentional delivery text.
+     */
+    function normalizeBlankMtPlaceholder(text) {
+        const t = String(text ?? '').trim();
+        if (!t) return '…';
+        if (/^(?:\.\.\.|……|…)$/.test(t)) return '…';
+        return String(text ?? '');
+    }
+
+    function stripTrailingZhSentencePeriodInCues(cues, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        let cueTouched = 0;
+        const next = list.map((c) => {
+            const raw = String(c?.text ?? '');
+            if (options.skipSoftwareCredit !== false && isSoftwareCreditProtectedText(raw)) {
+                return { ...c, text: raw };
+            }
+            // Pure ~~ / ～～ tone marks: leave alone (not sentence periods, not …).
+            if (/^[~～]+$/.test(raw.trim())) {
+                return { ...c, text: raw };
+            }
+            let text = raw;
+            if (isBlankMtPlaceholderText(text) && /^(?:\.\.\.|……|…)?$/.test(text.trim())) {
+                text = normalizeBlankMtPlaceholder(text);
+            } else if (!isBlankMtPlaceholderText(text)) {
+                text = stripTrailingZhSentencePeriod(text);
+            }
+            if (text !== raw) cueTouched += 1;
+            return { ...c, text };
+        });
+        return {
+            cues: next,
+            stats: { cueTotal: list.length, cueTouched },
+            summary: cueTouched
+                ? `句末句号整理 ${cueTouched} 条`
+                : '句末句号：无需处理',
+        };
+    }
+
     function simplifyViewingPunctuationInText(text, options = {}) {
         const raw = String(text ?? '');
         if (!raw) return { text: raw, changed: false };
@@ -433,6 +493,10 @@
         if (isSoftwareCreditProtectedText(raw)) return { text: raw, changed: false };
         // Pure «…» / punct stubs are MT blank slots — never erase them to empty
         // (empty SRT bodies are dropped on the next parse → massive cue loss).
+        // Tone-stretch ~~ / ～～ must stay (not rewrite to …).
+        if (/^[~～]+$/.test(raw.trim())) {
+            return { text: raw.trim(), changed: raw.trim() !== raw };
+        }
         if (isBlankMtPlaceholderText(raw)) {
             const normalized = /^(?:\.\.\.|……|…)$/.test(raw.trim()) ? '…' : raw.trim() || '…';
             return { text: normalized, changed: normalized !== raw };
@@ -612,8 +676,31 @@
         if (FRAGMENT_ONLY.has(lower)) return true;
         if (EN_DANGLING.has(lower) && !/\s/.test(normalized)) return true;
         if (/^[\u4e00-\u9fff]$/.test(normalized) && CJK_PARTICLES.has(normalized)) return true;
-        // JA ASR word-tail / orphan fragments (しい / こで / bare っ)
-        if (/^(しい|こで|っ|ゃ|ゅ|ょ)$/.test(normalized)) return true;
+        // Incomplete ZH interrogative crumbs (什么 → 什)
+        if (/^[什嘛啥]$/.test(normalized)) return true;
+        // Pure kana crumbs (ぇ / ふぇに / ちゅ). Keep lexical words ≥4 mora (こんにゃく).
+        if (/^[\u3040-\u30ffーぁぃぅぇぉァィゥェォっャュョ]+$/.test(normalized)) {
+            if (normalized.length <= 3) return true;
+            // 4–6 mora redup stutter only (だだだだ); real nouns fall through.
+            if (
+                normalized.length <= 6
+                && /^(?:([ぁ-んァ-ンー])\1{2,}|だ+だ+|あ{3,}|う{3,}|ん{3,})$/u.test(normalized)
+            ) {
+                return true;
+            }
+        }
+        // Soft-AV phonetic transliteration crumbs (ちぇ→切 / か→卡 / すこ→铲)
+        if (/^[切卡铲]$/.test(normalized)) return true;
+        // Short English BGM / logo bleed crumbs (me a / can't) — not keepable dialogue
+        if (
+            /^[A-Za-z][A-Za-z'\s]{0,14}$/.test(raw)
+            && raw.length <= 12
+            && !/\b(?:yes|no|ok|okay|hello|hi|bye|wow|hey|thanks|thank|love|baby|dear)\b/i.test(raw)
+        ) {
+            return true;
+        }
+        // JA ASR word-tail / orphan fragments (しい / こで / bare っ / leftover なさい·から)
+        if (/^(しい|こで|っ|ゃ|ゅ|ょ|なさい|から)$/.test(normalized)) return true;
         return false;
     }
 
@@ -638,32 +725,394 @@
         const t = String(text || '').trim().replace(/\s+/g, '');
         if (!t) return false;
         if (/^(めん?なさい|なさい|しだけ|んいっぱい|こで|しい)/.test(t)) return true;
+        if (/^(だった|らしく|一年|会の|止めて|めて|させて|行ける)/.test(t)) return true;
         if (/^っ[、,]/.test(t)) return true;
         return false;
     }
 
     function isStrongJaContinuation(text) {
         const t = String(text || '').trim().replace(/\s+/g, '');
-        return /^(めん?なさい|しだけ|こで|しい|んいっぱい)/.test(t);
+        return /^(めん?なさい|しだけ|こで|しい|んいっぱい|だったので|らしく|一年が|会の方)/.test(t);
     }
 
     /**
-     * Stitch JA ASR mid-phrase splits (e.g. 「…ご」+「めんなさい…」).
-     * Conservative: only strong continuation patterns / tiny kana tails.
+     * Soft-AV / dialogue turn openings — do not glue the previous cue onto these.
+     * Do NOT use bare `あっ?` (matches あと/あたし/あの…).
+     */
+    const JA_TURN_START_RE = /^(?:いや|いいえ|うん|ええ|はい|あぁ+|あっ(?:[、,…!！]|$)|あ[、,…!！]|はぁ+|へえ|ねえ|ほら|そうだ|でも|だって|じゃあ|えっ|なに|何|誰|おい|じゃあね)/;
+
+    /**
+     * After a trailing-… wrap, these openers are a new turn / dialogue-split reaction
+     * (e.g. けど…｜ホント?) — never stitch back together.
+     */
+    const JA_ELLIPSIS_WRAP_TURN_RE = /^(?:まあ|まぁ|あのー?|えっと+|えーと+|えー+|その|これ|あれ|ホント|本当|やっ|大丈夫|よし|わぁ|わあ|くすっ|こちょ|ヌード|魅力に|探して|まだお|そう言え|好きにしろ)/;
+
+    /** Stem before trailing … looks like a mid-clause wrap (not a finished soft landing). */
+    function endsAsrEllipsisLineWrap(text) {
+        const t = String(text || '').trim();
+        if (!t || !/(?:\.\.\.|……|…|･･･|⋯)+\s*$/u.test(t)) return false;
+        if (/^(?:\.\.\.|……|…|･･･|⋯)+$/u.test(t)) return false;
+        const stem = t
+            .replace(/(?:\.\.\.|……|…|･･･|⋯)+\s*$/u, '')
+            .replace(/\s+/g, '');
+        if (!stem || stem.length < 2) return false;
+        // Finished clauses with decorative … — do not treat as wrap.
+        if (/(?:です|ます|でした|ました|だよ|だね|だな|かな|かも|でしょう|でしょ|よね|わよ|ぞ|ぜ|ください|下さい|ありがとう|ごめん|すみません)$/.test(stem)
+            && !/(?:ですし|ますし|だし|けど|けれど|のに|ので|から|て|で)$/.test(stem)) {
+            return false;
+        }
+        return /(?:て|で|に|と|を|は|が|の|も|へ|や|か|し|から|まで|より|場合|って|けど|けれど|のに|ので|ば|たら|なら|ながら|たり|として|について|では|には|とは|ほど|くらい|ぐらい|だけ|しか|ばかり|など|とか|だの|やら|そして|そしては)$/u.test(stem);
+    }
+
+    function startsAsrEllipsisWrapContinuation(text) {
+        const t = String(text || '').trim().replace(/\s+/g, '');
+        if (!t || t.length < 1) return false;
+        if (JA_TURN_START_RE.test(t)) return false;
+        if (JA_ELLIPSIS_WRAP_TURN_RE.test(t)) return false;
+        // Pure short reaction / moan — not a clause continuation
+        if (/^[ぁ-んー〜～っッ!！?？…。．.\s♡♥❤]+$/u.test(t) && t.length <= 6) return false;
+        return true;
+    }
+
+    /** Join cue texts; drop decorative joining ellipsis at the seam. */
+    function joinAsrCueTexts(aText, bText) {
+        const left = String(aText || '').trim()
+            .replace(/(?:\.\.\.|……|…|･･･|⋯)+\s*$/u, '');
+        const right = String(bText || '').trim()
+            .replace(/^(?:\.\.\.|……|…|･･･|⋯)+\s*/u, '');
+        return `${left}${right}`;
+    }
+
+    /**
+     * Strong phrase-level incompleteness (連体「な」/ prenominal の・この…) waiting for a noun.
+     * Intentionally excludes terminal い-adjectives and sentence-final 「…るな」/ verbal 「…てるの」.
+     */
+    function endsJaPrenominalIncomplete(text) {
+        const t = String(text || '').trim();
+        if (!t || /[。！？!?…]$/.test(t)) return false;
+        const plain = t.replace(/\s+/g, '');
+        // Complete-ish trailers
+        if (/(?:です|ます|だよ|だね|だな|かな|かも|でしょう|でしょ|よね|わよ|ぞ|ぜ)$/.test(plain)) {
+            return false;
+        }
+        // Prenominal demonstratives (この/その/ここの…) — allow short cues
+        if (/(?:この|その|あの|どの)$/.test(plain)) return true;
+
+        // Colloquial / soft-AV ASR: 「…のじゃ」still waiting for the NP head
+        // (たぶん名物のじゃ｜こんにゃく) — じゃ is a stuck copula, not a finished clause.
+        if (/のじゃ$/.test(plain) && plain.length >= 4) return true;
+
+        // の: keep お父さんの / 僕の; drop verbal nominalizer してるの / 見たの
+        if (/の$/.test(plain) && plain.length >= 2) {
+            if (/(?:なの|もの|こと|ところ|はず|わけ|つもり)$/.test(plain)) return false;
+            if (/(?:てる|でる|ってる|ってた|てた|でた|ない|ます|です)の$/.test(plain)) return false;
+            // Dictionary/past verbal + の (見るの / きたの); allow さんの
+            if (/(?:る|た|だ)の$/.test(plain)) {
+                if (/(?:さん|ちゃん|くん|様|氏|殿|君)の$/.test(plain)) return true;
+                return false;
+            }
+            return true;
+        }
+
+        // 連体「な」: allowlist common stems only (好きな / みたいな / 大きな…)
+        // Reject sentence-final / prohibitive 「染みるな」「するな」「…たな」.
+        if (/な$/.test(plain)) {
+            if (/(?:好き|大き|小さ|綺麗|きれい|嫌|変|素敵|静か|穏やか|大切|大事|新た|不思議|真面目|本気|下手|上手|特別|自由|必要|残念|幸せ|有名|苦手|得意|平気|余分|大胆|簡単|複雑|様|みたい|こんな|そんな|あんな|どんな)な$/.test(plain)) {
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    /** Next cue looks like a noun / NP head (kanji, katakana, or multi-mora hiragana), not a new turn. */
+    function startsJaNounContinuation(text) {
+        const t = String(text || '').trim().replace(/\s+/g, '');
+        if (!t || t.length < 2) return false;
+        if (JA_TURN_START_RE.test(t)) return false;
+        // Short pure hiragana discourse / reaction — not a noun head (うん / ただ).
+        // ≥4 mora hiragana nouns (こんにゃく) are recoverable heads.
+        if (/^[ぁ-んー〜～っッ]+$/.test(t) && t.length <= 3) return false;
+        if (/^[ぁ-んー〜～っッ]+$/.test(t) && t.length >= 4) return true;
+        return /^[一-龯ァ-ンA-Za-z0-9]/.test(t);
+    }
+
+    /**
+     * ZH attributive「…的」waiting for a noun head (爱喝酒的｜青豆腐).
+     * Conservative: short cues only; skip 是的/对的/好的 and long complete clauses.
+     */
+    function endsZhPrenominalIncomplete(text) {
+        const t = String(text || '').trim();
+        if (!t || /[。！？!?…]$/.test(t)) return false;
+        if (!/[\u4e00-\u9fff]/.test(t)) return false;
+        const plain = t.replace(/\s+/g, '');
+        if (plain.length < 3 || plain.length > 16) return false;
+        if (/^(?:是的|对的|好的|真的|嗯的|对对)$/.test(plain)) return false;
+        if (!/的$/.test(plain)) return false;
+        // Already a full reply-ish clause with heavy discourse
+        if (/(?:但是|因为|所以|如果|虽然|不过)/.test(plain)) return false;
+        return true;
+    }
+
+    function startsZhNounContinuation(text) {
+        const t = String(text || '').trim().replace(/\s+/g, '');
+        if (!t || t.length < 2 || t.length > 14) return false;
+        if (/[。！？!?]$/.test(t)) return false;
+        // New turn / clause starters (not noun heads after「…的」)
+        // 容我… / 请… are clause openers — never stitch onto attributive「…的」(ATID-649 的容我).
+        if (/^(?:嗯|啊|哦|噢|哈|呵|嘿|嗨|喂|咦|呐|那|这|你|我|他|她|它|不|是|对|好|感觉|觉得|好像|其实|但是|因为|所以|如果|在|把|被|给|让|用|有|没|会|能|要|就|还|也|又|再|容|请|麻烦|希望|跟|向|想|来|去|说|看|听|做|开始|继续)/.test(t)) {
+            return false;
+        }
+        return /^[\u4e00-\u9fffA-Za-z0-9]/.test(t);
+    }
+
+    /** Orphan ZH particle cue (的/了/吗…) glued onto previous short dialogue. */
+    function shouldAttachZhTrailingParticle(aText, bText, gapMs, options = {}) {
+        if (options.zhParticleStitch === false) return false;
+        const maxGap = Math.max(0, Math.min(800, Number(options.zhParticleGapMs) || 350));
+        const gap = Number(gapMs);
+        if (!Number.isFinite(gap) || gap < -50 || gap > maxGap) return false;
+        const bt = String(bText || '').trim();
+        if (!/^[的了吗呢吧啊呀哦]$/u.test(bt)) return false;
+        const at = String(aText || '').trim();
+        if (!at || at.length > 24) return false;
+        if (!/[\u4e00-\u9fff]/.test(at)) return false;
+        if (/[。！？!?]$/.test(at)) return false;
+        if (/[的了吗呢吧啊呀哦哎]$/u.test(at)) return false;
+        return true;
+    }
+
+    /** Strip punct/space for ASR echo matching (JA/ZH/CJK). */
+    function bareAsrEchoText(text) {
+        return String(text || '')
+            .replace(/[\s\u3000、。！？!?…・·\.\,，．｡『』「」"'“”‘’（）()【】\[\]~～ー−\-♪♫\[\]]+/g, '');
+    }
+
+    const ASR_ECHO_FILLER_PREFIX_RE = /^(?:えー+|えっと|あの+|まあ|うーん*|ん+|あ+|あぁ+|あっ|ええ+|はぁ*|ふ+|うっ?)/u;
+
+    /**
+     * True when adjacent cues are leftover ASR echoes (tail replay / filler+same line),
+     * not a new turn that merely shares a short word (気持ちいい → 旦那とどっちが気持ちいい).
+     */
+    function isAsrEchoPair(prevText, nextText) {
+        const a = bareAsrEchoText(prevText);
+        const b = bareAsrEchoText(nextText);
+        if (!a || !b) return false;
+        if (a === b) return true;
+
+        // Tail leftover: next replays the end of prev (この勃起は… after つまり、この勃起は…).
+        if (b.length >= 4 && a.length > b.length && a.endsWith(b)) return true;
+
+        // Head re-echo: next is prev with a short filler lead (やまんできない → ああ、やまんできない).
+        if (a.length >= 4 && b.length > a.length && b.endsWith(a)) {
+            const prefix = b.slice(0, b.length - a.length);
+            if (ASR_ECHO_FILLER_PREFIX_RE.test(prefix) || a.length / b.length >= 0.62) {
+                return true;
+            }
+        }
+
+        // High-ratio containment only when the shorter sits at an edge (avoid mid-word hits).
+        const shorter = a.length <= b.length ? a : b;
+        const longer = a.length <= b.length ? b : a;
+        if (
+            shorter.length >= 6
+            && shorter.length / longer.length >= 0.62
+            && (longer.endsWith(shorter) || longer.startsWith(shorter))
+        ) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Drop adjacent leftover ASR echoes (same phrase / tail replay in two cues).
+     * Keeps the longer wording; maxGapMs defaults to 4000.
      * @param {Array<{startMs?:number,endMs?:number,text?:string}>} cues
      * @param {object} [options]
-     * @returns {{ cues: object[], stats: object, mergedPairs: number }}
+     * @returns {{ cues: object[], removed: number, stats: object }}
      */
-    function stitchJaFragmentCues(cues, options = {}) {
+    function dedupeAsrEchoCues(cues, options = {}) {
         const list = Array.isArray(cues) ? cues : [];
+        const maxGapMs = Math.max(0, Math.min(12000, Number(options.maxGapMs) || 4000));
+        // Soft-AV reactive exact echoes (気持ちいい｜気持ちいい?) often sit 4–16s apart.
+        const shortReactiveMaxGapMs = Math.max(
+            maxGapMs,
+            Math.min(20000, Number(options.shortReactiveMaxGapMs) || 16000),
+        );
+        const ordered = list
+            .map((c) => ({ ...c }))
+            .filter((c) => String(c?.text || '').trim())
+            .sort((x, y) => {
+                const xs = Number(x.startMs) || 0;
+                const ys = Number(y.startMs) || 0;
+                if (xs !== ys) return xs - ys;
+                return (Number(x.endMs) || 0) - (Number(y.endMs) || 0);
+            });
+        const cleaned = [];
+        let removed = 0;
+        for (const cue of ordered) {
+            if (cleaned.length) {
+                const prev = cleaned[cleaned.length - 1];
+                const gap = (Number(cue.startMs) || 0) - (Number(prev.endMs) || 0);
+                const prevBare = bareAsrEchoText(prev.text);
+                const curBare = bareAsrEchoText(cue.text);
+                const exactShortReactive = !!prevBare
+                    && prevBare === curBare
+                    && prevBare.length >= 2
+                    && prevBare.length <= 14
+                    && !/^[んン]+$/u.test(prevBare);
+                const gapLimit = exactShortReactive ? shortReactiveMaxGapMs : maxGapMs;
+                if (
+                    Number.isFinite(gap)
+                    && gap <= gapLimit
+                    && isAsrEchoPair(prev.text, cue.text)
+                ) {
+                    if (curBare.length > prevBare.length) {
+                        cleaned[cleaned.length - 1] = cue;
+                    }
+                    removed += 1;
+                    continue;
+                }
+            }
+            cleaned.push(cue);
+        }
+        return {
+            cues: cleaned,
+            removed,
+            stats: {
+                before: list.length,
+                after: cleaned.length,
+                removed,
+            },
+        };
+    }
+
+    function summarizeAsrEchoDedupe(stats) {
+        if (!stats?.removed) return '无需去除回声条';
+        return `去除回声重复 ${stats.removed} 处（${stats.before}→${stats.after} 条）`;
+    }
+
+    /**
+     * Decide whether adjacent JA cues should be stitched (mid-word or strong phrase split).
+     * @returns {boolean}
+     */
+    function shouldStitchJaFragmentPair(aText, bText, gapMs, options = {}) {
         const maxGapMs = Math.max(0, Math.min(2000, Number(options.maxGapMs) || 600));
         const wideGapMs = Math.max(maxGapMs, Math.min(4000, Number(options.wideGapMs) || 2200));
+        const phraseGapMs = Math.max(maxGapMs, Math.min(1500, Number(options.phraseGapMs) || 900));
+        const gap = Number(gapMs);
+        if (!Number.isFinite(gap) || gap < -50) return false;
+
+        const at = String(aText || '').trim();
+        const bt = String(bText || '').trim();
+        if (!at || !bt) return false;
+        if (/[。！？!?]$/.test(at)) return false;
+
+        // Line-wrap ellipsis first: kanji-heavy lines often fail kana-ratio isJaScriptHeavy.
+        if (options.ellipsisWrapStitch !== false) {
+            const wrapGapMs = Math.max(
+                phraseGapMs,
+                Math.min(2500, Number(options.ellipsisWrapGapMs) || 1400),
+            );
+            const hasJaOrCjk = (s) => /[\u3040-\u30ff\u4e00-\u9fff々ー]/.test(s);
+            if (
+                hasJaOrCjk(at)
+                && hasJaOrCjk(bt)
+                && endsAsrEllipsisLineWrap(at)
+                && startsAsrEllipsisWrapContinuation(bt)
+                && gap <= wrapGapMs
+            ) {
+                return true;
+            }
+        }
+
+        if (!isJaScriptHeavy(at) && !isJaScriptHeavy(bt)) return false;
+
+        const broken = endsJaBroken(at);
+        const cont = startsJaContinuation(bt);
+        const strongCont = isStrongJaContinuation(bt);
+        const bPlain = bt.replace(/[。．.！？!?…\s　♪♫、，,]+/g, '');
+        const tinyTail = gap <= 200 && /^(しい|ゃ|ゅ|ょ)$/.test(bPlain);
+
+        if (tinyTail) return true;
+        if (strongCont && gap <= wideGapMs) return true;
+        if (cont && broken && gap <= maxGapMs) return true;
+        if (cont && /^っ[、,]/.test(bt.replace(/\s+/g, '')) && gap <= maxGapMs) return true;
+
+        // Mid-clause connective cut (今日は｜いい天気 / …から｜行くね) — not a new turn.
+        const aPlain = at.replace(/\s+/g, '').replace(/(?:\.\.\.|……|…|･･･|⋯)+\s*$/u, '');
+        const bPlainTurn = bt.replace(/\s+/g, '');
+        const midClause = aPlain.length >= 3
+            && /(?:けど|けれど|のに|ので|から|し|ば|たら|なら|ながら|って|ては|ても)$/u.test(aPlain);
+        if (
+            midClause
+            && gap <= maxGapMs
+            && !JA_TURN_START_RE.test(bPlainTurn)
+            && !JA_ELLIPSIS_WRAP_TURN_RE.test(bPlainTurn)
+        ) {
+            return true;
+        }
+
+        // Orphan word-tail cue alone (から｜みが好き / しい｜…) — glue forward before noise drop.
+        const orphanLeadGapMs = Math.min(maxGapMs, 700);
+        if (
+            gap <= orphanLeadGapMs
+            && /^(?:しい|こで|なさい|から|って|ので|けど)$/u.test(aPlain)
+            && isJaScriptHeavy(bt)
+            && bPlain.length >= 2
+            && !JA_TURN_START_RE.test(bPlainTurn)
+            && !JA_ELLIPSIS_WRAP_TURN_RE.test(bPlainTurn)
+        ) {
+            return true;
+        }
+
+        // Orphan / trailing hiragana NP head before a finished です/ます cue
+        // (こんにゃく｜味噌田楽です / 名物のじゃこんにゃく｜味噌田楽です).
+        if (
+            options.phraseStitch !== false
+            && gap <= orphanLeadGapMs
+            && /[\u3040-\u309fー]{4,}$/u.test(aPlain)
+            && !/(?:です|ます|でした|ました)/u.test(aPlain)
+            && /(?:です|ます|でした|ました)[。．.]?$/u.test(bPlainTurn)
+            && !JA_TURN_START_RE.test(bPlainTurn)
+            && !JA_ELLIPSIS_WRAP_TURN_RE.test(bPlainTurn)
+        ) {
+            return true;
+        }
+
+        // Phrase-level: 好きな｜サバ… / この｜嫁… / 名物のじゃ｜こんにゃく
+        if (
+            options.phraseStitch !== false
+            && endsJaPrenominalIncomplete(at)
+            && startsJaNounContinuation(bt)
+            && gap <= phraseGapMs
+        ) {
+            return true;
+        }
+        return false;
+    }
+
+    /** ZH-only prenominal stitch (爱喝酒的｜青豆腐). */
+    function shouldStitchZhPrenominalPair(aText, bText, gapMs, options = {}) {
+        if (options.phraseStitch === false || options.zhPhraseStitch === false) return false;
+        const phraseGapMs = Math.max(0, Math.min(1500, Number(options.phraseGapMs) || 900));
+        const gap = Number(gapMs);
+        if (!Number.isFinite(gap) || gap < -50 || gap > phraseGapMs) return false;
+        return endsZhPrenominalIncomplete(aText) && startsZhNounContinuation(bText);
+    }
+
+    /**
+     * Stitch ZH attributive splits left after MT/CPS (JA may already be one cue).
+     */
+    function stitchZhPrenominalCues(cues, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
         const maxMergedDurMs = Math.max(3000, Math.min(60000, Number(options.maxMergedDurMs) || 12000));
         const out = [];
         let mergedPairs = 0;
         let i = 0;
         while (i < list.length) {
             const cur = {
+                ...list[i],
                 startMs: list[i]?.startMs,
                 endMs: list[i]?.endMs,
                 text: list[i]?.text,
@@ -676,38 +1125,17 @@
                 const gap = Number.isFinite(aEnd) && Number.isFinite(bStart)
                     ? bStart - aEnd
                     : 0;
-
                 const at = String(cur.text || '').trim();
                 const bt = String(next?.text || '').trim();
-                if (!at || !bt) break;
-                if (!isJaScriptHeavy(at) && !isJaScriptHeavy(bt)) break;
-                if (/[。！？!?]$/.test(at)) break;
-
-                const broken = endsJaBroken(at);
-                const cont = startsJaContinuation(bt);
-                const strongCont = isStrongJaContinuation(bt);
-                const bPlain = bt.replace(/[。．.！？!?…\s　♪♫、，,]+/g, '');
-                const tinyTail = gap <= 200 && /^(しい|ゃ|ゅ|ょ)$/.test(bPlain);
-
-                let allow = false;
-                if (tinyTail) {
-                    allow = true;
-                } else if (strongCont && gap <= wideGapMs) {
-                    allow = true;
-                } else if (cont && broken && gap <= maxGapMs) {
-                    allow = true;
-                } else if (cont && /^っ[、,]/.test(bt.replace(/\s+/g, '')) && gap <= maxGapMs) {
-                    allow = true;
-                }
-                if (!allow) break;
-
+                const prenom = shouldStitchZhPrenominalPair(at, bt, gap, options);
+                const particle = shouldAttachZhTrailingParticle(at, bt, gap, options);
+                if (!prenom && !particle) break;
                 const nextEnd = Number(next?.endMs);
                 const mergedEnd = Number.isFinite(nextEnd) ? nextEnd : cur.endMs;
                 const mergedDur = Number.isFinite(Number(cur.startMs)) && Number.isFinite(Number(mergedEnd))
                     ? Number(mergedEnd) - Number(cur.startMs)
                     : 0;
                 if (mergedDur > maxMergedDurMs) break;
-
                 cur.text = `${at}${bt}`;
                 cur.endMs = mergedEnd;
                 mergedPairs += 1;
@@ -723,13 +1151,285 @@
                 before: list.length,
                 after: out.length,
                 mergedPairs,
+                phraseMerged: mergedPairs,
+                zhPrenominal: true,
+            },
+        };
+    }
+
+    /**
+     * Stitch JA ASR mid-phrase splits (e.g. 「…ご」+「めんなさい…」)
+     * and strong prenominal incompletes (「好きな」+「サバの…」).
+     * Conservative: turn openings and terminal い-adjectives are not glued.
+     * @param {Array<{startMs?:number,endMs?:number,text?:string}>} cues
+     * @param {object} [options]
+     * @returns {{ cues: object[], stats: object, mergedPairs: number }}
+     */
+    function stitchJaFragmentCues(cues, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        const maxMergedDurMs = Math.max(3000, Math.min(60000, Number(options.maxMergedDurMs) || 12000));
+        const out = [];
+        let mergedPairs = 0;
+        let phraseMerged = 0;
+        let i = 0;
+        while (i < list.length) {
+            const cur = {
+                ...list[i],
+                startMs: list[i]?.startMs,
+                endMs: list[i]?.endMs,
+                text: list[i]?.text,
+            };
+            let j = i + 1;
+            while (j < list.length) {
+                const next = list[j];
+                const aEnd = Number(cur.endMs);
+                const bStart = Number(next?.startMs);
+                const gap = Number.isFinite(aEnd) && Number.isFinite(bStart)
+                    ? bStart - aEnd
+                    : 0;
+
+                const at = String(cur.text || '').trim();
+                const bt = String(next?.text || '').trim();
+                if (!shouldStitchJaFragmentPair(at, bt, gap, options)) break;
+
+                const nextEnd = Number(next?.endMs);
+                const mergedEnd = Number.isFinite(nextEnd) ? nextEnd : cur.endMs;
+                const mergedDur = Number.isFinite(Number(cur.startMs)) && Number.isFinite(Number(mergedEnd))
+                    ? Number(mergedEnd) - Number(cur.startMs)
+                    : 0;
+                if (mergedDur > maxMergedDurMs) break;
+
+                const wasPhrase = endsJaPrenominalIncomplete(at) && startsJaNounContinuation(bt)
+                    && !startsJaContinuation(bt) && !isStrongJaContinuation(bt);
+                cur.text = joinAsrCueTexts(at, bt);
+                cur.endMs = mergedEnd;
+                mergedPairs += 1;
+                if (wasPhrase) phraseMerged += 1;
+                j += 1;
+            }
+            out.push(cur);
+            i = Math.max(j, i + 1);
+        }
+        return {
+            cues: out,
+            mergedPairs,
+            stats: {
+                before: list.length,
+                after: out.length,
+                mergedPairs,
+                phraseMerged,
+            },
+        };
+    }
+
+    /**
+     * When ZH/JA cue counts differ, stitch JA then fold ZH cues whose midpoint
+     * falls inside each multi-cue JA merge span (time rematerialize).
+     */
+    function rematerializeZhAfterJaStitch(zhCues, jaBefore, jaAfter, options = {}) {
+        const zhList = Array.isArray(zhCues) ? zhCues.map((c) => ({ ...c })) : [];
+        const before = Array.isArray(jaBefore) ? jaBefore : [];
+        const after = Array.isArray(jaAfter) ? jaAfter : [];
+        if (!zhList.length || !before.length || !after.length) {
+            return { zhCues: zhList, zhMerged: 0 };
+        }
+
+        // Rebuild merge spans by replaying stitch decisions on JA-before.
+        const spans = [];
+        let i = 0;
+        while (i < before.length) {
+            let j = i + 1;
+            const cur = {
+                startMs: before[i]?.startMs,
+                endMs: before[i]?.endMs,
+                text: before[i]?.text,
+            };
+            while (j < before.length) {
+                const next = before[j];
+                const aEnd = Number(cur.endMs);
+                const bStart = Number(next?.startMs);
+                const gap = Number.isFinite(aEnd) && Number.isFinite(bStart)
+                    ? bStart - aEnd
+                    : 0;
+                if (!shouldStitchJaFragmentPair(cur.text, next?.text, gap, options)) break;
+                const nextEnd = Number(next?.endMs);
+                cur.text = joinAsrCueTexts(cur.text, next?.text);
+                cur.endMs = Number.isFinite(nextEnd) ? nextEnd : cur.endMs;
+                j += 1;
+            }
+            if (j > i + 1) {
+                spans.push({
+                    startMs: Number(before[i]?.startMs),
+                    endMs: Number(cur.endMs),
+                });
+            }
+            i = Math.max(j, i + 1);
+        }
+        if (!spans.length) return { zhCues: zhList, zhMerged: 0 };
+
+        const consumed = new Set();
+        const replacements = [];
+        let zhMerged = 0;
+        for (const span of spans) {
+            if (!Number.isFinite(span.startMs) || !Number.isFinite(span.endMs)) continue;
+            const hitIdx = [];
+            for (let z = 0; z < zhList.length; z += 1) {
+                if (consumed.has(z)) continue;
+                const zs = Number(zhList[z]?.startMs);
+                const ze = Number(zhList[z]?.endMs);
+                if (!Number.isFinite(zs) || !Number.isFinite(ze)) continue;
+                const mid = (zs + ze) / 2;
+                if (mid >= span.startMs - 40 && mid <= span.endMs + 40) hitIdx.push(z);
+            }
+            if (hitIdx.length < 2) continue;
+            const texts = hitIdx.map((z) => String(zhList[z]?.text || '').trim()).filter(Boolean);
+            replacements.push({
+                first: hitIdx[0],
+                last: hitIdx[hitIdx.length - 1],
+                cue: {
+                    ...zhList[hitIdx[0]],
+                    startMs: Number(zhList[hitIdx[0]]?.startMs),
+                    endMs: Number(zhList[hitIdx[hitIdx.length - 1]]?.endMs),
+                    text: texts.join(''),
+                },
+                drop: hitIdx.slice(1),
+            });
+            hitIdx.forEach((z) => consumed.add(z));
+            zhMerged += hitIdx.length - 1;
+        }
+        if (!replacements.length) return { zhCues: zhList, zhMerged: 0 };
+
+        const drop = new Set(replacements.flatMap((r) => r.drop));
+        const byFirst = new Map(replacements.map((r) => [r.first, r.cue]));
+        const out = [];
+        for (let z = 0; z < zhList.length; z += 1) {
+            if (drop.has(z)) continue;
+            if (byFirst.has(z)) out.push(byFirst.get(z));
+            else out.push(zhList[z]);
+        }
+        return { zhCues: out, zhMerged };
+    }
+
+    /**
+     * Stitch JA mid-phrase / prenominal splits while keeping ZH cues index-aligned.
+     * ZH texts are concatenated (usually reads fine for incomplete+continuation).
+     * On count mismatch, stitch JA then time-rematerialize ZH over merge spans.
+     */
+    function stitchAlignedJaZhFragmentPairs(zhCues, jaCues, options = {}) {
+        const zhList = Array.isArray(zhCues) ? zhCues : [];
+        const jaList = Array.isArray(jaCues) ? jaCues : [];
+        if (!jaList.length) {
+            return {
+                zhCues: zhList,
+                jaCues: jaList,
+                mergedPairs: 0,
+                stats: { before: jaList.length, after: jaList.length, mergedPairs: 0, phraseMerged: 0 },
+                skipped: true,
+                reason: 'no_ja',
+            };
+        }
+        // Count mismatch: stitch JA, rematerialize ZH by time over merge spans.
+        if (zhList.length && zhList.length !== jaList.length) {
+            const jaOnly = stitchJaFragmentCues(jaList, options);
+            const zhRemat = jaOnly.mergedPairs > 0
+                ? rematerializeZhAfterJaStitch(zhList, jaList, jaOnly.cues, options)
+                : { zhCues: zhList, zhMerged: 0 };
+            const zhPhrase = stitchZhPrenominalCues(zhRemat.zhCues, options);
+            return {
+                zhCues: zhPhrase.cues,
+                jaCues: jaOnly.cues,
+                mergedPairs: jaOnly.mergedPairs + zhPhrase.mergedPairs,
+                stats: {
+                    ...jaOnly.stats,
+                    zhMerged: (zhRemat.zhMerged || 0) + zhPhrase.mergedPairs,
+                    zhPrenominalMerged: zhPhrase.mergedPairs,
+                    countMismatch: true,
+                },
+                skipped: false,
+                reason: 'count_mismatch_rematerialized',
+            };
+        }
+
+        const maxMergedDurMs = Math.max(3000, Math.min(60000, Number(options.maxMergedDurMs) || 12000));
+        const outZh = [];
+        const outJa = [];
+        let mergedPairs = 0;
+        let phraseMerged = 0;
+        let i = 0;
+        const n = jaList.length;
+        while (i < n) {
+            const jaCur = {
+                ...jaList[i],
+                startMs: jaList[i]?.startMs,
+                endMs: jaList[i]?.endMs,
+                text: jaList[i]?.text,
+            };
+            const zhCur = zhList.length
+                ? {
+                    ...zhList[i],
+                    startMs: zhList[i]?.startMs ?? jaCur.startMs,
+                    endMs: zhList[i]?.endMs ?? jaCur.endMs,
+                    text: zhList[i]?.text,
+                }
+                : null;
+            let j = i + 1;
+            while (j < n) {
+                const jaNext = jaList[j];
+                const aEnd = Number(jaCur.endMs);
+                const bStart = Number(jaNext?.startMs);
+                const gap = Number.isFinite(aEnd) && Number.isFinite(bStart)
+                    ? bStart - aEnd
+                    : 0;
+                const at = String(jaCur.text || '').trim();
+                const bt = String(jaNext?.text || '').trim();
+                if (!shouldStitchJaFragmentPair(at, bt, gap, options)) break;
+
+                const nextEnd = Number(jaNext?.endMs);
+                const mergedEnd = Number.isFinite(nextEnd) ? nextEnd : jaCur.endMs;
+                const mergedDur = Number.isFinite(Number(jaCur.startMs)) && Number.isFinite(Number(mergedEnd))
+                    ? Number(mergedEnd) - Number(jaCur.startMs)
+                    : 0;
+                if (mergedDur > maxMergedDurMs) break;
+
+                const wasPhrase = endsJaPrenominalIncomplete(at) && startsJaNounContinuation(bt)
+                    && !startsJaContinuation(bt) && !isStrongJaContinuation(bt);
+                jaCur.text = joinAsrCueTexts(at, bt);
+                jaCur.endMs = mergedEnd;
+                if (zhCur) {
+                    const zt = String(zhCur.text || '').trim();
+                    const zb = String(zhList[j]?.text || '').trim();
+                    zhCur.text = joinAsrCueTexts(zt, zb);
+                    zhCur.endMs = mergedEnd;
+                    zhCur.startMs = Number.isFinite(Number(zhCur.startMs))
+                        ? zhCur.startMs
+                        : jaCur.startMs;
+                }
+                mergedPairs += 1;
+                if (wasPhrase) phraseMerged += 1;
+                j += 1;
+            }
+            outJa.push(jaCur);
+            if (zhCur) outZh.push(zhCur);
+            i = Math.max(j, i + 1);
+        }
+        return {
+            zhCues: outZh,
+            jaCues: outJa,
+            mergedPairs,
+            stats: {
+                before: n,
+                after: outJa.length,
+                mergedPairs,
+                phraseMerged,
             },
         };
     }
 
     function summarizeJaStitch(stats) {
         if (!stats?.mergedPairs) return '无需拼接日语断词';
-        return `拼接日语断词 ${stats.mergedPairs} 处（${stats.before}→${stats.after} 条）`;
+        const phrase = Number(stats.phraseMerged) || 0;
+        const extra = phrase > 0 ? `（含半句 ${phrase}）` : '';
+        return `拼接日语断词 ${stats.mergedPairs} 处${extra}（${stats.before}→${stats.after} 条）`;
     }
 
     function isSoundEffectCue(text) {
@@ -746,7 +1446,7 @@
     function isSymbolOnlyCue(text) {
         const raw = String(text || '').trim();
         if (!raw) return false;
-        const stripped = raw.replace(/[\s♪♫♩♬◆◇■□★☆●○◎※·.•…\-—_.,。！？!?，、；;:：【】[\]()（）「」『』"""'']+/g, '');
+        const stripped = raw.replace(/[\s♪♫♩♬◆◇■□★☆●○◎※·.•…\-—_.,。！？!?，、；;:：＋+【】\[\]{}()（）「」『』"""'']+/g, '');
         return !stripped;
     }
 
@@ -771,6 +1471,8 @@
         'おわり', 'おわり。', '終わり', '終わり。',
         'ユーモア', 'ユーモア。',
         'the end.', 'The End', 'THE END',
+        // Lone MT brace / plus debris (not software-credit watermarks)
+        '}', '{', '＋', '+',
     ]);
     // Soft-AV / smart-translate deterministic fills — never treat as short-duration hallucination.
     const SOFT_INTERJECTION_KEEP_RE = /^(?:哈啊?|哈…|嗯嗯?|啊啊?|呜+|呼+|诶诶?|呵呵+|唔+|哦+|噢+|嘿+|嗨+|好的?|是啊|这个|那个|不|呐|喂|咦|可以|遵命|好厉害|谢谢|再见|再见啦|原来如此|等一下|糟了|真棒|好大|啧|因为|那就)[…·.•。．.!！?？\s]*$/u;
@@ -825,6 +1527,47 @@
         return { cues: out, changed };
     }
 
+    /**
+     * JA/anime ASR models often append decorative trailing ellipsis (… / ... / ……)
+     * on otherwise complete cues. Strip terminal runs only; keep mid-cue ellipsis
+     * (dialogue-turn / hesitation) and pure placeholder cues.
+     */
+    function stripAsrDecorativeTrailingEllipsis(text) {
+        const raw = String(text ?? '');
+        const trimmed = raw.trim();
+        if (!trimmed) return raw;
+        if (/^(?:\.\.\.|……|…|･･･|⋯)+$/.test(trimmed)) return '…';
+        // Ellipsis immediately before a terminal !?。． — drop the ellipsis only.
+        let next = trimmed.replace(/(?:\.\.\.|……|…|･･･|⋯)+(?=[!?？！。．]\s*$)/u, '');
+        next = next.replace(/(?:\.\.\.|……|…|･･･|⋯)+\s*$/u, '');
+        next = next.trim();
+        return next || trimmed;
+    }
+
+    function stripAsrDecorativeTrailingEllipsisInCues(cues) {
+        const list = Array.isArray(cues) ? cues : [];
+        let changed = 0;
+        const out = list.map((cue, i) => {
+            const prev = String(cue?.text || '');
+            // Keep trailing … when the next cue is a dialogue-split reaction (けど…｜ホント?).
+            const nxtText = String(list[i + 1]?.text || '').trim().replace(/\s+/g, '');
+            if (
+                /(?:\.\.\.|……|…|･･･|⋯)+\s*$/u.test(prev.trim())
+                && nxtText
+                && (JA_TURN_START_RE.test(nxtText) || JA_ELLIPSIS_WRAP_TURN_RE.test(nxtText))
+            ) {
+                return cue;
+            }
+            const next = stripAsrDecorativeTrailingEllipsis(prev);
+            if (next !== prev) {
+                changed += 1;
+                return { ...cue, text: next };
+            }
+            return cue;
+        });
+        return { cues: out, changed };
+    }
+
     function cueDurationMs(cue) {
         const start = Number(cue?.startMs);
         const end = cue?.endMs != null ? Number(cue.endMs) : start + 2000;
@@ -856,7 +1599,14 @@
             || isPureDiscourseEn(raw) || isPureDiscourseKo(raw)) {
             return false;
         }
+        // Embedded grammar / deictic markers imply dialogue — but a cue that is ONLY a
+        // particle scrap (って/から/ので…) must not count as substantive (ships「…」otherwise).
+        // Keep でしょ/だよ/なの as recoverable short dialogue.
         if (/(?:です|ます|ない|ません|てる|って|から|ので|けど|なの|だよ|でしょ|ちゃん|くん|さん|君|私|僕|俺|彼女|これ|それ|あれ|どう|何|なに|なん|どこ|誰|いつ|待って|やめ|だめ)/i.test(raw)) {
+            const bareMarker = raw.replace(/[。．.!！?？…、，,\s　]+/g, '');
+            if (/^(?:って|から|ので|けど|てる|です|ます|ない|ません)$/u.test(bareMarker)) {
+                return false;
+            }
             return true;
         }
         const bare = raw.replace(/[。．.!！?？…、，,\s]+/g, '');
@@ -908,6 +1658,8 @@
         if (HALLUCINATION_EXACT.has(raw) || HALLUCINATION_EXACT.has(lower)) return true;
         if (HALLUCINATION_RE.test(raw)) return true;
         if (PROMPT_LEAK_RE.test(raw)) return true;
+        // Logo / BGM katakana or CJK chant with many middle dots (シ・ヨ・トーン・オ・)
+        if ((raw.match(/[・·]/g) || []).length >= 3 && textCharCount(raw) <= 18) return true;
         if (raw.length <= 24 && LATIN_CJK_JAM_RE.test(raw)) return true;
         if (isHallucinationHeavyRepetition(raw)) return true;
         if (/https?:\/\/|www\./i.test(raw) && textCharCount(raw) <= 40) return true;
@@ -1403,7 +2155,7 @@
             return false;
         }
         if (isSemanticIiJaToken(t)) return false;
-        return /^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ねえ+|ねぇ+|そう|そっか|そうか|そうね|そうだね|まあ+|ふむ|ふん|(?:よし)+|ん+|んん+|あら|おや|えっと+|えーと+|えー+|あのー+|そっかぁ?)$/i.test(t);
+        return /^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ねえ+|ねぇ+|そう|そっか|そうか|そうね|そうだね|まあ+|まあまあ|ふむ|ふん|(?:よし)+|ん+|んん+|あら|あらら+|おや|えっと+|えーと+|えー+|あのー+|そっかぁ?|(?:ほらっ*)+|(?:ほらほら)+|なあ+|なあなあ)$/i.test(t);
     }
 
     /** JA onomatopoeia / breath / laugh (拟声). */
@@ -1414,10 +2166,18 @@
         if (!t) return true;
         if (isSemanticIiJaToken(t)) return false;
         if (/いい|良い/.test(t)) return false;
-        if (/^(?:ああ+|あぁ+|あっ+|あん+|ああん+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|うぅ+|やっ|ひゃっ?|きゃっ?|ぎゃっ?|どきっ?|びくっ?|んっ+|くっ+)$/i.test(t)) {
+        // Soft-AV shelf shapes: あっ/ああっ/んっ/んんっ/はぁっ/あんっ (and 、-split stacks).
+        // Prefer あ+/ん+ with optional sokuon — bare `あっ+` misses ああっ; `んっ+` misses んんっ.
+        // Bare ん/んん are discourse (うん peel must not eat trailing ん).
+        // Moan forms need っ or んんん+.
+        if (/^(?:あ+[ぁァ]?っ*|あぁ+っ*|あんっ*|ああんっ*|んっ+|んんっ*|んんん+|はぁっ*|はあっ*|ハァっ*|ふぅっ*|ふうっ*|へえっ*|へーっ*|ほうっ*|ほぅっ*|うぅっ*|やっ|ひゃっ?|きゃっ?|ぎゃっ?|どきっ?|びくっ?|くっ+)$/i.test(t)) {
             return true;
         }
         if (/^(?:[うウ]?ふふ+[うっゥッ]*|[えエ]?へへ+[えっェッ]*|[あア]?はは+[あっァッ]*|んふ[ぅうゥウっッ]*|くぅ+[っッ]?|くっ|むぅ+|んむ+|もぐ+|むにゃ[ぁア]*|もぐもぐ+|ぽりぽり+|ずずず+|ちゅば[っつ]*|ガルル+|ぐぬぬ*|どきどき+|ずん+|どん+|がっ+|ばっ+|ぱっ+)$/i.test(t)) {
+            return true;
+        }
+        // Effort / sniff / cough / spring-SFX scraps (よいしょ / すんすん / ごほん / げほっ / ビヨン)
+        if (/^(?:よいしょ+|よっこいしょ+|すんすん+|すーん+|ちゅむっ?|ちゅぱっ?|ごほん+|ゴホン+|げほっ?|ゲホッ?|こほっ?|ゴホッ?|コホン+|こほん+|ビヨン+|びよん+|ぐちゅぐ|ぐちゅ+|んちゅうき|はひゃひきひ|ひっく+|じゅぶっ?)[ー〜～っッ…\.]*$/i.test(t)) {
             return true;
         }
         // Short wet/muffled oral scraps often left as standalone cues
@@ -1427,7 +2187,13 @@
         if (/^(?:ア+|ウ+|ン+|ハッ+|ハァ+|フウ+|クン+|ヒャッ?|ヤッ|キャッ?|ギャッ?|ドキッ?|ビクッ?)$/i.test(t)) {
             return true;
         }
-        if (/^[あぁアァいぃイィうぅウゥえぇエェおぉオオはハひヒふフへヘほホッッんンくクむムー〜～ー]+$/i.test(t)) {
+        // Discourse acks (うん/はい/ええ) are not onomatopoeia — keep them when
+        // only the ono clear path runs (译前拟声清除 ≠ 语气清除).
+        if (isPureDiscourseJaToken(t)) return false;
+        // Include hiragana っ (U+3063); older class only listed katakana ッ and missed 、-split tokens.
+        // Require length ≥ 2 so glued word tails (ください→くださ) are never peeled.
+        if (t.length >= 2
+            && /^[あぁアァいぃイィうぅウゥえぇエェおぉオオはハひヒふフへヘほホっッんンくクむムー〜～ー]+$/i.test(t)) {
             return true;
         }
         return false;
@@ -1474,11 +2240,12 @@
         const t = stripInterjectionDecor(text);
         if (!t) return false;
         if (isBlankOrPunctOnly(t)) return false;
-        if (/^(?:ああ+|あぁ+|あっ+|あん+|ああん+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|きゃっ?|ぎゃっ?|どきっ?|びくっ?)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
+        if (/^(?:あ+[ぁァ]?っ*|あぁ+っ*|あんっ*|ああんっ*|んっ+|んんっ*|んんん+|はぁっ*|はあっ*|ハァっ*|ふぅっ*|ふうっ*|きゃっ?|ぎゃっ?|どきっ?|びくっ?)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
             return true;
         }
-        if (/^[はハひヒふフへヘほホあぁアァいぃイィうぅウゥえぇエェおぉオォんンー〜～っッ!！?？…。．.\s♡♥❤くクむム]+$/i.test(t)) {
+        if (/^[はハひヒふフへヘほホあぁアァいぃイィうぅウゥえぇエェおぉオォんンー〜～っッ!！?？…。．.\s♡♥❤くクむム、，,・]+$/i.test(t)) {
             const compact = t.replace(/[。．.!！?？…·.•\s\-—_~～ー、，,・]+/g, '');
+            if (!compact) return false;
             if (/^(?:いいえ|いや+|おはよう)/i.test(compact)) return false;
             if (/いい|良い/.test(compact)) return false;
             // Pure discourse particles alone are not onomatopoeia.
@@ -1845,7 +2612,7 @@
     function tidyAfterFillerStrip(text) {
         return String(text || '')
             .replace(/[ \t\u3000]+/g, ' ')
-            .replace(/^[、，,・·.•…\s]+|[、，,・·.•…\s]+$/g, '')
+            .replace(/^[、，,・·.•…\s—―–﹣－]+|[、，,・·.•…\s—―–﹣－]+$/g, '')
             .replace(/([、，,])\1+/g, '$1')
             .replace(/\s*([、，,])\s*/g, '$1')
             .replace(/^[、，,]+|[、，,]+$/g, '')
@@ -1863,6 +2630,16 @@
         return /^(?:好的?|是的?|是啊|对的?|对啊|对|行|行吧|好吧|好[哦喔]|没错|ok|okay|yes|yeah|yep|yup|no|nope|right|sure|fine|well|hey|네|예|그래|맞아|좋아|そう|はい|ええ)$/i.test(t);
     }
 
+    /**
+     * Sentence-final soft modals (好棒啊 / 哪部分啊？) — not lead breath 啊… stacks.
+     * Keep when glued after a real Han syllable.
+     */
+    function isZhSentenceFinalSoftModalToken(token, precedingChar) {
+        const t = String(token || '').replace(/[。．.!！?？…~～]+$/g, '').trim();
+        if (!/^(?:啊|呀|嘛|呢|吧)$/u.test(t)) return false;
+        return /[\u4e00-\u9fff]/u.test(String(precedingChar || ''));
+    }
+
     function peelEdgeFillerToken(text, tokenPred, edge) {
         const raw = String(text || '');
         if (!raw.trim()) return { text: raw, removed: null };
@@ -1873,6 +2650,10 @@
             const hit = tokenPred(head);
             if (!hit) continue;
             if (isAmbiguousGluedFillerToken(head)) continue;
+            // Keep「好棒啊」「哪部分啊？」— strip only free / leading 啊唉 breath.
+            if (edge === 'trailing' && isZhSentenceFinalSoftModalToken(head, restRaw.slice(-1))) {
+                continue;
+            }
             const rest = tidyAfterFillerStrip(restRaw);
             if (!rest) continue;
             // Remainder must not itself be only filler of the same token class.
@@ -1901,6 +2682,29 @@
             return {
                 text: original,
                 changed: false,
+                pure: false,
+                removedTokens: [],
+                kind: null,
+                lang: '',
+            };
+        }
+        if (isSoftwareCreditProtectedText(trimmed)) {
+            return {
+                text: original,
+                changed: false,
+                pure: false,
+                removedTokens: [],
+                kind: null,
+                lang: '',
+            };
+        }
+        // MT blank slots「…」must survive inline strip — dropEmptied would delete
+        // recoverable cues before det-fill / blank-retry can gloss them.
+        if (isBlankMtPlaceholderText(trimmed) || /^(?:\.\.\.|……|…)+$/.test(trimmed)) {
+            const normalized = /^(?:\.\.\.|……|…)+$/.test(trimmed) ? '…' : trimmed;
+            return {
+                text: normalized,
+                changed: normalized !== original,
                 pure: false,
                 removedTokens: [],
                 kind: null,
@@ -1942,12 +2746,13 @@
         let kindHits = { discourse: 0, onomatopoeia: 0 };
         let lang = langHint;
 
-        const pieces = trimmed.split(/([、，,・·.•…\s]+)/);
+        // Include dash pauses so「啊—好累」splits like comma breath.
+        const pieces = trimmed.split(/([、，,・·.•…\s—―–﹣－]+)/);
         const kept = [];
         for (let i = 0; i < pieces.length; i += 1) {
             const part = pieces[i];
             if (!part) continue;
-            if (/^[、，,・·.•…\s]+$/.test(part)) {
+            if (/^[、，,・·.•…\s—―–﹣－]+$/.test(part)) {
                 kept.push(part);
                 continue;
             }
@@ -1983,6 +2788,35 @@
             break;
         }
 
+        // Breath after ？！：什么啊，这态度？呃，我…
+        const beforeBreath = next;
+        next = next.replace(
+            /([？?！!])\s*((?:唉|啊+|呃|额|嗯+|欸|诶)+)(?=[、，,\s…·.•]|$)/gu,
+            '$1',
+        );
+        next = next.replace(/([？?！!])[、，,]+/g, '$1');
+        if (next !== beforeBreath) {
+            removedTokens.push('(post-punct breath)');
+            kindHits.discourse = (kindHits.discourse || 0) + 1;
+            next = tidyAfterFillerStrip(next);
+        }
+
+        // ZH stutter: 要、要射了 → 要射了（仅中文观影；不改 JA 原文）
+        if (options.collapseStutter !== false && normalizeFillerLang(langHint) === 'zh') {
+            const beforeStutter = next;
+            let stuttered = next;
+            for (let guard = 0; guard < 4; guard += 1) {
+                const step = stuttered.replace(/([\u4e00-\u9fff]{1,2})[、，,\s]+\1/gu, '$1');
+                if (step === stuttered) break;
+                stuttered = step;
+            }
+            if (stuttered !== beforeStutter) {
+                removedTokens.push('(stutter)');
+                kindHits.discourse = (kindHits.discourse || 0) + 1;
+                next = tidyAfterFillerStrip(stuttered);
+            }
+        }
+
         if (!removedTokens.length) {
             return {
                 text: original,
@@ -2005,6 +2839,62 @@
             removedTokens,
             kind,
             lang,
+        };
+    }
+
+    /**
+     * Batch inline filler strip for delivery ZH (观影清除档).
+     * Emptied / pure cues are dropped so paired rematerialize can realign JA.
+     */
+    function stripInlineFillersInCues(cues, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        const next = [];
+        const changedIndexes = [];
+        const droppedIndexes = [];
+        let cueTouched = 0;
+        let dropped = 0;
+        for (let i = 0; i < list.length; i += 1) {
+            const c = list[i];
+            const before = String(c?.text ?? '');
+            if (options.skipSoftwareCredit !== false && isSoftwareCreditProtectedText(before)) {
+                next.push({ ...c, text: before });
+                continue;
+            }
+            const stripped = stripInlineFillersInText(before, options);
+            if (stripped.pure || !String(stripped.text || '').trim()) {
+                if (options.dropEmptied === false) {
+                    next.push({ ...c, text: stripped.text || '…' });
+                    if (stripped.changed) {
+                        cueTouched += 1;
+                        changedIndexes.push(i);
+                    }
+                    continue;
+                }
+                dropped += 1;
+                droppedIndexes.push(i);
+                continue;
+            }
+            if (stripped.changed) {
+                cueTouched += 1;
+                changedIndexes.push(i);
+            }
+            next.push({ ...c, text: stripped.text });
+        }
+        const stats = {
+            cueTotal: list.length,
+            cueTouched,
+            dropped,
+            afterCount: next.length,
+        };
+        const bits = [];
+        if (cueTouched) bits.push(`行内清语气 ${cueTouched} 条`);
+        if (dropped) bits.push(`清空删条 ${dropped}`);
+        return {
+            cues: next,
+            stats,
+            changedIndexes,
+            droppedIndexes,
+            summary: bits.length ? bits.join(' · ') : '行内清语气：无需修改',
         };
     }
 
@@ -2288,14 +3178,34 @@
             if (drop && dropDiscourse) {
                 try {
                     const ellipsisPolicy = require('./hymt-ellipsis-policy-core');
-                    const prevJa = i > 0 ? String(jaList[i - 1]?.text || '') : '';
-                    const nextJa = i + 1 < zhList.length ? String(jaList[i + 1]?.text || '') : '';
-                    if (ellipsisPolicy.shouldKeepDiscourseForContext?.(jaText, prevJa, nextJa)) {
+                    const prevCue = i > 0 ? jaList[i - 1] : null;
+                    const nextCue = i + 1 < zhList.length ? jaList[i + 1] : null;
+                    const prevJa = prevCue ? String(prevCue.text || '') : '';
+                    const nextJa = nextCue ? String(nextCue.text || '') : '';
+                    const bridgeCtx = {
+                        prevEndMs: Number(prevCue?.endMs),
+                        nextStartMs: Number(nextCue?.startMs),
+                        cueStartMs: Number(jaList[i]?.startMs),
+                        cueEndMs: Number(jaList[i]?.endMs),
+                    };
+                    if (ellipsisPolicy.shouldKeepDiscourseForContext?.(jaText, prevJa, nextJa, bridgeCtx)) {
                         drop = false;
+                        // Mid-dialogue うん/はい → 嗯/是的 (≤2s / both-neighbor bridge)
+                        const fill = ellipsisPolicy.dialogueAckZhForJa?.(jaText);
+                        if (fill && (
+                            ellipsisPolicy.isTightDialogueAckBridge?.(jaText, {
+                                prevJa,
+                                nextJa,
+                                ...bridgeCtx,
+                            })
+                            || ellipsisPolicy.hasContextBridgeValue?.(jaText, prevJa, nextJa, bridgeCtx)
+                        )) {
+                            zhList[i] = { ...zhList[i], text: fill };
+                        }
                     }
                     // Pure moan/SFX always drop when matched — never keep for "bridge"
                     if (ellipsisPolicy.isPureMoanOrSfxJa?.(jaText)
-                        && !ellipsisPolicy.hasContextBridgeValue?.(jaText, prevJa, nextJa)) {
+                        && !ellipsisPolicy.hasContextBridgeValue?.(jaText, prevJa, nextJa, bridgeCtx)) {
                         drop = true;
                     }
                 } catch (_) { /* optional */ }
@@ -2740,7 +3650,23 @@
         endsJaBroken,
         startsJaContinuation,
         isStrongJaContinuation,
+        endsAsrEllipsisLineWrap,
+        startsAsrEllipsisWrapContinuation,
+        joinAsrCueTexts,
+        endsJaPrenominalIncomplete,
+        startsJaNounContinuation,
+        endsZhPrenominalIncomplete,
+        startsZhNounContinuation,
+        shouldAttachZhTrailingParticle,
+        bareAsrEchoText,
+        isAsrEchoPair,
+        dedupeAsrEchoCues,
+        summarizeAsrEchoDedupe,
+        shouldStitchJaFragmentPair,
+        shouldStitchZhPrenominalPair,
         stitchJaFragmentCues,
+        stitchZhPrenominalCues,
+        stitchAlignedJaZhFragmentPairs,
         summarizeJaStitch,
         isSoundEffectCue,
         isSymbolOnlyCue,
@@ -2750,6 +3676,8 @@
         shouldPreserveSubstantiveDialogueCue,
         normalizeAsrText,
         normalizeAsrTextInCues,
+        stripAsrDecorativeTrailingEllipsis,
+        stripAsrDecorativeTrailingEllipsisInCues,
         stripAsrNameLoopsInCues,
         removeNoiseFromCues,
         classifyNoiseCue,
@@ -2776,6 +3704,7 @@
         normalizeFillerLang,
         detectFillerLineLang,
         stripInlineFillersInText,
+        stripInlineFillersInCues,
         dropPureInterjectionPairs,
         dropPureFillerBilingualCues,
         cueLooksBilingual,
@@ -2787,6 +3716,9 @@
         compressRepetitionInCues,
         summarizeRepetitionCompress,
         isBlankMtPlaceholderText,
+        normalizeBlankMtPlaceholder,
+        stripTrailingZhSentencePeriod,
+        stripTrailingZhSentencePeriodInCues,
         simplifyViewingPunctuationInText,
         simplifyViewingPunctuationInCues,
         lacksPunctuation,

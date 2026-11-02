@@ -242,8 +242,41 @@
             if (persist) void persistFormOptionsQuiet();
         }
 
-        /** Legacy sense overrides hook — auto-sense removed; always undefined. */
-        function senseOverridesForJob() {
+        /**
+         * Map item.senseAcoustic (if present) through applyAcousticHints into job overrides.
+         * Batch also probes in the engine process; this covers pre-probed / preserved rows.
+         */
+        function senseOverridesForJob(item) {
+            const acoustic = item?.senseAcoustic;
+            if (!acoustic || typeof acoustic !== 'object') return undefined;
+            try {
+                const cp = (typeof globalThis !== 'undefined' && globalThis.TransubContentProfile)
+                    || null;
+                if (!cp?.applyAcousticHints) return undefined;
+                const profile = String(
+                    item?.sense?.profile
+                    || item?.contentProfile
+                    || acoustic.profile
+                    || 'unknown',
+                ).toLowerCase();
+                const applied = cp.applyAcousticHints({}, acoustic, { profile });
+                const ov = applied?.overrides && typeof applied.overrides === 'object'
+                    ? { ...applied.overrides }
+                    : {};
+                if (Object.keys(ov).length) {
+                    ov.senseAcoustic = {
+                        hint: acoustic.hint || applied?.hint,
+                        musicLikely: !!acoustic.musicLikely,
+                        softSparse: !!acoustic.softSparse,
+                        noisyFloor: !!acoustic.noisyFloor,
+                        meanVolumeDb: acoustic.meanVolumeDb,
+                        silenceRatio: acoustic.silenceRatio,
+                        startSec: acoustic.startSec,
+                        durationSec: acoustic.durationSec,
+                    };
+                    return ov;
+                }
+            } catch (_) { /* optional */ }
             return undefined;
         }
 

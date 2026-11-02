@@ -1623,10 +1623,15 @@
         setProgress(null);
     }
 
+    function onProEntitlementChanged() {
+        void refreshProAndEncoders();
+    }
+
     global.TransubSubtitleBurnUi = {
         init,
         onWorkspaceShow,
         onWorkspaceHide,
+        onProEntitlementChanged,
         applyPayload,
         addPairsToBatch,
         reloadEncodeSettings,

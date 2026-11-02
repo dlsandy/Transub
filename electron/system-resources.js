@@ -1,6 +1,7 @@
 /**
  * Lightweight system resource sampling for the main-window status strip.
- * CPU / RAM via Node os; NVIDIA GPU via nvidia-smi (optional).
+ * CPU / RAM via Node os; NVIDIA via nvidia-smi; AMD / Intel Arc total VRAM via registry
+ * (Win32 AdapterRAM is uint32 and caps at ~4GB).
  */
 
 const os = require('os');
@@ -13,9 +14,11 @@ const execFileAsync = promisify(execFile);
 
 const GPU_QUERY_TIMEOUT_MS = 2500;
 const GPU_CACHE_MS = 1800;
-/** Consecutive hard misses before skipping nvidia-smi for a while. */
+/** Consecutive hard misses before skipping GPU probes for a while. */
 const GPU_MISS_DISABLE_AFTER = 8;
 const GPU_MISS_COOLDOWN_MS = 60_000;
+/** WMI AdapterRAM uint32 ceiling (~4 GiB); treat as unreliable when >= this. */
+const ADAPTER_RAM_UINT32_CAP_BYTES = 4 * 1024 * 1024 * 1024 - 1;
 
 let prevCpuTimes = null;
 let gpuCache = { at: 0, value: null };
@@ -23,6 +26,8 @@ let gpuInFlight = null;
 let gpuMissStreak = 0;
 let gpuSkipUntil = 0;
 let nvidiaSmiPathCache = undefined;
+/** After first successful sample: 'nvidia' | 'amd' | 'intel' — skip other vendors. */
+let preferredGpuVendor = null;
 
 function cpuTimesTotal(times) {
     return Number(times.user || 0)
@@ -132,8 +137,35 @@ function noteGpuHit() {
     gpuSkipUntil = 0;
 }
 
+/**
+ * Normalize AdapterRAM / registry qwMemorySize to a non-negative byte count.
+ * @param {unknown} raw
+ * @returns {number|null}
+ */
+function parseAdapterRamBytes(raw) {
+    let n = Number(raw);
+    if (!Number.isFinite(n) || n === 0) return null;
+    // WMI / JSON may surface uint32 as signed int32.
+    if (n < 0) n = n >>> 0;
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.round(n);
+}
+
+/**
+ * Prefer registry QWORD VRAM; fall back to WMI AdapterRAM (uint32, may cap at ~4GB).
+ * @param {unknown} registryBytes
+ * @param {unknown} adapterRamBytes
+ * @returns {number|null}
+ */
+function resolveAmdVramBytes(registryBytes, adapterRamBytes) {
+    const reg = parseAdapterRamBytes(registryBytes);
+    if (reg != null && reg >= 512 * 1024 * 1024) return reg;
+    const wmi = parseAdapterRamBytes(adapterRamBytes);
+    if (wmi != null && wmi >= 512 * 1024 * 1024) return wmi;
+    return reg;
+}
+
 async function queryNvidiaGpu() {
-    if (Date.now() < gpuSkipUntil) return null;
     try {
         const bin = resolveNvidiaSmiPath();
         const { stdout } = await execFileAsync(
@@ -146,14 +178,9 @@ async function queryNvidiaGpu() {
         );
         const first = String(stdout || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean);
         const parsed = parseNvidiaCsvLine(first);
-        if (!parsed) {
-            noteGpuMiss();
-            return null;
-        }
-        noteGpuHit();
+        if (!parsed) return null;
         return { vendor: 'nvidia', ...parsed };
     } catch {
-        noteGpuMiss();
         return null;
     }
 }
@@ -161,17 +188,27 @@ async function queryNvidiaGpu() {
 async function queryAmdGpu() {
     if (process.platform !== 'win32') return null;
     try {
+        // Prefer HardwareInformation.qwMemorySize (QWORD). Win32 AdapterRAM is
+        // uint32 and reports ~4GB for RX 7000/9000 and other >4GB cards.
         const { stdout } = await execFileAsync(
             'powershell.exe',
             [
                 '-NoProfile',
                 '-Command',
-                (
-                    "Get-CimInstance Win32_VideoController "
-                    + "| Where-Object { $_.Name -match 'Radeon|AMD' -and $_.Name -notmatch 'Microsoft Basic' } "
-                    + "| Select-Object -First 1 Name,AdapterRAM "
-                    + "| ConvertTo-Json -Compress"
-                ),
+                [
+                    "$ErrorActionPreference='SilentlyContinue'",
+                    "$regBytes=$null;$name=$null;$wmiBytes=$null",
+                    "$rows=@(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*' |",
+                    "  Where-Object { $_.DriverDesc -match 'Radeon|AMD' -and $_.DriverDesc -notmatch 'Microsoft Basic' -and $_.'HardwareInformation.qwMemorySize' -gt 0 } |",
+                    "  Select-Object @{n='Name';e={[string]$_.DriverDesc}}, @{n='AdapterRAM';e={[int64]$_.'HardwareInformation.qwMemorySize'}} |",
+                    '  Sort-Object AdapterRAM -Descending)',
+                    'if ($rows.Count -gt 0) { $name=$rows[0].Name; $regBytes=[int64]$rows[0].AdapterRAM }',
+                    "if (-not $regBytes -or $regBytes -le 0) {",
+                    "  $vc=Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'Radeon|AMD' -and $_.Name -notmatch 'Microsoft Basic' } | Select-Object -First 1 Name,AdapterRAM",
+                    '  if ($vc) { $name=[string]$vc.Name; $wmiBytes=[int64]$vc.AdapterRAM }',
+                    '}',
+                    'if (-not $name) { \'\' } else { @{ Name=$name; RegistryRAM=$regBytes; AdapterRAM=$wmiBytes } | ConvertTo-Json -Compress }',
+                ].join('; '),
             ],
             { windowsHide: true, timeout: GPU_QUERY_TIMEOUT_MS },
         );
@@ -179,9 +216,8 @@ async function queryAmdGpu() {
         if (!text) return null;
         const row = JSON.parse(text);
         if (!row || typeof row !== 'object') return null;
-        let ram = Number(row.AdapterRAM || 0);
-        if (!Number.isFinite(ram) || ram === 0) return null;
-        if (ram < 0) ram = ram >>> 0;
+        const ram = resolveAmdVramBytes(row.RegistryRAM, row.AdapterRAM);
+        if (ram == null) return null;
         const memTotalMiB = Math.max(0, Math.round(ram / (1024 * 1024)));
         if (memTotalMiB < 512) return null;
         return {
@@ -190,6 +226,51 @@ async function queryAmdGpu() {
             memUsedMiB: null,
             memTotalMiB,
             name: String(row.Name || '').trim() || 'AMD GPU',
+        };
+    } catch {
+        return null;
+    }
+}
+
+async function queryIntelGpu() {
+    if (process.platform !== 'win32') return null;
+    try {
+        const { stdout } = await execFileAsync(
+            'powershell.exe',
+            [
+                '-NoProfile',
+                '-Command',
+                [
+                    "$ErrorActionPreference='SilentlyContinue'",
+                    "$regBytes=$null;$name=$null;$wmiBytes=$null",
+                    "$rows=@(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*' |",
+                    "  Where-Object { $_.DriverDesc -match 'Intel.*Arc|Arc.*(A|B)?\\d{3}' -and $_.DriverDesc -notmatch 'Microsoft Basic|UHD Graphics|Iris' -and $_.'HardwareInformation.qwMemorySize' -gt 0 } |",
+                    "  Select-Object @{n='Name';e={[string]$_.DriverDesc}}, @{n='AdapterRAM';e={[int64]$_.'HardwareInformation.qwMemorySize'}} |",
+                    '  Sort-Object AdapterRAM -Descending)',
+                    'if ($rows.Count -gt 0) { $name=$rows[0].Name; $regBytes=[int64]$rows[0].AdapterRAM }',
+                    "if (-not $regBytes -or $regBytes -le 0) {",
+                    "  $vc=Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'Intel.*Arc|Arc.*(A|B)?\\d{3}' -and $_.Name -notmatch 'Microsoft Basic|UHD Graphics|Iris' } | Select-Object -First 1 Name,AdapterRAM",
+                    '  if ($vc) { $name=[string]$vc.Name; $wmiBytes=[int64]$vc.AdapterRAM }',
+                    '}',
+                    'if (-not $name) { \'\' } else { @{ Name=$name; RegistryRAM=$regBytes; AdapterRAM=$wmiBytes } | ConvertTo-Json -Compress }',
+                ].join('; '),
+            ],
+            { windowsHide: true, timeout: GPU_QUERY_TIMEOUT_MS },
+        );
+        const text = String(stdout || '').trim();
+        if (!text) return null;
+        const row = JSON.parse(text);
+        if (!row || typeof row !== 'object') return null;
+        const ram = resolveAmdVramBytes(row.RegistryRAM, row.AdapterRAM);
+        if (ram == null) return null;
+        const memTotalMiB = Math.max(0, Math.round(ram / (1024 * 1024)));
+        if (memTotalMiB < 512) return null;
+        return {
+            vendor: 'intel',
+            utilPct: null,
+            memUsedMiB: null,
+            memTotalMiB,
+            name: String(row.Name || '').trim() || 'Intel Arc',
         };
     } catch {
         return null;
@@ -205,16 +286,34 @@ async function sampleGpu() {
     if (gpuInFlight) return gpuInFlight;
 
     gpuInFlight = (async () => {
-        const nvidia = await queryNvidiaGpu();
-        if (nvidia != null) {
-            gpuCache = { at: Date.now(), value: nvidia };
-            return nvidia;
+        if (preferredGpuVendor !== 'amd' && preferredGpuVendor !== 'intel') {
+            const nvidia = await queryNvidiaGpu();
+            if (nvidia != null) {
+                preferredGpuVendor = 'nvidia';
+                noteGpuHit();
+                gpuCache = { at: Date.now(), value: nvidia };
+                return nvidia;
+            }
         }
-        const amd = await queryAmdGpu();
-        if (amd != null) {
-            gpuCache = { at: Date.now(), value: amd };
-            return amd;
+        if (preferredGpuVendor !== 'nvidia' && preferredGpuVendor !== 'intel') {
+            const amd = await queryAmdGpu();
+            if (amd != null) {
+                preferredGpuVendor = 'amd';
+                noteGpuHit();
+                gpuCache = { at: Date.now(), value: amd };
+                return amd;
+            }
         }
+        if (preferredGpuVendor !== 'nvidia' && preferredGpuVendor !== 'amd') {
+            const intel = await queryIntelGpu();
+            if (intel != null) {
+                preferredGpuVendor = 'intel';
+                noteGpuHit();
+                gpuCache = { at: Date.now(), value: intel };
+                return intel;
+            }
+        }
+        noteGpuMiss();
         return null;
     })().finally(() => {
         gpuInFlight = null;
@@ -253,6 +352,8 @@ function formatResourceUsageText(sample) {
             parts.push(`GPU ${sample.gpu.utilPct}%`);
         } else if (sample.gpu.vendor === 'amd') {
             parts.push('GPU AMD');
+        } else if (sample.gpu.vendor === 'intel') {
+            parts.push('GPU Intel');
         }
         if (sample.gpu.memTotalMiB > 0) {
             const usedLabel = sample.gpu.memUsedMiB != null
@@ -281,6 +382,22 @@ async function sampleSystemResources({ includeGpu = true } = {}) {
     return sample;
 }
 
+/**
+ * Sync peek of the last GPU sample (for callers that cannot await sampleGpu).
+ * Returns null when never sampled or stale beyond ~18s.
+ * @param {{ maxAgeMs?: number }} [opts]
+ * @returns {object|null}
+ */
+function peekCachedGpuSample(opts = {}) {
+    const maxAge = Number(opts.maxAgeMs);
+    const ageLimit = Number.isFinite(maxAge) && maxAge > 0
+        ? maxAge
+        : GPU_CACHE_MS * 10;
+    if (!gpuCache.value || !gpuCache.at) return null;
+    if (Date.now() - gpuCache.at > ageLimit) return null;
+    return gpuCache.value;
+}
+
 /** Test helper — reset module state between cases. */
 function _resetSystemResourcesStateForTests() {
     prevCpuTimes = null;
@@ -289,16 +406,21 @@ function _resetSystemResourcesStateForTests() {
     gpuMissStreak = 0;
     gpuSkipUntil = 0;
     nvidiaSmiPathCache = undefined;
+    preferredGpuVendor = null;
 }
 
 module.exports = {
     sampleSystemResources,
     sampleGpu,
+    peekCachedGpuSample,
     formatResourceUsageText,
     formatGiBFromBytes,
     formatGiBFromMiB,
     parseNvidiaCsvLine,
     parseNvidiaCsvNumber,
+    parseAdapterRamBytes,
+    resolveAmdVramBytes,
     resolveNvidiaSmiPath,
+    ADAPTER_RAM_UINT32_CAP_BYTES,
     _resetSystemResourcesStateForTests,
 };

@@ -99,9 +99,23 @@
             };
         }
 
+        const flags = Array.isArray(ann?.flags) ? ann.flags.map(String) : [];
+        const nonspeech = flags.some((f) => f === 'sv_nonspeech')
+            || (ann?.audioEvent && String(ann.audioEvent).toUpperCase() !== 'SPEECH'
+                && String(ann.audioEvent || '').trim() !== '');
+        if (nonspeech) {
+            reasons.push('sv_nonspeech');
+            return {
+                band: BAND_YELLOW,
+                reasons: [...new Set(reasons)],
+                confidence: conf,
+                index,
+            };
+        }
+
         return {
             band: BAND_GREEN,
-            reasons: [],
+            reasons: reasons.length ? [...new Set(reasons)] : ['ok'],
             confidence: conf,
             index,
         };

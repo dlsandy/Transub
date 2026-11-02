@@ -9,6 +9,7 @@ const {
     listModels,
     recommendModels,
     engineFetch,
+    engineFetchSse,
     formatEngineNetworkError,
     isRetryableEngineNetworkResult,
 } = require('../electron/engine-client');
@@ -388,6 +389,77 @@ describe('engine-client against mock HTTP', () => {
             assert.strictEqual(waited.ok, true);
             assert.strictEqual(waited.data.status, 'done');
             assert.ok(jobGets > 3);
+        } finally {
+            await new Promise((r) => server.close(r));
+        }
+    });
+
+    it('SSE idle timeout resets while the engine keeps sending events', async () => {
+        const server = http.createServer((req, res) => {
+            if (req.url !== '/v1/models/download' || req.method !== 'POST') {
+                res.writeHead(404);
+                res.end();
+                return;
+            }
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+            });
+            let n = 0;
+            const tick = setInterval(() => {
+                n += 1;
+                res.write(`data: ${JSON.stringify({ type: 'progress', detail: `tick ${n}` })}\n\n`);
+                if (n >= 6) {
+                    clearInterval(tick);
+                    res.write(`data: ${JSON.stringify({ type: 'done', ok: true })}\n\n`);
+                    res.end();
+                }
+            }, 70);
+            req.on('close', () => clearInterval(tick));
+        });
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const { port } = server.address();
+        const events = [];
+        try {
+            const res = await engineFetchSse(`http://127.0.0.1:${port}`, '/v1/models/download', {
+                method: 'POST',
+                body: { modelIds: ['qwen3-asr-1.7b'] },
+                idleTimeoutMs: 180,
+                maxTimeoutMs: 4000,
+                onEvent: (ev) => events.push(ev),
+            });
+            assert.strictEqual(res.ok, true, res.error);
+            assert.ok(events.length >= 4, `events=${events.length}`);
+        } finally {
+            await new Promise((r) => server.close(r));
+        }
+    });
+
+    it('SSE times out only after idle silence, not total wall time', async () => {
+        const server = http.createServer((req, res) => {
+            if (req.url !== '/v1/models/download') {
+                res.writeHead(404);
+                res.end();
+                return;
+            }
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+            });
+            res.write(`data: ${JSON.stringify({ type: 'progress', detail: 'start' })}\n\n`);
+            // Stay silent — idle timer should fire.
+        });
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const { port } = server.address();
+        try {
+            const res = await engineFetchSse(`http://127.0.0.1:${port}`, '/v1/models/download', {
+                method: 'POST',
+                body: {},
+                idleTimeoutMs: 80,
+                maxTimeoutMs: 4000,
+            });
+            assert.strictEqual(res.ok, false);
+            assert.strictEqual(res.code, 'timeout');
         } finally {
             await new Promise((r) => server.close(r));
         }

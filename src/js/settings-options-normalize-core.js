@@ -28,6 +28,7 @@
 
     function normalizePostBatchQcFixMode(value) {
         const mode = String(value || '').trim().toLowerCase();
+        if (!mode) return 'smart';
         return POST_BATCH_QC_FIX_MODES.includes(mode) ? mode : 'none';
     }
 
@@ -87,6 +88,10 @@
     function normalizeSubtitleTargetFormValue(raw) {
         const api = loadSubtitleTargetLangApi();
         const s = String(raw || '').trim();
+        // 目标芯片「原文」只表示 task=transcribe，不能当成成片目标语持久化。
+        if (api?.isSourceTargetFormValue?.(s) || s === 'source' || s === 'original') {
+            return 'simplified';
+        }
         if (api?.isIntlSubtitleFormValue?.(s)) return s.toLowerCase();
         if (s === 'en' || s === 'ja' || s === 'ko') return s;
         if (api?.formValueFromTargetLang && api?.normalizeSubtitleTargetLang) {
@@ -94,6 +99,20 @@
             if (n) return api.formValueFromTargetLang(n);
         }
         return normalizeChineseSubtitleVariant(s);
+    }
+
+    /**
+     * Main-window 目标 chip value (includes 原文). Distinct from chineseSubtitleVariant /
+     * subtitleTargetForm which are成片/OpenCC targets and must not store `source`.
+     */
+    function normalizeSubtitleTargetChipValue(raw) {
+        const api = loadSubtitleTargetLangApi();
+        const s = String(raw || '').trim();
+        if (!s) return '';
+        if (api?.isSourceTargetFormValue?.(s) || s === 'source' || s === 'original' || s === 'transcribe') {
+            return 'source';
+        }
+        return normalizeSubtitleTargetFormValue(s);
     }
 
     function clampVadMaxSingleSegmentMs(raw) {
@@ -121,6 +140,26 @@
     function normalizeSubtitleBakMode(value) {
         const v = String(value || '');
         return SUBTITLE_BAK_MODES.includes(v) ? v : 'off';
+    }
+
+    /** TEN / FireRed VAD frames, or Qwen ForcedAligner word timestamps. */
+    function normalizeTimingAlignModel(value) {
+        const raw = String(value || '').trim().toLowerCase().replace(/_/g, '-');
+        if (!raw) return 'firered';
+        if (raw === 'firered' || raw === 'firered-vad' || raw === 'fire-red' || raw === 'fireredvad') {
+            return 'firered';
+        }
+        if (
+            raw === 'qwen3-forced-aligner-0.6b'
+            || raw.startsWith('qwen3-forced')
+            || (raw.includes('align') && raw.includes('force'))
+        ) {
+            return 'qwen3-forced-aligner-0.6b';
+        }
+        if (raw === 'ten' || raw === 'ten-vad' || raw === 'vad' || raw === 'auto') {
+            return 'ten';
+        }
+        return 'firered';
     }
 
     function normalizeStartupWindow(value) {
@@ -164,7 +203,8 @@
     }
 
     function normalizeAutoUpdateCheckInterval(value) {
-        const v = String(value || '');
+        const v = String(value || '').trim().toLowerCase();
+        if (!v) return 'weekly';
         return AUTO_UPDATE_INTERVALS.includes(v) ? v : 'off';
     }
 
@@ -201,8 +241,8 @@
 
     function clampPolishSampleLimit(raw) {
         const n = Number(raw);
-        if (!Number.isFinite(n)) return 36;
-        return Math.max(4, Math.min(36, Math.round(n)));
+        if (!Number.isFinite(n)) return 72;
+        return Math.max(4, Math.min(96, Math.round(n)));
     }
 
     function clampQcSmartMaxRetranscribeRanges(raw) {
@@ -222,18 +262,104 @@
     function normalizeQcSmartIntensity(value) {
         const v = String(value || '').trim().toLowerCase();
         if (v === 'medium' || v === 'strong' || v === 'light') return v;
-        return 'light';
+        return 'medium';
     }
 
-    /** ASR low-confidence second opinion: auto | on | off */
+    /** ASR low-confidence second opinion: auto | on | off (default auto) */
     function normalizeAsrSecondOpinion(value) {
         if (value === false || value === 0) return 'off';
         if (value === true || value === 1) return 'on';
-        const s = String(value == null ? 'off' : value).trim().toLowerCase();
+        const s = String(value == null ? 'auto' : value).trim().toLowerCase();
         if (s === 'false' || s === '0' || s === 'off' || s === 'no') return 'off';
         if (s === 'true' || s === '1' || s === 'on' || s === 'always') return 'on';
         if (s === 'auto') return 'auto';
+        return 'auto';
+    }
+
+    /** Hy-MT multi-cue window: auto | 1 | 2 | 3 | 4 (persisted as string) */
+    function normalizeHyMtWindowLines(value) {
+        try {
+            const hymt = (typeof module !== 'undefined' && module.exports)
+                ? require('./hymt-translate-core')
+                : (typeof globalThis !== 'undefined' && globalThis.TransubHyMtTranslate);
+            if (hymt?.normalizeHyMtWindowLinesOption) {
+                const pref = hymt.normalizeHyMtWindowLinesOption(value);
+                return pref === 'auto' ? 'auto' : String(pref);
+            }
+        } catch { /* fall through */ }
+        if (value == null || value === '') return 'auto';
+        const s = String(value).trim().toLowerCase();
+        if (!s || s === 'auto' || s === 'default') return 'auto';
+        const n = Number(s);
+        if (Number.isFinite(n) && n >= 1) return String(Math.max(1, Math.min(4, Math.round(n))));
+        return 'auto';
+    }
+
+    function normalizeSensevoiceRichTags(value) {
+        try {
+            const api = (typeof globalThis !== 'undefined' && globalThis.TransubSensevoiceRichTags)
+                || (typeof window !== 'undefined' && window.TransubSensevoiceRichTags)
+                || (typeof module !== 'undefined' && module.exports
+                    ? require('./sensevoice-rich-tags-core')
+                    : null);
+            if (api?.normalizeSensevoiceRichTagsMode) {
+                return api.normalizeSensevoiceRichTagsMode(value);
+            }
+        } catch { /* optional */ }
+        const v = String(value == null ? 'sidecar' : value).trim().toLowerCase();
+        if (v === 'off' || v === 'false' || v === '0') return 'off';
+        if (v === 'sdh') return 'sdh';
+        return 'sidecar';
+    }
+
+    function normalizeSensevoiceEmotionMtStyle(value) {
+        try {
+            const api = (typeof globalThis !== 'undefined' && globalThis.TransubSensevoiceEmotionMtStyle)
+                || (typeof window !== 'undefined' && window.TransubSensevoiceEmotionMtStyle)
+                || (typeof module !== 'undefined' && module.exports
+                    ? require('./sensevoice-emotion-mt-style-core')
+                    : null);
+            if (api?.normalizeSensevoiceEmotionMtStyle) {
+                return api.normalizeSensevoiceEmotionMtStyle(value);
+            }
+        } catch { /* optional */ }
+        const v = String(value == null ? '' : value).trim().toLowerCase();
+        if (!v) return 'off';
+        if (v === 'hint' || v === 'on') return 'hint';
+        if (v === 'hint+polish' || v === 'hint_polish') return 'hint+polish';
         return 'off';
+    }
+
+    function normalizeGlossaryPromptInjectMode(value) {
+        try {
+            const api = (typeof globalThis !== 'undefined' && globalThis.TransubSubtitleGlossary)
+                || (typeof window !== 'undefined' && window.TransubSubtitleGlossary)
+                || (typeof module !== 'undefined' && module.exports
+                    ? require('./subtitle-glossary-core')
+                    : null);
+            if (api?.normalizeGlossaryPromptInjectMode) {
+                return api.normalizeGlossaryPromptInjectMode(value);
+            }
+        } catch { /* optional */ }
+        const v = String(value == null ? 'hitOnly' : value).trim().toLowerCase();
+        if (v === 'legacy' || v === 'all' || v === 'full') return 'legacy';
+        return 'hitOnly';
+    }
+
+    function clampGlossaryAlwaysCharacterMax(value) {
+        try {
+            const api = (typeof globalThis !== 'undefined' && globalThis.TransubSubtitleGlossary)
+                || (typeof window !== 'undefined' && window.TransubSubtitleGlossary)
+                || (typeof module !== 'undefined' && module.exports
+                    ? require('./subtitle-glossary-core')
+                    : null);
+            if (api?.clampGlossaryAlwaysCharacterMax) {
+                return api.clampGlossaryAlwaysCharacterMax(value);
+            }
+        } catch { /* optional */ }
+        const n = Number(value);
+        if (!Number.isFinite(n)) return 8;
+        return Math.max(0, Math.min(16, Math.round(n)));
     }
 
     /** Quality pipeline v2: auto (follow perfProfile) | on | off */
@@ -266,7 +392,7 @@
             }
         } catch (_) { /* optional */ }
         const n = Number(value);
-        if (!Number.isFinite(n)) return 1;
+        if (!Number.isFinite(n)) return 2;
         return Math.max(0, Math.min(2, Math.round(n)));
     }
 
@@ -294,6 +420,43 @@
         return 'auto';
     }
 
+    /** Pro Jev decision assist: auto | off */
+    function normalizeJevDecisionMode(value) {
+        try {
+            const jev = (typeof module !== 'undefined' && module.exports)
+                ? require('./jev-decision-core')
+                : (typeof globalThis !== 'undefined' && globalThis.TransubJevDecision);
+            if (jev?.normalizeJevDecisionMode) return jev.normalizeJevDecisionMode(value);
+        } catch { /* fall through */ }
+        if (value === false || value === 0) return 'off';
+        const s = String(value == null ? 'auto' : value).trim().toLowerCase();
+        if (s === 'false' || s === '0' || s === 'off' || s === 'no') return 'off';
+        return 'auto';
+    }
+
+    function clampJevMinConfidence(raw) {
+        try {
+            const jev = (typeof module !== 'undefined' && module.exports)
+                ? require('./jev-decision-core')
+                : (typeof globalThis !== 'undefined' && globalThis.TransubJevDecision);
+            if (jev?.clampJevMinConfidence) return jev.clampJevMinConfidence(raw);
+        } catch { /* fall through */ }
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return 0.55;
+        return Math.max(0.48, Math.min(0.99, Math.round(n * 100) / 100));
+    }
+
+    function normalizeJevEndpointPref(value) {
+        try {
+            const jev = (typeof module !== 'undefined' && module.exports)
+                ? require('./jev-decision-core')
+                : (typeof globalThis !== 'undefined' && globalThis.TransubJevDecision);
+            if (jev?.normalizeJevEndpointPref) return jev.normalizeJevEndpointPref(value);
+        } catch { /* fall through */ }
+        const s = String(value == null ? 'local' : value).trim();
+        return s || 'local';
+    }
+
     /** Empty / invalid → null (caller uses film built-in defaults). */
     function optionalFiniteNumber(raw, { min, max } = {}) {
         if (raw == null || String(raw).trim() === '') return null;
@@ -303,6 +466,22 @@
         if (Number.isFinite(min)) out = Math.max(min, out);
         if (Number.isFinite(max)) out = Math.min(max, out);
         return out;
+    }
+
+    /** Demucs long-media auto-split threshold (minutes). 0 = disabled. Default 150. */
+    function clampFilmDemucsAutoSplitMinutes(raw) {
+        if (raw == null || String(raw).trim() === '') return 150;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return 150;
+        return Math.max(0, Math.min(720, Math.round(n)));
+    }
+
+    /** Demucs outer chunk length (minutes) when auto-split triggers. Default 60. */
+    function clampFilmDemucsChunkMinutes(raw) {
+        if (raw == null || String(raw).trim() === '') return 60;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return 60;
+        return Math.max(10, Math.min(240, Math.round(n)));
     }
 
     /**
@@ -476,8 +655,8 @@
             }
         } catch { /* optional */ }
         const raw = String(value || '').trim().toLowerCase();
-        if (raw === 'media' || raw === 'same' || raw === 'video' || raw === 'bare') return 'media';
-        return 'lang';
+        if (raw === 'lang' || raw === 'suffix' || raw === 'tagged') return 'lang';
+        return 'media';
     }
 
     return {
@@ -493,6 +672,7 @@
         chineseSubtitleVariantLabel,
         normalizeSubtitleTargetLang,
         normalizeSubtitleTargetFormValue,
+        normalizeSubtitleTargetChipValue,
         clampVadMaxSingleSegmentMs,
         clampHallucinationSilenceThreshold,
         clampTranscriptKeepLimit,
@@ -502,12 +682,23 @@
         clampQcSilenceSplitChars,
         normalizeQcSmartIntensity,
         normalizeAsrSecondOpinion,
+        normalizeHyMtWindowLines,
+        normalizeSensevoiceRichTags,
+        normalizeSensevoiceEmotionMtStyle,
+        normalizeGlossaryPromptInjectMode,
+        clampGlossaryAlwaysCharacterMax,
         normalizeQualityPipelineMode,
         clampPostQcLoopMaxPasses,
+        clampFilmDemucsAutoSplitMinutes,
+        clampFilmDemucsChunkMinutes,
         normalizeQwenAsrBatchMode,
         normalizeAsrSemanticRepair,
+        normalizeJevDecisionMode,
+        clampJevMinConfidence,
+        normalizeJevEndpointPref,
         optionalFiniteNumber,
         normalizeSubtitleBakMode,
+        normalizeTimingAlignModel,
         normalizeStartupWindow,
         normalizeExternalImportAction,
         normalizeUiLocale,

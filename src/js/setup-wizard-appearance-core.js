@@ -149,6 +149,11 @@
                     markSettingsDirty();
                 } catch { /* ignore */ }
 
+                try {
+                    const chosenKey = global.TransubEnvCheckLocale?.CHOSEN_KEY || 'transub.uiLocaleChosen';
+                    global.localStorage?.setItem(chosenKey, '1');
+                } catch { /* ignore */ }
+
                 renderLocaleList(next);
                 onLocaleApplied(next, prev);
                 return next;

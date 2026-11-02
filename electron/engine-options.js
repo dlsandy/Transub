@@ -16,8 +16,8 @@ const DEFAULT_ENGINE_URL = 'http://127.0.0.1:8765';
  * Do not persist a machine-specific absolute default.
  */
 const DEFAULT_ENGINE_INSTALL_PATH = '';
-/** Empty = Hugging Face Hub; set hf-mirror.com when CN networks need a mirror. */
-const DEFAULT_ENGINE_HF_ENDPOINT = '';
+/** Default domestic mirror; clear in settings for official Hugging Face Hub. */
+const DEFAULT_ENGINE_HF_ENDPOINT = 'https://hf-mirror.com';
 const EXPECTED_API_MAJOR = 1;
 
 /**
@@ -49,6 +49,9 @@ function normalizeVadModelId(value, fallback = 'fsmn-vad') {
     if (lower === 'firered' || lower === 'firered_vad' || lower === 'fire-red' || lower === 'fireredvad') {
         return 'firered-vad';
     }
+    if (lower === 'ten' || lower === 'ten_vad') {
+        return 'ten-vad';
+    }
     return raw;
 }
 
@@ -59,12 +62,12 @@ function mergeEngineOptions(input = {}) {
         engineUrl: DEFAULT_ENGINE_URL,
         engineHfEndpoint: DEFAULT_ENGINE_HF_ENDPOINT,
         engineHfToken: '',
-        engineProfile: 'balanced',
+        engineProfile: 'quality',
         engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame',
         engineMtModel: '',
         engineOpusMtModel: '',
-        engineLlmMtModel: '',
-        engineVadModel: 'silero-vad',
+        engineLlmMtModel: 'sakura-galtransl-7b-q6k',
+        engineVadModel: 'firered-vad',
         engineAutoStart: true,
         ...input,
     };
@@ -83,7 +86,7 @@ function mergeEngineOptions(input = {}) {
             ? input.engineHfToken
             : (merged.engineHfToken || ''),
     ).trim();
-    merged.engineProfile = String(merged.engineProfile || 'balanced').trim() || 'balanced';
+    merged.engineProfile = String(merged.engineProfile || 'quality').trim() || 'quality';
     merged.engineAsrModel = canonicalizeEngineAsrModelId(
         merged.engineAsrModel,
         'qwen3-asr-1.7b-ja-anime-galgame',
@@ -91,15 +94,24 @@ function mergeEngineOptions(input = {}) {
     merged.engineMtModel = String(merged.engineMtModel || '').trim();
     // Opus-MT removed — keep field empty for backward-compat persistence only
     merged.engineOpusMtModel = '';
-    // Empty LLM id =「智能选择」; omitted field stays empty (smart pick).
+    // Empty LLM id =「智能选择」when explicitly cleared; omitted field uses catalog default.
     if (Object.prototype.hasOwnProperty.call(input, 'engineLlmMtModel')) {
         merged.engineLlmMtModel = String(input.engineLlmMtModel || '').trim();
     } else {
-        merged.engineLlmMtModel = String(merged.engineLlmMtModel || '').trim();
+        merged.engineLlmMtModel = String(merged.engineLlmMtModel || 'sakura-galtransl-7b-q6k').trim();
     }
     if (/^transub-ja/i.test(merged.engineLlmMtModel)) {
         merged.engineLlmMtModel = 'sakura-1.5b';
     }
+    try {
+        const sakuraCat = require('../src/js/sakura-mt-catalog-core');
+        if (merged.engineLlmMtModel && sakuraCat.remapRetiredMtModelId) {
+            merged.engineLlmMtModel = sakuraCat.remapRetiredMtModelId(
+                merged.engineLlmMtModel,
+                merged.engineLlmMtModel,
+            );
+        }
+    } catch { /* optional */ }
     if (/^transub-ja/i.test(merged.engineMtModel)) {
         merged.engineMtModel = '';
         if (!merged.engineLlmMtModel) merged.engineLlmMtModel = 'sakura-1.5b';
@@ -121,7 +133,7 @@ function mergeEngineOptions(input = {}) {
             }
         }
     }
-    merged.engineVadModel = normalizeVadModelId(merged.engineVadModel, 'silero-vad');
+    merged.engineVadModel = normalizeVadModelId(merged.engineVadModel, 'firered-vad');
     merged.engineAutoStart = merged.engineAutoStart !== false;
     return merged;
 }

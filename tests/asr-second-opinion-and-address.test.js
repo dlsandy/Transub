@@ -3,7 +3,7 @@ const asr = require('../src/js/asr-second-opinion-core');
 
 describe('asr-second-opinion-core', () => {
     it('normalizes auto/on/off and gates av_soft', () => {
-        assert.strictEqual(asr.normalizeAsrSecondOpinionOption(undefined), 'off');
+        assert.strictEqual(asr.normalizeAsrSecondOpinionOption(undefined), 'auto');
         assert.strictEqual(asr.normalizeAsrSecondOpinionOption('off'), 'off');
         assert.strictEqual(asr.normalizeAsrSecondOpinionOption(true), 'on');
         assert.strictEqual(asr.normalizeAsrSecondOpinionOption('auto'), 'auto');
@@ -12,10 +12,18 @@ describe('asr-second-opinion-core', () => {
             asrSecondOpinion: 'auto',
             contentProfile: 'av_soft',
         }), true);
+        // Quality perf (default) runs auto SO even on film + general ASR
         assert.strictEqual(asr.shouldRunAsrSecondOpinion({
             asrSecondOpinion: 'auto',
             contentProfile: 'film',
             primaryAsr: 'sensevoice-small',
+            perfProfile: 'quality',
+        }), true);
+        assert.strictEqual(asr.shouldRunAsrSecondOpinion({
+            asrSecondOpinion: 'auto',
+            contentProfile: 'film',
+            primaryAsr: 'sensevoice-small',
+            perfProfile: 'speed',
         }), false);
         assert.strictEqual(asr.shouldRunAsrSecondOpinion({
             asrSecondOpinion: 'auto',
@@ -67,6 +75,30 @@ describe('asr-second-opinion-core', () => {
         assert.ok(kotobaLast.indexOf('kotoba-whisper-v2.0-faster') > 0);
         assert.strictEqual(asr.shouldReusePrimaryAsrForSecondOpinion('qwen3-asr-1.7b-ja-anime-galgame'), true);
         assert.strictEqual(asr.shouldReusePrimaryAsrForSecondOpinion('anime-whisper'), false);
+        assert.strictEqual(asr.shouldRunAsrDialogueGapFill({
+            primaryAsr: 'qwen3-asr-1.7b-ja-anime-galgame',
+            contentProfile: 'av_soft',
+        }), true);
+        assert.strictEqual(asr.shouldRunAsrDialogueGapFill({
+            primaryAsr: 'qwen3-asr-1.7b-ja-anime-galgame',
+            contentProfile: 'av_soft',
+            perfProfile: 'speed',
+        }), false);
+        const gapPick = asr.listSecondOpinionAsrModels('qwen3-asr-1.7b-ja-anime-galgame', {
+            candidates: [
+                'qwen3-asr-1.7b-ja-anime-galgame',
+                'sensevoice-small',
+                'whisper-tiny',
+                'whisper-large-v2',
+            ],
+            gapFill: true,
+        });
+        assert.strictEqual(gapPick[0], 'whisper-large-v2');
+        assert.strictEqual(asr.pickSecondOpinionAsrModelForRange(
+            { source: 'dialogue_gap', allowEmpty: true },
+            'qwen3-asr-1.7b-ja-anime-galgame',
+            ['qwen3-asr-1.7b-ja-anime-galgame', 'sensevoice-small', 'whisper-large-v2'],
+        ), 'whisper-large-v2');
         const qwenSame = asr.pickSecondOpinionAsrModel('qwen3-asr-1.7b-ja-anime-galgame', {
             candidates: [
                 'qwen3-asr-1.7b-ja-anime-galgame',
@@ -197,6 +229,34 @@ describe('asr-second-opinion-core', () => {
             { startMs: 2500, endMs: 3500, text: 'い' },
         ], 4000, { minGapMs: 8000 });
         assert.strictEqual(shortHole.length, 0);
+
+        const moanHole = asr.findTimelineGapWindows([
+            { startMs: 0, endMs: 2000, text: 'んっはぁっ' },
+            { startMs: 7000, endMs: 8000, text: 'はぁっ' },
+        ], 9000, { minGapMs: 8000, minRangeMs: 1200 });
+        assert.strictEqual(moanHole.length, 0);
+
+        const introHole = asr.findTimelineGapWindows([
+            { startMs: 86100, endMs: 87500, text: '東北出身で、えー…' },
+            { startMs: 93300, endMs: 94300, text: 'えー、すごい' },
+        ], 100000, { minGapMs: 8000, minRangeMs: 1200 });
+        const introDialogue = introHole.filter((g) => g.source === 'dialogue_gap');
+        assert.strictEqual(introDialogue.length, 1);
+        assert.ok(introDialogue[0].durationMs >= 5000);
+
+        const gapOnlyPlan = asr.planAsrSecondOpinion([
+            { startMs: 86100, endMs: 87500, text: '東北出身で、えー…' },
+            { startMs: 93300, endMs: 94300, text: 'えー、すごい' },
+        ], [], {
+            gapOnly: true,
+            minGapMs: 8000,
+            minRangeMs: 1200,
+            mediaDurationMs: 100000,
+            contentProfile: 'av_soft',
+            minLowCues: 2,
+        });
+        assert.strictEqual(gapOnlyPlan.ok, true);
+        assert.ok(gapOnlyPlan.ranges.some((r) => r.source === 'dialogue_gap'));
 
         const planned = asr.planAsrSecondOpinion(cues, [], {
             minLowCues: 2,

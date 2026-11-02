@@ -107,9 +107,13 @@ let delegatedEngineUrl = '';
 /** @type {boolean|null} cached capabilities.features.llmServer */
 let engineLlmSupportedCache = null;
 let installAbort = null;
+/** Set when the user cancels so an install that has not created installAbort yet still bails. */
+let runtimeInstallCancelLatched = false;
 const IDLE_STOP_MS = 5 * 60 * 1000;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let idleStopTimer = null;
+/** True only after we armed an engine-side idle-stop; avoid cancel POSTs on every ensure. */
+let delegatedEngineIdleArmed = false;
 /** @type {{ exePath: string, mtimeMs: number, size: number, tag: string } | null} */
 let probedTagCache = null;
 /** Last stderr/stdout snippet from llama-server (for crash diagnostics). */
@@ -177,6 +181,47 @@ function parseLlamaCppTag(text) {
     if (numbered && /^\d{4,}$/.test(numbered[1])) return `b${numbered[1]}`;
     const tagged = s.match(/\b(b\d{4,})\b/i);
     return tagged ? `b${tagged[1].slice(1)}` : '';
+}
+
+/**
+ * @param {string} tag
+ * @returns {number} build number or 0 if unparsable
+ */
+function parseRuntimeBuildNumber(tag) {
+    const normalized = catalog.normalizeLlamaCppTag?.(tag)
+        || String(tag || '').trim().match(/\b(b\d{4,})\b/i)?.[0]
+        || '';
+    const n = Number(String(normalized || '').replace(/^b/i, '').trim());
+    return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Compare llama.cpp b#### tags.
+ * @returns {-1|0|1|null} null when either side is unparsable
+ */
+function compareRuntimeBuildTags(a, b) {
+    const an = parseRuntimeBuildNumber(a);
+    const bn = parseRuntimeBuildNumber(b);
+    if (!an || !bn) return null;
+    if (an < bn) return -1;
+    if (an > bn) return 1;
+    return 0;
+}
+
+/** True only when installed build is strictly older than the catalog/target pin. */
+function isRuntimeTagOutdated(installedTag, catalogTag) {
+    return compareRuntimeBuildTags(installedTag, catalogTag) === -1;
+}
+
+/** Installed tag equals or is newer than target — do not force re-download / downgrade. */
+function isRuntimeTagSatisfied(installedTag, targetTag) {
+    const cmp = compareRuntimeBuildTags(installedTag, targetTag);
+    if (cmp == null) {
+        const a = String(installedTag || '').trim().toLowerCase();
+        const b = String(targetTag || '').trim().toLowerCase();
+        return !!(a && b && a === b);
+    }
+    return cmp >= 0;
 }
 
 /**
@@ -258,7 +303,10 @@ function clearIdleStopTimer() {
         clearTimeout(idleStopTimer);
         idleStopTimer = null;
     }
-    if (llmOwner === 'engine' && delegatedEngineUrl) {
+    // Only cancel an armed engine idle-stop. ensureLlamaServer → clearIdleStopTimer
+    // runs every batch; posting cancel each time floods logs and races the next ensure.
+    if (delegatedEngineIdleArmed && llmOwner === 'engine' && delegatedEngineUrl) {
+        delegatedEngineIdleArmed = false;
         try {
             require('./engine-llm-client')
                 .scheduleLlmIdleStop(delegatedEngineUrl, { cancel: true })
@@ -271,6 +319,7 @@ function scheduleIdleStop(delayMs = IDLE_STOP_MS) {
     const delay = Math.max(0, Number(delayMs) || IDLE_STOP_MS);
     clearIdleStopTimer();
     if (llmOwner === 'engine' && delegatedEngineUrl) {
+        delegatedEngineIdleArmed = true;
         try {
             require('./engine-llm-client')
                 .scheduleLlmIdleStop(delegatedEngineUrl, { delayMs: delay })
@@ -324,37 +373,29 @@ function runtimePreferHints() {
 }
 
 /**
- * 解析偏好运行时包 id：显式参数 → 高级设置 → 硬件默认（NVIDIA→CUDA / AMD→ROCm，否则 Vulkan）。
+ * 解析偏好运行时包 id：显式参数 → 高级设置 → 硬件默认（NVIDIA→CUDA / AMD→ROCm / Intel→SYCL，否则 Vulkan）。
  * @param {string} [explicit]
  */
 function resolvePreferredRuntimeId(explicit = '') {
     const hints = runtimePreferHints();
     const fromOpt = String(explicit || '').trim();
-    if (fromOpt) {
-        const pkg = catalog.getRuntimePackage(process.platform, process.arch, fromOpt, hints);
-        if (pkg) return pkg.id;
+    let saved = fromOpt;
+    const probedNoGpu = !!(hints.ready && !hints.preferCuda && !hints.preferRocm && !hints.preferSycl);
+    if (!saved && !probedNoGpu) {
+        try {
+            const { readAdvancedDoc } = require('./advanced-license-data');
+            const managed = catalog.normalizeManagedLlm(readAdvancedDoc().doc?.managedLlm, hints);
+            saved = String(managed.runtimeId || '').trim();
+        } catch (_) { /* ignore */ }
     }
-    try {
-        const { readAdvancedDoc } = require('./advanced-license-data');
-        const managed = catalog.normalizeManagedLlm(readAdvancedDoc().doc?.managedLlm, hints);
-        if (managed.runtimeId) {
-            const pkg = catalog.getRuntimePackage(
-                process.platform,
-                process.arch,
-                managed.runtimeId,
-                hints,
-            );
-            if (pkg) return pkg.id;
-        }
-    } catch (_) { /* ignore */ }
-    return catalog.getDefaultRuntimeId(process.platform, process.arch, hints)
-        || catalog.getRuntimePackage(process.platform, process.arch, '', hints)?.id
+    return catalog.pickInstallRuntimeId(saved, process.platform, process.arch, hints)
+        || catalog.getDefaultRuntimeId(process.platform, process.arch, hints)
         || '';
 }
 
 /**
- * 按硬件把 managedLlm.runtimeId 默认设为匹配后端（CUDA 13/12 或 ROCm）。
- * 有 NVIDIA + CUDA≥12 或 AMD 时写入；无独显不改动。
+ * 按硬件把 managedLlm.runtimeId 默认设为匹配后端（CUDA 13/12、ROCm 或 SYCL）。
+ * 有 NVIDIA + CUDA≥12、AMD 或 Intel Arc 时写入；无独显不改动。
  * @param {{ force?: boolean, gpuInfo?: object|null }} [opts]
  * @returns {{ ok: boolean, skipped?: boolean, already?: boolean, runtimeId?: string, previousId?: string, reason?: string }}
  */
@@ -371,8 +412,15 @@ function syncRuntimePreferenceToHardware(opts = {}) {
         const recommended = catalog.getDefaultRuntimeId(process.platform, process.arch, hints);
         const wantCuda = !!(hints.preferCuda && recommended && /^win-cuda\d+-x64$/i.test(recommended));
         const wantRocm = !!(hints.preferRocm && recommended && /rocm/i.test(recommended));
-        if (!wantCuda && !wantRocm) {
-            return { ok: true, skipped: true, reason: hints.preferCuda || hints.preferRocm ? 'no_recommended' : 'no_accel' };
+        const wantSycl = !!(hints.preferSycl && recommended && /sycl/i.test(recommended));
+        if (!wantCuda && !wantRocm && !wantSycl) {
+            return {
+                ok: true,
+                skipped: true,
+                reason: (hints.preferCuda || hints.preferRocm || hints.preferSycl)
+                    ? 'no_recommended'
+                    : 'no_accel',
+            };
         }
 
         const { readAdvancedDoc, writeAdvancedDoc } = require('./advanced-license-data');
@@ -386,8 +434,10 @@ function syncRuntimePreferenceToHardware(opts = {}) {
 
         const isAccelPkg = wantCuda
             ? /^win-cuda\d+-x64$/i.test(previousId)
-            : /rocm/i.test(previousId);
-        // Soft sync: fill empty preference or correct same-family mismatch (CUDA 12↔13 / ROCm).
+            : (wantRocm
+                ? /rocm/i.test(previousId)
+                : /sycl/i.test(previousId));
+        // Soft sync: fill empty preference or correct same-family mismatch (CUDA 12↔13 / ROCm / SYCL).
         // force: also replace Vulkan / other backends (wizard / one-click install).
         if (!options.force && previousId && !isAccelPkg) {
             return { ok: true, skipped: true, reason: 'user_backend', previousId, runtimeId: previousId };
@@ -406,6 +456,71 @@ function syncRuntimePreferenceToHardware(opts = {}) {
     }
 }
 
+function archiveFileNameFromUrl(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    try {
+        return decodeURIComponent(path.basename(new URL(raw).pathname) || '');
+    } catch (_) {
+        return path.basename(raw);
+    }
+}
+
+function runtimeArchiveSearchRoots() {
+    const roots = [];
+    try { roots.push(llmFs.getRuntimeDir()); } catch (_) { /* ignore */ }
+    try { roots.push(llmFs.getAdvancedLlmRoot()); } catch (_) { /* ignore */ }
+    try {
+        const home = require('os').homedir();
+        roots.push(path.join(home, 'Downloads'));
+        roots.push(path.join(home, 'Desktop'));
+        roots.push(path.join(home, '下载'));
+    } catch (_) { /* ignore */ }
+    return [...new Set(roots.filter(Boolean))];
+}
+
+function findNamedArchive(roots, fileName) {
+    const name = String(fileName || '').trim();
+    if (!name || name.endsWith('.partial')) return '';
+    const want = name.toLowerCase();
+    for (const root of roots) {
+        if (!root || !fs.existsSync(root)) continue;
+        const candidates = [path.join(root, name)];
+        let entries = [];
+        try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch (_) { entries = []; }
+        for (const ent of entries) {
+            if (!ent.isDirectory() || ent.name.startsWith('.')) continue;
+            candidates.push(path.join(root, ent.name, name));
+        }
+        for (const filePath of candidates) {
+            try {
+                const st = fs.statSync(filePath);
+                if (st.isFile()
+                    && st.size > 1024 * 1024
+                    && path.basename(filePath).toLowerCase() === want) {
+                    return filePath;
+                }
+            } catch (_) { /* ignore */ }
+        }
+    }
+    return '';
+}
+
+/**
+ * A finished llama-server zip the user already downloaded (runtime dir, app data, Downloads).
+ * Incomplete `.partial` files are ignored.
+ * @param {object|null|undefined} pkg
+ */
+function findDownloadedRuntimeArchives(pkg) {
+    if (!pkg?.url) return { archivePath: '', companionPath: '' };
+    const roots = runtimeArchiveSearchRoots();
+    const archivePath = findNamedArchive(roots, archiveFileNameFromUrl(pkg.url));
+    const companionPath = pkg.companionUrl
+        ? findNamedArchive(roots, archiveFileNameFromUrl(pkg.companionUrl))
+        : '';
+    return { archivePath, companionPath };
+}
+
 function getRuntimeStatus(options = {}) {
     const opts = asPlainObject(options);
     const hints = runtimePreferHints();
@@ -418,17 +533,14 @@ function getRuntimeStatus(options = {}) {
     const catalogTag = catalog.LLAMA_CPP_TAG;
     const installedTag = installed ? resolveInstalledRuntimeTag(exe, meta) : '';
     // Outdated only when installed build is older than Transub recommended pin.
-    // Installing 「官方最新」 (newer than pin) must not be flagged as outdated.
-    const installedBuild = Number(String(installedTag || '').replace(/^b/i, ''));
-    const catalogBuild = Number(String(catalogTag || '').replace(/^b/i, ''));
-    const outdated = !!(
+    // Newer than pin (「官方最新」/手动更高版本) must not be flagged or blocked.
+    const outdated = !!(installed && installedTag && isRuntimeTagOutdated(installedTag, catalogTag));
+    const mismatch = !!(
         installed
-        && installedTag
-        && Number.isFinite(installedBuild)
-        && Number.isFinite(catalogBuild)
-        && installedBuild < catalogBuild
+        && preferredId
+        && installedId
+        && !catalog.isInstalledRuntimeAcceptable(installedId, preferredId)
     );
-    const mismatch = !!(installed && preferredId && installedId && installedId !== preferredId);
     const choices = catalog.listRuntimePackages(process.platform, process.arch, hints);
     let message = !pkg
         ? `当前平台暂不支持内置运行时（${process.platform}-${process.arch}）`
@@ -493,13 +605,27 @@ function getRuntimeStatus(options = {}) {
     };
 }
 
-function cancelRuntimeInstall() {
+function abortActiveRuntimeInstall() {
     if (installAbort) {
         try { installAbort.abort(); } catch (_) { /* ignore */ }
         installAbort = null;
-        return { ok: true, cancelled: true };
     }
-    return { ok: true, cancelled: false };
+}
+
+function cancelRuntimeInstall() {
+    runtimeInstallCancelLatched = true;
+    abortActiveRuntimeInstall();
+    return { ok: true, cancelled: true };
+}
+
+function clearRuntimeInstallCancel() {
+    runtimeInstallCancelLatched = false;
+    return { ok: true };
+}
+
+function runtimeInstallCancelResult() {
+    if (!runtimeInstallCancelLatched) return null;
+    return { ok: false, error: '已取消', code: 'cancelled' };
 }
 
 function flattenStagingRoot(staging) {
@@ -1058,6 +1184,18 @@ async function resolveRuntimeInstallPackage(opts = {}) {
  * @param {{ force?: boolean, reinstall?: boolean, forceCompanion?: boolean, runtimeId?: string, packageId?: string, channel?: string, llamaCppTag?: string, signal?: AbortSignal, onProgress?: Function }} [options]
  */
 async function ensureRuntimeInstalled(options = {}) {
+    const earlyCancel = runtimeInstallCancelResult();
+    if (earlyCancel) {
+        const exe = llmFs.resolveServerExe();
+        if (!exe || !fs.existsSync(exe)) {
+            return {
+                ok: false,
+                code: 'runtime_not_installed',
+                error: 'llama-server 运行时未安装或文件缺失。请在「设置 → 模型 → 推理运行时」安装或修复。',
+            };
+        }
+        return earlyCancel;
+    }
     const opts = asPlainObject(options);
     try {
         await require('./advanced-runtime-prefer').ensurePreferCudaReady();
@@ -1081,9 +1219,9 @@ async function ensureRuntimeInstalled(options = {}) {
         && existing.exePath
         && meta?.packageId === pkg.id
         && installedTag
-        && installedTag === targetTag
+        && isRuntimeTagSatisfied(installedTag, targetTag)
     );
-    // 已是目标后端且版本匹配：即使 force 也不重复下载（除非显式 reinstall）
+    // 已是目标后端且版本≥目标：即使 force 也不重复下载（除非显式 reinstall）
     if (samePackage && !opts.reinstall) {
         return {
             ok: true,
@@ -1092,6 +1230,7 @@ async function ensureRuntimeInstalled(options = {}) {
             meta,
             targetTag,
             channel: resolved.channel,
+            newerThanTarget: isRuntimeTagOutdated(targetTag, installedTag),
         };
     }
     if (existing.installed && existing.exePath && !opts.force && !opts.reinstall) {
@@ -1101,18 +1240,47 @@ async function ensureRuntimeInstalled(options = {}) {
             already: true,
             exePath: existing.exePath,
             meta,
-            outdated: !!(installedTag && installedTag !== targetTag),
+            outdated: isRuntimeTagOutdated(installedTag, targetTag),
             mismatch: meta?.packageId !== pkg.id,
             targetTag,
             channel: resolved.channel,
         };
     }
 
-    cancelRuntimeInstall();
+    const cancelledBeforeDownload = runtimeInstallCancelResult();
+    if (cancelledBeforeDownload) return cancelledBeforeDownload;
+
+    const localArchive = findDownloadedRuntimeArchives(pkg);
+    if (localArchive.archivePath && !opts.reinstall) {
+        const installedLocal = await installRuntimeFromLocalArchives({
+            runtimeId: pkg.id,
+            archivePath: localArchive.archivePath,
+            companionPath: localArchive.companionPath,
+            onProgress: opts.onProgress,
+        });
+        if (installedLocal?.ok) {
+            return {
+                ...installedLocal,
+                fromLocalArchive: true,
+                targetTag,
+                channel: resolved.channel,
+            };
+        }
+    }
+
+    abortActiveRuntimeInstall();
     // 替换目录前先停掉占用 exe 的进程
     await stopLlamaServerAsync();
+    const cancelledAfterStop = runtimeInstallCancelResult();
+    if (cancelledAfterStop || opts.signal?.aborted) {
+        return cancelledAfterStop || { ok: false, error: '已取消', code: 'cancelled' };
+    }
     const controller = new AbortController();
     installAbort = controller;
+    if (runtimeInstallCancelLatched) {
+        abortActiveRuntimeInstall();
+        return { ok: false, error: '已取消', code: 'cancelled' };
+    }
     if (opts.signal) {
         if (opts.signal.aborted) {
             return { ok: false, error: '已取消', code: 'cancelled' };
@@ -1146,9 +1314,9 @@ async function ensureRuntimeInstalled(options = {}) {
         const channelLabel = resolved.channel === 'latest' ? '官方最新' : '建议版';
         const sizePart = pkg.sizeHint ? `（${pkg.sizeHint}）` : '';
         sendProgress(opts.onProgress, {
-            phase: 'start',
+            phase: 'probe',
             kind: 'runtime',
-            message: `开始下载运行时 ${pkg.label}（${channelLabel} ${targetTag}）${sizePart}…`,
+            message: `正在测速 AI 运行时下载源（${pkg.label} · ${channelLabel} ${targetTag}）${sizePart}…`,
             pct: 0,
         });
 
@@ -1157,39 +1325,55 @@ async function ensureRuntimeInstalled(options = {}) {
         const mainWeight = needCompanionDownload ? 55 : 100;
         await downloader.downloadFile(pkg.url, archivePath, {
             signal: controller.signal,
+            minSustainBytesPerSec: 64 * 1024,
+            stallFailAfterMs: 15000,
             onProgress: (p) => {
+                const phase = String(p?.phase || '');
                 const rawPct = Number(p.pct);
-                const pct = Number.isFinite(rawPct)
-                    ? Math.round((rawPct / 100) * mainWeight)
-                    : undefined;
+                const pct = phase === 'probe'
+                    ? 0
+                    : (Number.isFinite(rawPct)
+                        ? Math.round((rawPct / 100) * mainWeight)
+                        : undefined);
+                const probeMsg = phase === 'probe' ? String(p.message || '').trim() : '';
                 sendProgress(opts.onProgress, {
                     ...p,
                     kind: 'runtime',
                     pct,
-                    message: p.message || `下载运行时（${pkg.label} · ${targetTag}）…`,
+                    message: probeMsg
+                        || p.message
+                        || `下载运行时（${pkg.label} · ${targetTag}）…`,
                 });
             },
         });
 
         if (needCompanionDownload && companionPath) {
             sendProgress(opts.onProgress, {
-                phase: 'start',
+                phase: 'probe',
                 kind: 'runtime',
-                message: '下载 CUDA 运行库（cudart）…',
+                message: '正在测速 CUDA 运行库（cudart）下载源…',
                 pct: mainWeight,
             });
             await downloader.downloadFile(companionUrl, companionPath, {
                 signal: controller.signal,
+                minSustainBytesPerSec: 64 * 1024,
+                stallFailAfterMs: 15000,
                 onProgress: (p) => {
+                    const phase = String(p?.phase || '');
                     const rawPct = Number(p.pct);
-                    const pct = Number.isFinite(rawPct)
-                        ? Math.round(mainWeight + (rawPct / 100) * (98 - mainWeight))
-                        : undefined;
+                    const pct = phase === 'probe'
+                        ? mainWeight
+                        : (Number.isFinite(rawPct)
+                            ? Math.round(mainWeight + (rawPct / 100) * (98 - mainWeight))
+                            : undefined);
+                    const probeMsg = phase === 'probe' ? String(p.message || '').trim() : '';
                     sendProgress(opts.onProgress, {
                         ...p,
                         kind: 'runtime',
                         pct,
-                        message: p.message || '下载 CUDA 运行库…',
+                        message: probeMsg
+                            || p.message
+                            || '下载 CUDA 运行库…',
                     });
                 },
             });
@@ -1204,6 +1388,9 @@ async function ensureRuntimeInstalled(options = {}) {
             });
         }
 
+        if (runtimeInstallCancelLatched || controller.signal.aborted) {
+            return { ok: false, error: '已取消', code: 'cancelled' };
+        }
         sendProgress(opts.onProgress, {
             phase: 'extracting',
             kind: 'runtime',
@@ -1365,8 +1552,9 @@ async function copyDirRecursiveAsync(src, dest) {
 }
 
 /**
- * Transub reserves DEFAULT_SERVER_PORT (+1 for Sakura). After Electron restart,
- * stopLlamaServer's serverProc is null but an orphan may still hold VRAM.
+ * Transub reserves DEFAULT_SERVER_PORT (+1 for Sakura). Laya System One uses
+ * DEFAULT_SERVER_PORT+2 (39283) — do NOT reclaim that port here.
+ * After Electron restart, stopLlamaServer's serverProc is null but an orphan may still hold VRAM.
  */
 function listDefaultLlmPorts() {
     const base = Number(catalog.DEFAULT_SERVER_PORT) || 39281;
@@ -1390,6 +1578,7 @@ function stopLlamaServer() {
         clearTimeout(idleStopTimer);
         idleStopTimer = null;
     }
+    delegatedEngineIdleArmed = false;
     if (llmOwner === 'engine' && delegatedEngineUrl) {
         const url = delegatedEngineUrl;
         try {
@@ -1432,6 +1621,7 @@ async function stopLlamaServerAsync() {
         clearTimeout(idleStopTimer);
         idleStopTimer = null;
     }
+    delegatedEngineIdleArmed = false;
     if (llmOwner === 'engine' && delegatedEngineUrl) {
         const url = delegatedEngineUrl;
         markLlmOwnedLocal();
@@ -1802,6 +1992,8 @@ function resolveAutoCpuOnGpuBusy(opts = {}) {
  */
 async function ensureLlamaServer(options = {}) {
     clearIdleStopTimer();
+    // Stale latch from a prior runtime download cancel must not block inference.
+    clearRuntimeInstallCancel();
 
     const opts = asPlainObject(options);
     const entry = llmFs.resolveModelEntry(opts.modelId);
@@ -1863,12 +2055,43 @@ async function ensureLlamaServer(options = {}) {
         return { ok: false, error: '未找到 llama-server 可执行文件', code: 'exe_missing' };
     }
 
-    const wantGpu = Number.isFinite(Number(opts.nGpuLayers))
-        ? Math.max(0, Math.round(Number(opts.nGpuLayers)))
-        : 99;
-    const contextSize = Number.isFinite(Number(opts.contextSize))
+    let earlyGpuFreeMiB = null;
+    let earlyGpuTotalMiB = null;
+    try {
+        const gpu = await require('./system-resources').sampleGpu();
+        if (gpu && Number(gpu.memTotalMiB) > 0) {
+            earlyGpuTotalMiB = Number(gpu.memTotalMiB);
+            earlyGpuFreeMiB = Math.max(0, earlyGpuTotalMiB - Number(gpu.memUsedMiB || 0));
+        }
+    } catch (_) { /* ignore */ }
+
+    const catalogNgl = Number(
+        opts.nGpuLayers
+        ?? entry?.llamaServer?.nGpuLayers
+        ?? entry?.nGpuLayers,
+    );
+    const preferNgl = llamaTuning.resolvePreferNgl({
+        moe: entry?.moe === true,
+        paramBillion: entry?.paramBillion,
+        weightGiB: entry?.weightGiB,
+        sizeBytes: entry?.sizeBytes,
+        nGpuLayers: Number.isFinite(catalogNgl) ? catalogNgl : undefined,
+        gpuFreeMiB: earlyGpuFreeMiB,
+        gpuTotalMiB: earlyGpuTotalMiB,
+    });
+    const wantGpu = Math.max(0, Math.round(preferNgl));
+    const rawContextSize = Number.isFinite(Number(opts.contextSize))
         ? Number(opts.contextSize)
         : (Number.isFinite(Number(entry?.contextSize)) ? Number(entry.contextSize) : 8192);
+    const contextSize = llamaTuning.resolveLlamaContextSize({
+        contextSize: rawContextSize,
+        moe: entry?.moe === true,
+        paramBillion: entry?.paramBillion,
+        weightGiB: entry?.weightGiB,
+        sizeBytes: entry?.sizeBytes,
+        gpuFreeMiB: earlyGpuFreeMiB,
+        gpuTotalMiB: earlyGpuTotalMiB,
+    });
 
     let vramHandoffReady = false;
     if (opts.afterAsr === true && wantGpu > 0) {
@@ -1963,7 +2186,10 @@ async function ensureLlamaServer(options = {}) {
             message: `推测解码已启用，但草稿模型「${specPlan.draftModelName}」尚未安装，将不使用`,
         });
     }
-    const entryServerOpts = llamaTuning.resolveLlamaServerOptsFromEntry(entry);
+    const entryServerOpts = llamaTuning.resolveLlamaServerOptsFromEntry(entry, {
+        gpuFreeMiB: earlyGpuFreeMiB,
+        gpuTotalMiB: earlyGpuTotalMiB,
+    });
     const specAttempts = (() => {
         if (specPlan.enabled && specPlan.specType === 'draft-mtp') {
             return [
@@ -2009,8 +2235,15 @@ async function ensureLlamaServer(options = {}) {
             ...opts,
             vramHandoffReady,
         }, nGpuLayers);
+        // Catalog / Script-Mode MT (Murasaki): never bring up -np 2 — dual slots
+        // truncate line-aligned windows and seed blank-retry storms.
+        const forceSingle = entry?.llamaServer?.forceSingleSlot === true
+            || entry?.forceSingleSlot === true
+            || entryServerOpts?.forceSingleSlot === true
+            || /murasaki/i.test(String(entry?.id || entry?.promptFamily || ''));
+        const plannedSlots = forceSingle ? 1 : parallelPlan.slots;
         const npAttempts = [...new Set([
-            parallelPlan.slots,
+            plannedSlots,
             1,
         ].filter((n) => Number.isFinite(n) && n >= 1 && n <= 4))];
 
@@ -2042,11 +2275,13 @@ async function ensureLlamaServer(options = {}) {
                     host: '127.0.0.1',
                     port,
                     contextSize,
-                    nGpuLayers,
                     alias: entry.id,
-                    parallelSlots,
+                    parallelSlots: forceSingle ? 1 : parallelSlots,
                     llamaJinja: entry.llamaJinja === true,
                     ...entryServerOpts,
+                    // Attempt / fallback -ngl must win over catalog preferred nGpuLayers.
+                    nGpuLayers,
+                    forceSingleSlot: forceSingle || entryServerOpts.forceSingleSlot === true,
                     gpuFreeMiB,
                     gpuTotalMiB,
                     draftModelPath: specAttempt.draftModelPath || undefined,
@@ -2056,6 +2291,7 @@ async function ensureLlamaServer(options = {}) {
                         ? (specAttempt.specType || '')
                         : (entryServerOpts.specType || ''),
                     specDraftNMax: specAttempt.specDraftNMax || entryServerOpts.specDraftNMax,
+                    runtimeTag: resolveInstalledRuntimeTag(exe, llmFs.readRuntimeMeta()),
                 });
 
                 const speculative = !!specAttempt.draftModelPath
@@ -2411,6 +2647,10 @@ module.exports = {
     buildLlamaServerSpawnArgs: llamaTuning.buildLlamaServerSpawnArgs,
     resolveParallelSlots: llamaTuning.resolveParallelSlots,
     parseLlamaCppTag,
+    parseRuntimeBuildNumber,
+    compareRuntimeBuildTags,
+    isRuntimeTagOutdated,
+    isRuntimeTagSatisfied,
     releaseHasLlamaCppBinaries,
     pickLatestLlamaCppBuildRelease,
     probeLlamaServerTag,
@@ -2421,12 +2661,14 @@ module.exports = {
     hasReusableCompanion,
     listCompanionArtifacts,
     preserveCompanionArtifacts,
+    findDownloadedRuntimeArchives,
     getRuntimeStatus,
     ensureRuntimeInstalled,
     fetchLatestLlamaCppTag,
     resolveRuntimeInstallPackage,
     installRuntimeFromLocalArchives,
     cancelRuntimeInstall,
+    clearRuntimeInstallCancel,
     waitForGpuVramHeadroom,
     releaseEngineGpuBeforeLlama,
     resolveAutoCpuOnGpuBusy,
@@ -2443,6 +2685,9 @@ module.exports = {
     getLastServerLogTail,
     getServerState: () => (serverState ? { ...serverState } : null),
     getLlmOwner: () => llmOwner,
+    markLlmOwnedByEngine,
+    markLlmOwnedLocal,
+    isDelegatedEngineIdleArmed: () => delegatedEngineIdleArmed,
     scanReusableCudaRuntimes: (opts) => cudaScan.scanReusableCudaRuntimes({
         ...opts,
         extraRoots: [

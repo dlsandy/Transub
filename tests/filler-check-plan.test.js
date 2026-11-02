@@ -82,6 +82,52 @@ describe('filler-check-plan', () => {
         assert.strictEqual(glued.pure, false);
         assert.match(glued.text, /我知道了/);
 
+        // Lead/mid breath 唉啊 stacks → clear; keep sentence-final soft 啊 (LTX style).
+        const stacked = stripInlineFillersInText('唉，啊…手有点…，啊，要、要射了…', {
+            checkDiscourse: true,
+            checkOnomatopoeia: true,
+            lang: 'zh',
+        });
+        assert.strictEqual(stacked.changed, true);
+        assert.match(stacked.text, /手有点/);
+        assert.match(stacked.text, /要/);
+        assert.ok(!/^唉/.test(stacked.text));
+        assert.ok(!/，啊，/.test(stacked.text));
+
+        const softFinal = stripInlineFillersInText('好棒啊', {
+            checkDiscourse: true,
+            checkOnomatopoeia: true,
+            lang: 'zh',
+        });
+        assert.strictEqual(softFinal.text, '好棒啊');
+        assert.strictEqual(softFinal.changed, false);
+
+        const whichPart = stripInlineFillersInText('哪部分啊？', {
+            checkDiscourse: true,
+            checkOnomatopoeia: true,
+            lang: 'zh',
+        });
+        assert.strictEqual(whichPart.text, '哪部分啊？');
+        assert.strictEqual(whichPart.changed, false);
+
+        const leadDash = stripInlineFillersInText('啊—好累，什么啊真烦', {
+            checkDiscourse: true,
+            checkOnomatopoeia: true,
+            lang: 'zh',
+        });
+        assert.strictEqual(leadDash.changed, true);
+        assert.match(leadDash.text, /^好累/);
+        assert.match(leadDash.text, /什么啊真烦/);
+
+        const stutter = stripInlineFillersInText('唉，啊…手有点…，啊，要、要射了…', {
+            checkDiscourse: true,
+            checkOnomatopoeia: true,
+            lang: 'zh',
+        });
+        assert.match(stutter.text, /手有点/);
+        assert.match(stutter.text, /要射了/);
+        assert.ok(!/要、要/.test(stutter.text));
+
         const cues = [
             { startMs: 0, endMs: 500, text: 'うん' },
             { startMs: 500, endMs: 1500, text: 'うん、大丈夫？' },

@@ -1,0 +1,41 @@
+{
+  "id": "ja-ko-llm-bal",
+  "version": 1,
+  "group": "ja-ko",
+  "name": "日软对白 · 译韩 · 均衡",
+  "description": "日语软对白→韩语成片：Anime Whisper / Qwen Galgame 听写 + TranslateGemma 4 Sub 多语字幕 MT。硬件档：均衡 · 8–12GB 显存。",
+  "language": "ja",
+  "subtitleTargetLang": "ko",
+  "translateMode": "llm",
+  "requiresPro": false,
+  "hardware": {
+    "tier": "balanced",
+    "preferCuda": true,
+    "minVramGb": 8,
+    "minSystemRamGb": 16,
+    "label": "均衡 · 8–12GB 显存"
+  },
+  "models": [
+    "anime-whisper",
+    "firered-vad",
+    "translategemma-4-sub-e4b"
+  ],
+  "options": {
+    "language": "ja",
+    "subtitleTargetLang": "ko",
+    "device": "cuda",
+    "engineAsrModel": "anime-whisper",
+    "engineVadModel": "firered-vad",
+    "contentProfile": "av_soft",
+    "translateMode": "llm",
+    "engineLlmMtModel": "translategemma-4-sub-e4b",
+    "engineProfile": "balanced",
+    "activePresetId": "ja-av-anime-whisper-firered",
+    "vadEnabled": true,
+    "timingAlign": true,
+    "timingAlignModel": "firered",
+    "lastMtByTarget": {
+      "ko": "translategemma-4-sub-e4b"
+    }
+  }
+}

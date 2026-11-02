@@ -32,6 +32,11 @@
         'Transub Station': 'external-translate',
         'pro-smart-translate': 'pro-smart-translate',
         'smart-translate': 'pro-smart-translate',
+        'pro-decision-assist': 'pro-decision-assist',
+        'decision-assist': 'pro-decision-assist',
+        decisionAssist: 'pro-decision-assist',
+        laya: 'pro-decision-assist',
+        'pro-laya': 'pro-decision-assist',
         'pro-film-audio': 'pro-film-audio',
         'film-audio': 'pro-film-audio',
         filmAudio: 'pro-film-audio',
@@ -104,6 +109,9 @@
         混合润色模型: 'pro-smart-translate',
         智能翻译: 'pro-smart-translate',
         混合翻译: 'pro-smart-translate',
+        决策辅助: 'pro-decision-assist',
+        Laya决策辅助: 'pro-decision-assist',
+        Laya: 'pro-decision-assist',
         影视音频增强: 'pro-film-audio',
         智能修复: 'pro-qc-smart',
         QC智能修复: 'pro-qc-smart',
@@ -113,7 +121,6 @@
 
     const ENV_CHIP_IDS = {
         engine: { chip: 'settingsEnvChipEngine', state: 'settingsEnvChipEngineState' },
-        gpu: { chip: 'settingsEnvChipGpu', state: 'settingsEnvChipGpuState' },
         llama: { chip: 'settingsEnvChipLlama', state: 'settingsEnvChipLlamaState' },
     };
 
@@ -125,7 +132,7 @@
 
     /**
      * Update one overview chip on 运行环境.
-     * @param {'engine'|'gpu'|'llama'} which
+     * @param {'engine'|'llama'|string} which
      * @param {{ state?: string, label?: string }} info
      */
     function setEnvOverviewChip(which, info = {}) {

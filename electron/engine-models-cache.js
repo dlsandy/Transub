@@ -72,10 +72,24 @@ function sanitizePickRow(row) {
 
 function sanitizeDemucsProbe(probe) {
     if (!probe || typeof probe !== 'object') return null;
+    // Drop legacy IPC mistake: HTTP code overwritten onto semantic status.
+    let status = String(probe.status || '').trim();
+    if (/^\d{3}$/.test(status)) status = '';
+    const hint = String(probe.hint || probe.message || '').trim().slice(0, 240);
+    const version = String(probe.version || '').trim().slice(0, 64);
+    const installed = probe.installed === true
+        || status === 'ready'
+        || status === 'partial'
+        || status === 'need_torch_cuda'
+        || status === 'need_torch_rocm'
+        || status === 'need_torch_xpu';
     return {
         ok: probe.ok !== false,
-        status: String(probe.status || '').trim(),
+        status: status || (installed ? 'ready' : ''),
         message: String(probe.message || '').trim().slice(0, 240),
+        hint,
+        version,
+        installed,
     };
 }
 

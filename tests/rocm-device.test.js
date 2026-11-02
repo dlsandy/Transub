@@ -44,7 +44,109 @@ print(json.dumps({
         assert.strictEqual(payload.g7900, 'gfx1100');
         assert.ok(payload.specs[0].includes('torch[device-gfx1201]=='));
         assert.ok(payload.specs[0].includes('+rocm'));
+        assert.ok(
+            payload.specs[0].includes('2.12.0+rocm10.1.0'),
+            'torch pin must be the Windows-stable rocm10.1 pair',
+        );
+        assert.strictEqual(
+            payload.specs[2],
+            'torchaudio==2.11.0+rocm10.1.0',
+            'torchaudio 2.11.0.2+rocm10.0.0 crashes on Windows (torch_new_stable_ivalue)',
+        );
+        assert.ok(!payload.specs[2].includes('torchaudio[device-'), 'torchaudio has no device-* extras');
+        assert.ok(payload.specs.some((s) => s.includes('amd-torch-device-gfx1201==')), 'gfx kernels extra must be pinned');
         assert.ok(payload.index.includes('repo.amd.com'));
+    });
+
+    it('treats missing amd-torch-device extra as incomplete ROCm', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+from unittest.mock import patch
+from transub_engine import rocm_device as rd
+
+with patch.object(rd, "_dist_version", side_effect=lambda n: "" if "amd-torch-device" in n else "2.13.0+rocm10.0.0"), \\
+     patch.object(rd, "_torch_version_text", return_value="2.13.0+rocm10.0.0"):
+    missing = rd.amd_device_kernels_present("gfx1100")
+    unknown = rd.amd_device_kernels_present("all")
+with patch.object(rd, "_dist_version", return_value="2.13.0+rocm10.0.0"), \\
+     patch.object(rd, "_torch_version_text", return_value="2.13.0+rocm10.0.0"):
+    ok = rd.amd_device_kernels_present("gfx1100")
+unpinned = rd.rocm_pip_specs("gfx1100", pinned=False)
+print(json.dumps({"missing": missing, "unknown": unknown, "ok": ok, "unpinned": unpinned}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.missing, false);
+        assert.strictEqual(payload.unknown, true);
+        assert.strictEqual(payload.ok, true);
+        assert.ok(payload.unpinned.includes('amd-torch-device-gfx1100'));
+        assert.ok(payload.unpinned[0].includes('torch[device-gfx1100]'));
+    });
+
+    it('rejects PyPI and ancient +rocm7 torch versions', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+from transub_engine.rocm_device import is_acceptable_rocm_torch_version
+print(json.dumps({
+    "ok12": is_acceptable_rocm_torch_version("2.12.0+rocm10.0.0"),
+    "badPy": is_acceptable_rocm_torch_version("2.14.1"),
+    "bad7": is_acceptable_rocm_torch_version("2.11.0+rocm7.14.1"),
+    "empty": is_acceptable_rocm_torch_version(""),
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ok12, true);
+        assert.strictEqual(payload.badPy, false);
+        assert.strictEqual(payload.bad7, false);
+        assert.strictEqual(payload.empty, false);
+    });
+
+    it('treats the Windows rocm10.0 torchaudio pair as a crash that must be reinstalled', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+from unittest.mock import patch
+from transub_engine import rocm_device as rd
+with patch.object(rd, "_dist_version", return_value="2.11.0.2+rocm10.0.0"), \\
+     patch.object(rd, "_torch_version_text", return_value="2.12.0+rocm10.0.0"):
+    bad = rd.rocm_windows_audio_abi_broken()
+with patch.object(rd, "_dist_version", return_value="2.11.0+rocm10.1.0"), \\
+     patch.object(rd, "_torch_version_text", return_value="2.12.0+rocm10.1.0"):
+    good = rd.rocm_windows_audio_abi_broken()
+print(json.dumps({"bad": bad, "good": good}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.bad, true);
+        assert.strictEqual(payload.good, false);
+    });
+
+    it('does not treat leftover nvcuda.dll as NVIDIA (unblocks RX 7900 ROCm)', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+from unittest.mock import patch
+from transub_engine import rocm_device as rd
+
+rd.probe_amd_gpu.cache_clear()
+with patch.object(rd, "_nvidia_smi_lists_gpu", return_value=False), \\
+     patch.object(rd, "_video_controllers", return_value=[
+         {"name": "AMD Radeon RX 7900 XTX", "adapterRam": 24 * 1024**3}
+     ]):
+    # Old bug: nvcuda.dll alone made _nvidia_present True and hid the Radeon.
+    present = rd._nvidia_present()
+    probe = rd.probe_amd_gpu()
+rd.probe_amd_gpu.cache_clear()
+print(json.dumps({
+    "nvidiaPresent": present,
+    "name": probe.get("name") or "",
+    "gfx": probe.get("gfx") or "",
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.nvidiaPresent, false);
+        assert.match(payload.name, /7900/);
+        assert.strictEqual(payload.gfx, 'gfx1100');
     });
 
     it('treats ROCm-ready AMD probe as ready (not no_gpu)', function () {
@@ -75,7 +177,8 @@ with patch("transub_engine.runtime_gpu.detect_device", return_value=fake_device)
      patch("transub_engine.runtime_gpu.ctranslate2_cuda_status", return_value={"ok": False, "reason": "no"}), \\
      patch("transub_engine.runtime_gpu._parse_driver_cuda_version", return_value=""), \\
      patch("transub_engine.runtime_gpu.resolve_ort_gpu_readiness", return_value={"ok": False}), \\
-     patch("transub_engine.rocm_device.torch_rocm_libs_present", return_value=True):
+     patch("transub_engine.rocm_device.torch_rocm_libs_present", return_value=True), \\
+     patch("transub_engine.rocm_device.amd_device_kernels_present", return_value=True):
     p = runtime_gpu.probe_gpu_runtime()
 print(json.dumps({
     "status": p.get("status"),

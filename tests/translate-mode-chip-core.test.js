@@ -12,6 +12,14 @@ describe('translate-mode-chip-core', () => {
         assert.strictEqual(chip.shortMtModelChipLabel('opus-mt-ja-zh'), '自动');
         assert.strictEqual(chip.shortMtModelChipLabel('sakura-1.5b'), 'Sakura1.5');
         assert.strictEqual(chip.shortMtModelChipLabel('sakura-galtransl-7b'), 'GalTransl7');
+        assert.strictEqual(chip.shortMtModelChipLabel('murasaki-4b-v03'), 'Murasaki4');
+        assert.strictEqual(chip.shortMtModelChipLabel('murasaki-4b-v03-q6k'), 'Mura4·Q6');
+        assert.strictEqual(chip.shortMtModelChipLabel('murasaki-4b-v03-q8'), 'Mura4·Q8');
+        assert.strictEqual(chip.shortMtModelChipLabel('murasaki-4b-v03-f16'), 'Mura4·F16');
+        // Legacy history ids (v0.2 retired) still chip-label for old task rows.
+        assert.strictEqual(chip.shortMtModelChipLabel('murasaki-8b-v02'), 'Mura8·Q6');
+        assert.strictEqual(chip.shortMtModelChipLabel('murasaki-14b-v02'), 'Murasaki14');
+        assert.strictEqual(chip.shortMtModelChipLabel('orion-4b-v2608'), 'Orion4·Q8');
         assert.strictEqual(chip.shortMtModelChipLabel('sakura-galtransl-7b-q6k'), 'Gal7·Q6');
         assert.strictEqual(chip.shortMtModelChipLabel('sakura-galtransl-v4-4b'), 'Galv4·4');
         assert.strictEqual(chip.shortMtModelChipLabel('sakura-galtransl-14b'), 'GalTransl14');
@@ -23,11 +31,23 @@ describe('translate-mode-chip-core', () => {
         assert.strictEqual(chip.shortMtModelChipLabel('sakura-14b-qwen3'), 'Sakura14·Q3');
         assert.strictEqual(chip.shortMtModelChipLabel('sakura-8b-qwen3'), 'Sakura8');
         assert.strictEqual(chip.shortMtModelChipLabel('translategemma-4b'), 'TG·4');
+        assert.strictEqual(chip.shortMtModelChipLabel('translategemma-4-sub-e2b'), 'TGSub·E2');
         assert.strictEqual(chip.shortMtModelChipLabel('translategemma-4-sub-e4b'), 'TGSub·E4');
         assert.strictEqual(chip.shortMtModelChipLabel('hunyuan-mt-chimera-7b-abliterated'), 'HyChimera·A');
         assert.strictEqual(chip.shortMtModelChipLabel('hunyuan-mt-7b-abliterated'), 'HyMT·A');
         assert.strictEqual(chip.shortMtModelChipLabel('hy-mt15-7b-abliterated'), 'HyMT15·A');
         assert.strictEqual(chip.shortMtModelChipLabel('hy-mt15-1.8b-abliterated'), 'HyMT15·1.8A');
+        assert.strictEqual(chip.shortMtModelChipLabel('hy-mt2-7b'), 'Hy-MT2·7');
+        assert.strictEqual(chip.shortMtModelChipLabel('hy-mt2-1.8b'), 'Hy-MT2·1.8');
+        assert.strictEqual(chip.shortMtModelChipLabel('hy-mt2-30b-a3b-heretic'), 'Hy-MT2·30A');
+        assert.strictEqual(chip.shortMtModelChipLabel('hy-mt2-30b-a3b-heretic-mini'), 'Hy-MT2·30M');
+        assert.strictEqual(chip.shortMtModelChipLabel('hy-mt2-30b-a3b-heretic-quality'), 'Hy-MT2·30Q');
+        assert.strictEqual(chip.shortMtModelChipLabel('index-translate-2b'), 'Index·2');
+        assert.strictEqual(chip.shortMtModelChipLabel('index-translate-9b'), 'Index·9');
+        assert.strictEqual(chip.shortMtModelChipLabel('index-translate-35b-a3b-mini'), 'Index·35M');
+        assert.strictEqual(chip.shortMtModelChipLabel('index-translate-35b-a3b'), 'Index·35C');
+        assert.strictEqual(chip.shortMtModelChipLabel('index-translate-35b-a3b-quality'), 'Index·35Q');
+        assert.strictEqual(chip.shortMtModelChipLabel('index-translate-35b-a3b-q4km'), 'Index·35Q4');
         assert.strictEqual(chip.shortMtModelChipLabel('translategemma-12b'), 'TG·12');
         assert.strictEqual(chip.shortMtModelChipLabel('qwen25-7b'), 'Qwen7');
         assert.strictEqual(chip.shortMtModelChipLabel('qwen3-8b-abliterated'), 'Qwen8·A');

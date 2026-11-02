@@ -509,7 +509,13 @@ function createTranswithAiBatchLoop(host) {
                     sourceSubtitlePath,
                     ...sourceSubtitlePaths,
                     ...targetSubtitlePaths,
-                ], options, {
+                ], {
+                    ...options,
+                    sourceSubtitlePath: sourceSubtitlePath
+                        || options.sourceSubtitlePath
+                        || '',
+                    jaSourcePaths: sourceSubtitlePaths,
+                }, {
                     onLog: (line) => {
                         broadcastToSubtitleTaskUi(
                             windowManager,

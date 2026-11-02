@@ -10,9 +10,15 @@ const core = require('../src/js/asr-second-opinion-core');
 const { asString, asPlainObject } = require('./ipc-validate');
 
 function buildSecondOpinionRangeOptions(options, sibling) {
+    const asr = String(sibling || '').trim().toLowerCase();
+    const extra = {};
+    if (asr.includes('sensevoice')) {
+        extra.engineVadModel = 'fsmn-vad';
+    }
     return {
         ...options,
         engineAsrModel: sibling,
+        ...extra,
         task: 'transcribe',
         smartTranslate: false,
         releaseGpuAfter: false,
@@ -106,6 +112,7 @@ async function runAsrSecondOpinionPass(input = {}) {
     })) {
         return { ok: true, skipped: true, reason: 'disabled_or_auto_skip' };
     }
+    const gapOnly = false;
     if (!mediaPath || !fs.existsSync(mediaPath)) {
         return { ok: true, skipped: true, reason: 'no_media' };
     }
@@ -143,6 +150,7 @@ async function runAsrSecondOpinionPass(input = {}) {
         contentProfile,
         primaryAsr,
         includeTimelineGaps: options.asrSecondOpinionIncludeGaps,
+        gapOnly,
         annotations,
         bandByIndex,
         cueRiskBands: bandByIndex,
@@ -189,6 +197,8 @@ async function runAsrSecondOpinionPass(input = {}) {
     const opinionModels = core.listSecondOpinionAsrModels(primaryAsr, {
         candidates: rangePolicy.buildBatchAsrCandidates(primaryAsr),
         installedIds,
+        gapFill: gapOnly,
+        reusePrimary: gapOnly ? false : undefined,
     });
     if (!opinionModels.length) {
         return { ok: true, skipped: true, reason: 'no_sibling_model' };
@@ -207,12 +217,19 @@ async function runAsrSecondOpinionPass(input = {}) {
     // re-decode with the primary still loaded; respawn if the engine child died.
 
     let siblingIdx = 0;
-    let sibling = opinionModels[siblingIdx];
+    let sibling = core.pickSecondOpinionAsrModelForRange(
+        planned.ranges[0],
+        primaryAsr,
+        opinionModels,
+        { installedIds, gapFill: gapOnly },
+    ) || opinionModels[siblingIdx];
     const reusePrimary = sibling.toLowerCase() === primaryAsr.toLowerCase();
     onLogEarly?.(
-        reusePrimary
-            ? `ASR 二意见：同模型重解码（${sibling}）`
-            : `ASR 二意见：兄弟模型 ${sibling}`,
+        gapOnly
+            ? `ASR 对白空洞补听：${sibling}（Galgame 漏句窗，不依赖二意见开关）`
+            : (reusePrimary
+                ? `ASR 二意见：同模型重解码（${sibling}）`
+                : `ASR 二意见：兄弟模型 ${sibling}`),
     );
     try {
         const ensure = await ensureEngineRunning({
@@ -234,7 +251,6 @@ async function runAsrSecondOpinionPass(input = {}) {
     let replacedWindows = 0;
     let attempted = 0;
     let engineRestarts = 0;
-    let badPoolDraftsAppended = 0;
     /** @type {{ startMs: number, endMs: number }[]} */
     const acceptedRanges = [];
 
@@ -256,9 +272,17 @@ async function runAsrSecondOpinionPass(input = {}) {
     for (let i = 0; i < planned.ranges.length; i += 1) {
         const range = planned.ranges[i];
         attempted += 1;
-        const kindLabel = range?.source === 'gap' || range?.kind === 'gap'
-            ? '空洞'
-            : (range?.source === 'hallucination' || range?.kind === 'hallucination' ? '幻觉' : '低置信');
+        sibling = core.pickSecondOpinionAsrModelForRange(
+            range,
+            primaryAsr,
+            opinionModels,
+            { installedIds, gapFill: true },
+        ) || sibling;
+        const kindLabel = range?.source === 'dialogue_gap'
+            ? '对白空洞'
+            : (range?.source === 'gap' || range?.kind === 'gap'
+                ? '空洞'
+                : (range?.source === 'hallucination' || range?.kind === 'hallucination' ? '幻觉' : '低置信'));
         onProgress?.({
             stage: 'asr-second-opinion',
             detail: `ASR二意见(${kindLabel}) ${i + 1}/${planned.ranges.length}（${sibling}）`,
@@ -313,33 +337,60 @@ async function runAsrSecondOpinionPass(input = {}) {
                 continue;
             }
             const winner = core.chooseSecondOpinionWinner(primarySlice, res.cues);
-            if (!winner.useOpinion) continue;
-            try {
-                const { buildSecondOpinionBadDrafts, appendAsrBadPoolDrafts } = require('./asr-bad-pool-draft');
-                const drafts = buildSecondOpinionBadDrafts({
-                    primaryCues: primarySlice,
-                    opinionCues: winner.cues,
-                    primaryAsr,
-                    opinionAsr: sibling,
-                    contentProfile: options.contentProfile || options.senseProfile || input.contentProfile,
-                    mediaPath,
-                    startMs: range.startMs,
-                    endMs: range.endMs,
-                    reason: winner.reason,
-                });
-                const writtenDraft = appendAsrBadPoolDrafts(drafts, {
-                    enabled: options.asrBadPoolDrafts !== false,
-                });
-                if (writtenDraft?.appended > 0) {
-                    badPoolDraftsAppended += writtenDraft.appended;
-                    onLog?.(`ASR 坏句草稿 +${writtenDraft.appended} → ${path.basename(writtenDraft.path || '')}`);
-                }
-            } catch (_) { /* optional training scratch */ }
+            let useOpinion = !!winner.useOpinion;
+            let winnerCues = winner.cues;
+            if (!useOpinion && core.isAmbiguousSecondOpinionKeep?.(winner, primarySlice, res.cues)) {
+                try {
+                    const { prepareJevDecideReady, decideChoiceChunks } = require('./jev-decide');
+                    const auth = await prepareJevDecideReady(options);
+                    if (auth.ok) {
+                        const primaryText = primarySlice.map((c) => String(c?.text || '').trim()).filter(Boolean).join('\n');
+                        const opinionText = res.cues.map((c) => String(c?.text || '').trim()).filter(Boolean).join('\n');
+                        const built = core.buildSecondOpinionJevRequest([{
+                            id: `r${i}`,
+                            primaryText,
+                            opinionText,
+                            startMs: range.startMs,
+                            endMs: range.endMs,
+                        }]);
+                        if (built.items?.length) {
+                            const decided = await decideChoiceChunks({
+                                auth,
+                                items: built.items,
+                                buildRequest: () => built,
+                                partition: (answers, chunk, minConfidence) => {
+                                    const part = core.partitionSecondOpinionJevAnswers(
+                                        answers,
+                                        chunk,
+                                        minConfidence,
+                                    );
+                                    return {
+                                        accept: part.useOpinion,
+                                        reject: part.keepPrimary,
+                                        undecided: part.undecided,
+                                        decided: part.decided,
+                                    };
+                                },
+                                signal: options.signal,
+                                timeoutMs: 25000,
+                            });
+                            if (decided.accept?.length) {
+                                useOpinion = true;
+                                winnerCues = res.cues;
+                                onLog?.(`ASR 二意见：Laya 选用二票（窗 ${i + 1}）`);
+                            } else if (decided.reject?.length) {
+                                onLog?.(`ASR 二意见：Laya 保留主票（窗 ${i + 1}）`);
+                            }
+                        }
+                    }
+                } catch (_) { /* soft-fail → heuristic keep */ }
+            }
+            if (!useOpinion) continue;
             const replacedDoc = metaCore.replaceCuesInTimeRange(
                 working,
                 range.startMs,
                 range.endMs,
-                winner.cues,
+                winnerCues,
             );
             working = replacedDoc.cues.map((c, idx) => ({
                 index: idx,
@@ -390,7 +441,6 @@ async function runAsrSecondOpinionPass(input = {}) {
             gapWindowCount: planned.gapWindowCount || 0,
             planRanges: planned.ranges.length,
             skippedRanges: planned.skippedRanges || [],
-            badPoolDraftsAppended,
         };
     }
 
@@ -450,7 +500,6 @@ async function runAsrSecondOpinionPass(input = {}) {
         planRanges: planned.ranges.length,
         skippedRanges: planned.skippedRanges || [],
         targetBlanked,
-        badPoolDraftsAppended,
         path: subtitlePath,
         error: written.error,
     };

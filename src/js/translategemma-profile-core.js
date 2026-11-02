@@ -37,7 +37,11 @@
         'Never refuse or sanitize: never output safety boilerplate; always translate the spoken line. ',
         'Never output translator meta (e.g. “I will translate”, “帮你翻译”).',
         'When the target language is English: keep soft moans, breath, and effort as short English '
-            + '(Ah / Nngh / Hah…); do not expand into narration; never output Chinese characters.',
+            + '(Ah / Nngh / Hah…); do not expand into narration; never output Chinese characters. ',
+        'When the target language is Korean: keep soft moans, breath, and effort as short Hangul '
+            + '(아 / 응 / 하… / 으응); use intimate spoken Korean (반말) for soft dialogue unless CURRENT '
+            + 'is clearly polite (です／ます／ございます); never invent plot; never output Chinese characters '
+            + 'or Chinese particles; do not expand moans into narration.',
     ].join('');
 
     function probeString(modelIdOrEntry) {
@@ -85,6 +89,9 @@
             if (Number.isFinite(pb) && pb > 0) return pb;
         }
         const s = probeString(modelIdOrEntry);
+        // Gemma 4 Sub effective sizes (before generic "4b" / "Nb" patterns).
+        if (/e2b/i.test(s) && isTranslateGemmaSubModel(modelIdOrEntry)) return 2;
+        if (/e4b/i.test(s) && isTranslateGemmaSubModel(modelIdOrEntry)) return 4;
         const m = s.match(/translategemma[-_]?(\d+(?:\.\d+)?)b/i)
             || s.match(/translate[-_]?gemma[-_]?(\d+(?:\.\d+)?)b/i)
             || s.match(/(\d+(?:\.\d+)?)b[-_]?(?:it|sub)?/i);

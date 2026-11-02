@@ -41,6 +41,7 @@ function getElectron() {
 
 function normalizeAutoUpdateCheckInterval(value) {
     const v = String(value || '').trim().toLowerCase();
+    if (!v) return 'weekly';
     return VALID_INTERVALS.has(v) ? v : 'off';
 }
 

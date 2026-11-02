@@ -124,6 +124,27 @@ print(json.dumps({
         assert.strictEqual(payload.unmetHasNvidia, false);
     });
 
+    it('followup scan includes already-present torch after --no-deps extras', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from transub_engine.runtime_extras import _nodeps_followup_scan, EXTRA_PACKAGES, TORCH_HARD_PY_DEPS
+scan = _nodeps_followup_scan(['tokenizers==0.22.2', 'huggingface-hub>=1.5.0,<2.0'])
+print(json.dumps({
+    "scan": scan,
+    "torchDeps": list(TORCH_HARD_PY_DEPS),
+    "qwenHasSympy": any(str(p).startswith("sympy") for p in EXTRA_PACKAGES["asr-qwen3"]),
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.ok(payload.scan.includes('tokenizers'), JSON.stringify(payload.scan));
+        assert.ok(payload.qwenHasSympy);
+        assert.ok(payload.torchDeps.some((p) => /sympy>=1\.13/.test(p)));
+        assert.ok(payload.scan.includes('torch'), JSON.stringify(payload.scan));
+    });
+
     it('SenseVoice extras pin numpy<2.5 and prefer binary numba', function () {
         if (process.platform !== 'win32') {
             this.skip();
@@ -173,8 +194,283 @@ print(json.dumps({
         );
         assert.ok(
             payload.pkgs.some((p) => /^huggingface-hub/.test(p) && /<1\.0/.test(p)),
-            `expected huggingface-hub<1.0 in ${payload.pkgs}`,
+            `expected default huggingface-hub<1.0 in EXTRA_PACKAGES ${payload.pkgs}`,
         );
+    });
+
+    it('keeps Qwen transformers below 5.16 so tokenizers 0.22.2 still matches', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from transub_engine.runtime_extras import EXTRA_PACKAGES, TRANSFORMERS_QWEN_PIN, TRANSFORMERS_COHERE_PIN
+print(json.dumps({
+    "qwen": EXTRA_PACKAGES["asr-qwen3"],
+    "cohere": EXTRA_PACKAGES["asr-cohere"],
+    "qwenPin": TRANSFORMERS_QWEN_PIN,
+    "coherePin": TRANSFORMERS_COHERE_PIN,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.qwenPin, 'transformers>=5.13.0,<5.16');
+        assert.strictEqual(payload.coherePin, 'transformers>=5.6.0,<5.16');
+        assert.ok(payload.qwen.includes('transformers>=5.13.0,<5.16'));
+        assert.ok(payload.qwen.includes('tokenizers==0.22.2'));
+        assert.ok(payload.qwen.some((p) => /sympy>=1\.13\.3/.test(p)), payload.qwen.join(','));
+        assert.ok(payload.cohere.some((p) => /sympy>=1\.13\.3/.test(p)), payload.cohere.join(','));
+        assert.ok(!payload.qwen.some((p) => /<6/.test(p)));
+    });
+
+    it('unwraps transformers LazyModule import errors for Qwen probe', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from transub_engine.runtime_extras import (
+    _exception_chain_text,
+    _qwen3_repair_hint,
+    _evict_imported_prefixes,
+)
+class Root(Exception):
+    pass
+class Wrap(Exception):
+    pass
+root = Root("operator torchvision::nms does not exist")
+wrap = Wrap("Could not import module 'AutoModelForMultimodalLM'. Are this object's requirements defined correctly?")
+wrap.__cause__ = root
+sys_modules_before = __import__("sys").modules
+fake = "transub_test_evict_mod"
+sys_modules_before[fake] = object()
+removed = _evict_imported_prefixes((fake,))
+print(json.dumps({
+    "chain": _exception_chain_text(wrap),
+    "hint": _qwen3_repair_hint([
+        "AutoModelForMultimodalLM: Could not import module 'AutoModelForMultimodalLM'. Are this object's requirements defined correctly?"
+    ], ["transformers"]),
+    "numpyHint": _qwen3_repair_hint(["numpy: 2.5.1 超出 Numba 上限"], ["numpy"]),
+    "sympyHint": _qwen3_repair_hint([
+        "AutoModelForMultimodalLM: No module named 'sympy'"
+    ], []),
+    "removed": removed,
+    "gone": fake not in sys_modules_before,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.ok(
+            payload.chain.includes('torchvision::nms'),
+            `expected unwrapped cause, got ${payload.chain}`,
+        );
+        assert.ok(!/Are this object's requirements defined correctly/.test(payload.chain));
+        assert.ok(/torchvision|transformers 5\.15/.test(payload.hint), payload.hint);
+        assert.ok(!/numpy 降到/.test(payload.hint), payload.hint);
+        assert.ok(/一键修复会/.test(payload.hint), payload.hint);
+        assert.ok(/numpy 降到/.test(payload.numpyHint), payload.numpyHint);
+        assert.ok(/一键修复会把 numpy/.test(payload.numpyHint), payload.numpyHint);
+        assert.ok(/补齐缺失模块 sympy/.test(payload.sympyHint), payload.sympyHint);
+        assert.ok(!/重装 transformers/.test(payload.sympyHint), payload.sympyHint);
+        assert.ok(payload.removed >= 1);
+        assert.strictEqual(payload.gone, true);
+    });
+
+    it('qwen3 repair hint mentions ROCm torchvision mismatch', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from transub_engine.runtime_extras import _qwen3_repair_hint
+print(json.dumps({
+    "hint": _qwen3_repair_hint([
+        "Qwen3ASRProcessor: operator torchvision::nms does not exist"
+    ], ["transformers"]),
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.ok(/torchvision/.test(payload.hint), payload.hint);
+    });
+
+    it('imports AutoModelForMultimodalLM via the concrete auto module', { timeout: 120000 }, function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+from transub_engine.runtime_extras import _import_auto_model_for_multimodal_lm
+_import_auto_model_for_multimodal_lm()
+print("ok")
+`);
+        assert.strictEqual(out, 'ok');
+    });
+
+    it('does not evict PyO3 tokenizers after pip and treats in-process reinit as ready', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+from importlib.metadata import PackageNotFoundError
+
+assert "tokenizers" not in re._QWEN3_REPROBE_PREFIXES
+assert "safetensors" not in re._QWEN3_REPROBE_PREFIXES
+assert "transformers" in re._QWEN3_REPROBE_PREFIXES
+pyo3 = "PyO3 modules compiled for CPython 3.8 or older may only be initialized once per interpreter process"
+probe_fail = {
+    "ok": True, "ready": False, "status": "need_install",
+    "missing": ["transformers", "tokenizers"],
+    "errors": ["AutoModelForMultimodalLM: " + pyo3, "tokenizers: " + pyo3],
+    "hint": re._qwen3_repair_hint(["AutoModelForMultimodalLM: " + pyo3], ["transformers", "tokenizers"]),
+    "versions": {"transformers": "5.15.1", "tokenizers": "0.22.2"},
+    "hasCudaGpu": False, "torchCuda": False,
+}
+meta_ok = {
+    "ok": True, "ready": True, "status": "ready",
+    "missing": [], "errors": [],
+    "versions": {"transformers": "5.15.1", "tokenizers": "0.22.2", "torch": "2.11.0"},
+    "hasCudaGpu": False, "torchCuda": False, "hint": "meta ready",
+}
+order = []
+def track_runtime():
+    order.append("runtime")
+    return dict(probe_fail)
+def track_meta():
+    order.append("meta")
+    return dict(meta_ok)
+def track_install(*a, **k):
+    order.append("install")
+    return {"ok": True, "installed": ["transformers"], "skipped": False}
+def track_np(**k):
+    return {"ok": True, "skipped": True, "version": "2.4.6"}
+def track_unsat(pkgs):
+    return list(pkgs)
+def track_loaded():
+    return False
+with patch.object(re, "probe_asr_qwen3_runtime", side_effect=track_runtime), \\
+     patch.object(re, "probe_asr_qwen3", side_effect=track_meta), \\
+     patch.object(re, "ensure_numpy_numba_compatible", side_effect=track_np), \\
+     patch.object(re, "_unsatisfied_packages", side_effect=track_unsat), \\
+     patch.object(re, "_qwen3_native_modules_loaded", side_effect=track_loaded), \\
+     patch.object(re, "_install_packages", side_effect=track_install), \\
+     patch.object(re, "_reassert_shared_runtime_pins", return_value={"ok": True, "skipped": True}), \\
+     patch.object(re, "_tokenizers_pin_mismatch", return_value=""), \\
+     patch.object(re, "pkg_version", side_effect=PackageNotFoundError("qwen-asr")):
+    result = re.ensure_asr_qwen3()
+print(json.dumps({
+    "ok": bool(result.get("ok")),
+    "ready": bool(result.get("ready")),
+    "skipped": result.get("reprobeSkipped") or "",
+    "hint": result.get("hint") or result.get("message") or "",
+    "pyo3Hint": re._qwen3_repair_hint(["tokenizers: " + pyo3], ["tokenizers"]),
+    "isPyo3": re._probe_is_pyo3_reinit(probe_fail),
+    "order": order,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ok, true);
+        assert.strictEqual(payload.ready, true);
+        assert.strictEqual(payload.skipped, 'pyo3_reinit');
+        assert.ok(/引擎重启后即可使用/.test(payload.hint), payload.hint);
+        assert.ok(/二次初始化/.test(payload.pyo3Hint), payload.pyo3Hint);
+        assert.ok(!/一键修复会把 tokenizers/.test(payload.pyo3Hint), payload.pyo3Hint);
+        assert.strictEqual(payload.isPyo3, true);
+        assert.ok(!payload.order.includes('pin'), `order=${JSON.stringify(payload.order)}`);
+    });
+
+    it('does not chase transformers tokenizers>=0.23.1 over the 0.22.2 pin', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from transub_engine.runtime_extras import (
+    TOKENIZERS_PIN,
+    NUMPY_NUMBA_PIN,
+    _upstream_allows_pin,
+    _coerce_upstream_to_shared_pin,
+    _requirement_satisfied,
+)
+upstream = "tokenizers<0.24.0,>=0.23.1"
+coerced = _coerce_upstream_to_shared_pin("tokenizers", upstream)
+print(json.dumps({
+    "allowsPin": _upstream_allows_pin(TOKENIZERS_PIN, upstream),
+    "allowsLoose": _upstream_allows_pin(TOKENIZERS_PIN, "tokenizers>=0.13"),
+    "numpyConflict": _upstream_allows_pin(NUMPY_NUMBA_PIN, "numpy>=2.5"),
+    "numpyOk": _upstream_allows_pin(NUMPY_NUMBA_PIN, "numpy>=1.24"),
+    "pinInstalled": _requirement_satisfied(TOKENIZERS_PIN),
+    "coerced": coerced,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.allowsPin, false);
+        assert.strictEqual(payload.allowsLoose, true);
+        assert.strictEqual(payload.numpyConflict, false);
+        assert.strictEqual(payload.numpyOk, true);
+        if (payload.pinInstalled) {
+            assert.strictEqual(payload.coerced, '');
+        } else {
+            assert.strictEqual(payload.coerced, 'tokenizers==0.22.2');
+        }
+    });
+
+    it('WhisperSeg hub pin widens when transformers 5.x is installed', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from unittest.mock import patch
+from transub_engine.runtime_extras import vad_whisperseg_packages
+with patch("transub_engine.runtime_extras._pkg_version_str", side_effect=lambda n: "5.13.0" if n == "transformers" else None):
+    pkgs5 = list(vad_whisperseg_packages())
+with patch("transub_engine.runtime_extras._pkg_version_str", side_effect=lambda n: "4.57.3" if n == "transformers" else None):
+    pkgs4 = list(vad_whisperseg_packages())
+print(json.dumps({"pkgs5": pkgs5, "pkgs4": pkgs4}))
+`);
+        const payload = JSON.parse(out);
+        assert.ok(
+            payload.pkgs5.some((p) => /^huggingface-hub/.test(p) && /<2\.0/.test(p)),
+            `expected hub<2.0 with transformers 5.x: ${payload.pkgs5}`,
+        );
+        assert.ok(
+            payload.pkgs4.some((p) => /^huggingface-hub/.test(p) && /<1\.0/.test(p)),
+            `expected hub<1.0 with transformers 4.x: ${payload.pkgs4}`,
+        );
+    });
+
+    it('skips known transformers 4.57 wheel when 5.x already satisfies', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from unittest.mock import patch
+from transub_engine.runtime_extras import _prefer_skip_known_wheel
+with patch("transub_engine.runtime_extras._pkg_version_str", return_value="5.13.0"), \\
+     patch("transub_engine.runtime_extras._requirement_satisfied", return_value=True):
+    skipSat = _prefer_skip_known_wheel("transformers>=4.40.0")
+with patch("transub_engine.runtime_extras._pkg_version_str", return_value="5.13.0"), \\
+     patch("transub_engine.runtime_extras._requirement_satisfied", return_value=False), \\
+     patch("transub_engine.runtime_extras.known_wheel_version", return_value="4.57.3"), \\
+     patch("transub_engine.runtime_extras.known_wheel_satisfies_requirement", return_value=True):
+    skipNewer = _prefer_skip_known_wheel("transformers>=4.40.0")
+with patch("transub_engine.runtime_extras._pkg_version_str", return_value=None), \\
+     patch("transub_engine.runtime_extras._requirement_satisfied", return_value=False), \\
+     patch("transub_engine.runtime_extras.known_wheel_satisfies_requirement", return_value=True):
+    skipFresh = _prefer_skip_known_wheel("transformers>=4.40.0")
+print(json.dumps({"skipSat": skipSat, "skipNewer": skipNewer, "skipFresh": skipFresh}))
+`);
+        const j = JSON.parse(out);
+        assert.strictEqual(j.skipSat, true);
+        assert.strictEqual(j.skipNewer, true);
+        assert.strictEqual(j.skipFresh, false);
+    });
+
+    it('installs asr-qwen3 before vad-whisperseg for mixed model ids', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from transub_engine.runtime_extras import extras_for_model_ids
+print(json.dumps(extras_for_model_ids([
+    'whisperseg-asmr',
+    'qwen3-asr-1.7b',
+    'anime-whisper',
+])))
+`);
+        const keys = JSON.parse(out);
+        const qi = keys.indexOf('asr-qwen3');
+        const wi = keys.indexOf('vad-whisperseg');
+        assert.ok(qi >= 0 && wi >= 0);
+        assert.ok(qi < wi, `expected qwen before whisperseg: ${keys}`);
     });
 
     it('known wheel must satisfy requirement pin (Cohere needs transformers>=5.6)', function () {
@@ -255,6 +551,38 @@ print(json.dumps(results))
         assert.strictEqual(payload.driftOk, false);
     });
 
+    it('dist_info_has_record reads *.dist-info/RECORD (not site-packages/RECORD)', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        // Regression for GH #76: PathDistribution.locate_file("RECORD") resolves under
+        // site-packages/, so a healthy numpy looked "missing RECORD" and serve exit-75 looped.
+        const out = runExtras(`
+import json
+from importlib.metadata import distribution
+from pathlib import Path
+from transub_engine.pip_mirror_util import _dist_info_has_record
+from transub_engine.runtime_extras import numpy_needs_numba_heal
+
+dist = distribution("numpy")
+locate = Path(str(dist.locate_file("RECORD")))
+meta_record = Path(str(getattr(dist, "_path"))) / "RECORD"
+print(json.dumps({
+    "hasRecord": _dist_info_has_record("numpy"),
+    "missingPkg": _dist_info_has_record("definitely-not-a-real-dist-xyz"),
+    "locateIsSitePackagesRoot": locate.name == "RECORD" and locate.parent.name == "site-packages",
+    "metaRecordExists": meta_record.is_file(),
+    "heal": numpy_needs_numba_heal() or "",
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.hasRecord, true);
+        assert.strictEqual(payload.missingPkg, null);
+        assert.strictEqual(payload.locateIsSitePackagesRoot, true);
+        assert.strictEqual(payload.metaRecordExists, true);
+        assert.strictEqual(payload.heal, '');
+    });
+
     it('local wheel install retries with --ignore-installed on uninstall-no-record-file', function () {
         if (process.platform !== 'win32') {
             this.skip();
@@ -327,6 +655,136 @@ print(json.dumps({
         assert.strictEqual(payload.calls.length, 2);
         assert.strictEqual(payload.calls[0].force, true);
         assert.strictEqual(payload.calls[1].ignore, true);
+    });
+
+    it('ensure_asr_qwen3 returns EXTRAS_REQUIRES_COLD_INSTALL when CUDA torch needed under lock', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from importlib.metadata import PackageNotFoundError
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+
+probe_fail = {
+    "ok": True, "ready": False, "status": "need_install",
+    "missing": [], "errors": ["need cuda torch"],
+    "needsTorchCuda": True, "needsTorchRocm": False,
+    "versions": {"torch": "2.11.0"},
+}
+with patch.object(re, "probe_asr_qwen3_runtime", return_value=dict(probe_fail)), \\
+     patch.object(re, "ensure_numpy_numba_compatible", return_value={"ok": True, "skipped": True}), \\
+     patch.object(re, "_unsatisfied_packages", return_value=[]), \\
+     patch.object(re, "_qwen3_native_modules_loaded", return_value=True), \\
+     patch.object(re, "_tokenizers_pin_mismatch", return_value=""), \\
+     patch.object(re, "_requirement_satisfied", return_value=True), \\
+     patch.object(re, "pkg_version", side_effect=PackageNotFoundError("qwen-asr")), \\
+     patch.object(re, "_install_packages", side_effect=AssertionError("must not pip under lock")):
+    result = re.ensure_asr_qwen3()
+print(json.dumps({
+    "ok": bool(result.get("ok")),
+    "code": result.get("code") or "",
+    "message": result.get("message") or "",
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ok, false);
+        assert.strictEqual(payload.code, 'EXTRAS_REQUIRES_COLD_INSTALL');
+        assert.ok(/GPU|CUDA|冷安装|原地重装/i.test(payload.message), payload.message);
+    });
+
+    it('ensure_asr_qwen3 heals tokenizers while only numpy is mapped (CLI self-lock)', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json, sys
+from importlib.metadata import PackageNotFoundError
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+
+sys.modules.setdefault("numpy", type(sys)("numpy"))
+probe_ok = {
+    "ok": True, "ready": True, "status": "ready",
+    "missing": [], "errors": [], "versions": {},
+    "needsTorchCuda": False, "needsTorchRocm": False,
+}
+installed = []
+def track_install(pkgs, **kwargs):
+    installed.extend(list(pkgs))
+    return {"ok": True, "installed": list(pkgs), "skipped": False}
+with patch.object(re, "probe_asr_qwen3_runtime", return_value=dict(probe_ok)), \\
+     patch.object(re, "ensure_numpy_numba_compatible", return_value={"ok": True, "skipped": True}), \\
+     patch.object(re, "_unsatisfied_packages", return_value=["tokenizers==0.22.2"]), \\
+     patch.object(re, "_tokenizers_pin_mismatch", return_value="mismatch"), \\
+     patch.object(re, "pkg_version", side_effect=PackageNotFoundError("qwen-asr")), \\
+     patch.object(re, "_install_packages", side_effect=track_install), \\
+     patch.object(re, "_reassert_shared_runtime_pins", return_value={"ok": True, "skipped": True}), \\
+     patch.object(re, "_probe_is_pyo3_reinit", return_value=False):
+    result = re.ensure_asr_qwen3()
+print(json.dumps({
+    "ok": bool(result.get("ok")),
+    "code": result.get("code") or "",
+    "installed": installed,
+    "loaded": re._qwen3_native_modules_loaded(),
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ok, true, JSON.stringify(payload));
+        assert.ok(payload.loaded, 'numpy stub should count as loaded');
+        assert.ok(
+            payload.installed.some((p) => String(p).includes('tokenizers')),
+            JSON.stringify(payload.installed),
+        );
+        assert.notStrictEqual(payload.code, 'EXTRAS_LOCKED_IN_PROCESS');
+    });
+
+    it('ensure_asr_qwen3 heals pure-Python pin gaps even when natives are mapped', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from importlib.metadata import PackageNotFoundError
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+
+probe_fail = {
+    "ok": True, "ready": False, "status": "need_install",
+    "missing": ["transformers"], "errors": ["pin"],
+    "needsTorchCuda": False, "needsTorchRocm": False, "versions": {},
+}
+installed = []
+def track_install(pkgs, **kwargs):
+    installed.extend(list(pkgs))
+    return {"ok": True, "installed": list(pkgs), "skipped": False}
+def req_ok(req):
+    return "transformers" not in str(req)
+with patch.object(re, "probe_asr_qwen3_runtime", side_effect=[
+        dict(probe_fail),
+        {"ok": True, "ready": True, "status": "ready", "missing": [], "errors": [], "versions": {}},
+     ]), \\
+     patch.object(re, "ensure_numpy_numba_compatible", return_value={"ok": True, "skipped": True}), \\
+     patch.object(re, "_unsatisfied_packages", return_value=[]), \\
+     patch.object(re, "_qwen3_native_modules_loaded", return_value=True), \\
+     patch.object(re, "_tokenizers_pin_mismatch", return_value=""), \\
+     patch.object(re, "_requirement_satisfied", side_effect=req_ok), \\
+     patch.object(re, "pkg_version", side_effect=PackageNotFoundError("qwen-asr")), \\
+     patch.object(re, "_install_packages", side_effect=track_install), \\
+     patch.object(re, "_reassert_shared_runtime_pins", return_value={"ok": True, "skipped": True}), \\
+     patch.object(re, "_probe_is_pyo3_reinit", return_value=False):
+    result = re.ensure_asr_qwen3()
+print(json.dumps({
+    "ok": bool(result.get("ok")),
+    "code": result.get("code") or "",
+    "installed": installed,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ok, true);
+        assert.ok(payload.installed.some((p) => String(p).includes('transformers')), JSON.stringify(payload.installed));
+        assert.notStrictEqual(payload.code, 'EXTRAS_LOCKED_IN_PROCESS');
     });
 
     it('ensure_asr_qwen3 is metadata-first (does not import-probe before install)', function () {
@@ -442,6 +900,36 @@ print(json.dumps({
         assert.ok(Array.isArray(probe.packages));
         assert.deepStrictEqual(payload.loaded, [], `probe loaded native stacks: ${payload.loaded}`);
         assert.ok(payload.elapsedMs < 5000, `probe too slow (${payload.elapsedMs}ms)`);
+    });
+
+    it('ensure_asr_whisper skips when the stack is already installed', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const probeOut = runExtras(`
+import json
+from transub_engine.runtime_extras import probe_asr_whisper
+print(json.dumps({"ready": bool(probe_asr_whisper().get("ready"))}))
+`);
+        if (!JSON.parse(probeOut).ready) {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from transub_engine.runtime_extras import ensure_asr_whisper
+res = ensure_asr_whisper(force=False)
+print(json.dumps({
+    "ok": bool(res.get("ok")),
+    "skipped": bool(res.get("skipped")),
+    "reason": res.get("reason") or "",
+    "code": res.get("code") or "",
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ok, true);
+        assert.strictEqual(payload.skipped, true);
+        assert.strictEqual(payload.reason, 'already_satisfied');
+        assert.notStrictEqual(payload.code, 'EXTRAS_LOCKED_IN_PROCESS');
     });
 
     it('skips vad-whisperseg pip when probe reports ready', function () {
@@ -727,5 +1215,285 @@ print(json.dumps({"a": a, "b": b}))
         assert.ok(parsed.b);
         assert.ok(parsed.b.downloadedBytes > 40 * 1024 * 1024);
         assert.ok(parsed.b.bytesPerSecond > 5 * 1024 * 1024);
+    });
+
+    it('picks a cp312 win_amd64 wheel from a simple index and skips yanked / wrong tags', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from transub_engine.pip_mirror_util import choose_wheel_link, parse_simple_index_wheels
+html = """
+<a href="../../packages/aa/av-16.0.0-cp312-cp312-manylinux_2_17_x86_64.whl#sha256=abc">linux</a>
+<a href="../../packages/bb/av-11.0.0-cp312-cp312-win_amd64.whl#sha256=def" data-requires-python="&gt;=3.8">win</a>
+<a href="../../packages/cc/av-15.0.0-cp312-cp312-win_amd64.whl#sha256=old" data-yanked="broken">yanked</a>
+<a href="../../packages/dd/av-12.0.0-py3-none-any.whl">pure</a>
+<a href="../../packages/ee/av-17.0.0-cp312-cp312-win_amd64.whl" data-requires-python="&gt;=3.13">too-new</a>
+<a href="../../packages/ff/av-9.0.0-cp312-cp312-win_amd64.whl">too-old</a>
+"""
+links = parse_simple_index_wheels(html)
+chosen = choose_wheel_link(links, "av>=10")
+extras = choose_wheel_link(links, "nemo_toolkit[asr]>=2.2")
+print(json.dumps({
+    "file": chosen.get("filename") if chosen else "",
+    "version": chosen.get("version") if chosen else "",
+    "extras": extras,
+    "count": len(links),
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.file, 'av-11.0.0-cp312-cp312-win_amd64.whl');
+        assert.strictEqual(payload.version, '11.0.0');
+        assert.strictEqual(payload.extras, null);
+        assert.ok(payload.count >= 4);
+    });
+
+    it('choose_wheel_link skips pre-release mpmath unless the pin asks for it', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from transub_engine.pip_mirror_util import choose_wheel_link, parse_simple_index_wheels
+from transub_engine.runtime_extras import TORCH_HARD_PY_DEPS
+html = """
+<a href="../../packages/aa/mpmath-1.5.0a1-py3-none-any.whl">alpha</a>
+<a href="../../packages/bb/mpmath-1.3.0-py3-none-any.whl">stable</a>
+<a href="../../packages/cc/mpmath-1.4.0a2-py3-none-any.whl">older-alpha</a>
+"""
+links = parse_simple_index_wheels(html)
+stable = choose_wheel_link(links, "mpmath>=1.3.0")
+pinned = choose_wheel_link(links, "mpmath>=1.3.0,<1.5")
+explicit_pre = choose_wheel_link(links, "mpmath>=1.5.0a1")
+hard = next(x for x in TORCH_HARD_PY_DEPS if x.startswith("mpmath"))
+print(json.dumps({
+    "stable": (stable or {}).get("version"),
+    "pinned": (pinned or {}).get("version"),
+    "explicit_pre": (explicit_pre or {}).get("version"),
+    "hard_pin": hard,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.stable, '1.3.0');
+        assert.strictEqual(payload.pinned, '1.3.0');
+        assert.strictEqual(payload.explicit_pre, '1.5.0a1');
+        assert.ok(
+            payload.hard_pin.includes('<1.5'),
+            `expected mpmath cap <1.5, got ${payload.hard_pin}`,
+        );
+    });
+
+    it('NVIDIA force-heal strips bare torch/torchaudio when CUDA already matches', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+
+calls = []
+seen_pkgs = []
+def track_cuda(**k):
+    calls.append("cuda")
+    return {"ok": True, "installed": ["torch", "torchaudio"]}
+def track_download(pkgs, *a, **k):
+    calls.append("download")
+    seen_pkgs.extend(list(pkgs or []))
+    return {"ok": False, "error": "stop after asserting stripped pkgs"}
+
+with patch.object(re, "_nvidia_gpu_present", return_value=True), \\
+     patch.object(re, "_torch_cuda_importable", return_value=True), \\
+     patch.object(re, "_torchaudio_cuda_variant_mismatch", return_value=False), \\
+     patch.object(re, "_prefer_skip_known_wheel", return_value=False), \\
+     patch.object(re, "_unsatisfied_packages", side_effect=lambda pkgs: list(pkgs)), \\
+     patch.object(re, "_reassert_shared_runtime_pins", return_value={"ok": True, "skipped": True}), \\
+     patch("transub_engine.device.torch_cuda_variant_mismatch", return_value=False), \\
+     patch("transub_engine.runtime_audio._install_torch_cuda", side_effect=track_cuda), \\
+     patch("transub_engine.runtime_extras.download_requirements_direct", side_effect=track_download), \\
+     patch("transub_engine.runtime_extras.resolve_pip_mirror_order", return_value=(
+         [("https://example.com/simple", "example.com")], [], False
+     )):
+    only_torch = re._install_packages(
+        ["torch", "torchaudio"],
+        force=True,
+        reassert_pins=False,
+    )
+    mixed = re._install_packages(
+        ["transformers>=5.13.0,<5.16", "torch", "torchaudio"],
+        force=True,
+        reassert_pins=False,
+    )
+print(json.dumps({
+    "onlyOk": bool(only_torch.get("ok")),
+    "onlyReason": only_torch.get("reason") or "",
+    "mixedCalls": calls,
+    "mixedPkgs": seen_pkgs,
+    "mixedHasTorch": any(re._torch_family_req(p) for p in seen_pkgs),
+    "mismatchHint": "成对重装 CUDA" in re._qwen3_repair_hint(
+        ["Qwen3ASRProcessor: Could not load this library: libtorchaudio.pyd ← [WinError 127] 找不到指定的程序。"],
+        ["transformers"],
+    ),
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.onlyOk, true);
+        assert.strictEqual(payload.onlyReason, 'torch_cuda_already_satisfied');
+        assert.deepStrictEqual(payload.mixedCalls, ['download']);
+        assert.strictEqual(payload.mixedHasTorch, false);
+        assert.ok(payload.mixedPkgs.some((p) => String(p).includes('transformers')));
+        assert.strictEqual(payload.mismatchHint, true);
+    });
+
+    it('qwen3 repair hint says ROCm not CUDA on AMD torchaudio WinError 127', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+
+with patch.object(re, "_nvidia_gpu_present", return_value=False), \\
+     patch("transub_engine.rocm_device.amd_gpu_present", return_value=True):
+    hint = re._qwen3_repair_hint(
+        ["torchaudio: Could not load this library: libtorchaudio.pyd ← [WinError 127] 找不到指定的程序。",
+         "Qwen3ASRProcessor: Could not load this library: libtorchaudio.pyd ← [WinError 127] 找不到指定的程序。"],
+        ["torchaudio", "transformers"],
+    )
+print(json.dumps({"hint": hint}))
+`);
+        const payload = JSON.parse(out);
+        assert.ok(/ROCm/.test(payload.hint), payload.hint);
+        assert.ok(!/成对重装 CUDA/.test(payload.hint), payload.hint);
+    });
+
+    it('NVIDIA force-heal reinstalls CUDA when torchaudio is a CPU hybrid', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+
+calls = []
+def track_cuda(**k):
+    calls.append("cuda")
+    return {"ok": True, "installed": ["torch", "torchaudio"]}
+def track_download(*a, **k):
+    calls.append("download")
+    return {"ok": False, "error": "should not download CPU torch"}
+
+with patch.object(re, "_nvidia_gpu_present", return_value=True), \\
+     patch.object(re, "_torch_cuda_importable", return_value=True), \\
+     patch.object(re, "_torchaudio_cuda_variant_mismatch", return_value=True), \\
+     patch.object(re, "_prefer_skip_known_wheel", return_value=False), \\
+     patch.object(re, "_unsatisfied_packages", side_effect=lambda pkgs: list(pkgs)), \\
+     patch.object(re, "_reassert_shared_runtime_pins", return_value={"ok": True, "skipped": True}), \\
+     patch("transub_engine.device.torch_cuda_variant_mismatch", return_value=False), \\
+     patch("transub_engine.runtime_audio._install_torch_cuda", side_effect=track_cuda), \\
+     patch("transub_engine.runtime_extras.download_requirements_direct", side_effect=track_download):
+    result = re._install_packages(
+        ["torch", "torchaudio"],
+        force=True,
+        reassert_pins=False,
+    )
+print(json.dumps({
+    "ok": bool(result.get("ok")),
+    "calls": calls,
+    "hasCuda": bool(result.get("torchCuda")),
+    "installed": result.get("installed") or [],
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ok, true);
+        // May run CUDA once in the torch_pkgs branch and again in the
+        // pre-pip reassert while the mismatch probe is still patched True.
+        assert.ok(payload.calls.length >= 1);
+        assert.ok(payload.calls.every((c) => c === 'cuda'));
+        assert.ok(!payload.calls.includes('download'));
+        assert.strictEqual(payload.hasCuda, true);
+        assert.ok(payload.installed.includes('torch') || payload.installed.includes('torchaudio'));
+    });
+
+    it('torchaudio CPU metadata is unsatisfied on NVIDIA when CUDA torch libs exist', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+
+with patch.object(re, "_nvidia_gpu_present", return_value=True), \\
+     patch.object(re, "_torch_cuda_importable", return_value=True), \\
+     patch.object(re, "_pkg_version_str", side_effect=lambda n: {
+         "torchaudio": "2.11.0",
+         "torch": "2.11.0+cu126",
+         "mpmath": None,
+     }.get(n)), \\
+     patch("transub_engine.device.installed_torch_cuda_tag", return_value="cu126"), \\
+     patch.object(re, "pkg_version", side_effect=lambda n: {
+         "torchaudio": "2.11.0",
+         "torch": "2.11.0+cu126",
+     }[n]):
+    ta_ok = re._requirement_satisfied("torchaudio")
+    torch_ok = re._requirement_satisfied("torch")
+    mismatch = re._torchaudio_cuda_variant_mismatch()
+print(json.dumps({"taOk": ta_ok, "torchOk": torch_ok, "mismatch": mismatch}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.mismatch, true);
+        assert.strictEqual(payload.taOk, false);
+        assert.strictEqual(payload.torchOk, true);
+    });
+
+    it('AMD force-heal keeps ROCm and does not install CUDA torch', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+
+calls = []
+def track_rocm(**k):
+    calls.append("rocm")
+    return {"ok": True, "installed": ["torch", "torchaudio"], "gfx": "gfx1100"}
+def track_cuda(**k):
+    calls.append("cuda")
+    return {"ok": True, "installed": ["torch", "torchaudio"]}
+def track_download(pkgs, *a, **k):
+    calls.append("download")
+    return {"ok": False, "error": "stop"}
+
+with patch.object(re, "_nvidia_gpu_present", return_value=False), \\
+     patch("transub_engine.rocm_device.amd_gpu_present", return_value=True), \\
+     patch("transub_engine.rocm_device.torch_rocm_libs_present", return_value=True), \\
+     patch("transub_engine.rocm_device.install_torch_rocm", side_effect=track_rocm), \\
+     patch.object(re, "_torch_rocm_variant_mismatch", return_value=False), \\
+     patch.object(re, "_prefer_skip_known_wheel", return_value=False), \\
+     patch.object(re, "_unsatisfied_packages", side_effect=lambda pkgs: list(pkgs)), \\
+     patch.object(re, "_reassert_shared_runtime_pins", return_value={"ok": True, "skipped": True}), \\
+     patch.object(re, "_reassert_gpu_torch_after_extras", return_value={"ok": True, "skipped": True}), \\
+     patch("transub_engine.runtime_audio._install_torch_cuda", side_effect=track_cuda), \\
+     patch("transub_engine.runtime_extras.download_requirements_direct", side_effect=track_download), \\
+     patch("transub_engine.runtime_extras.resolve_pip_mirror_order", return_value=(
+         [("https://example.com/simple", "example.com")], [], False
+     )), \\
+     patch("transub_engine.rocm_device.probe_torchvision_import", return_value=(True, "")), \\
+     patch("transub_engine.rocm_device.reconcile_broken_torchvision", return_value={"ok": True}):
+    only = re._install_packages(["torch", "torchaudio"], force=True, reassert_pins=False)
+    mixed = re._install_packages(
+        ["peft>=0.17.0,<1", "torch", "torchaudio"],
+        force=True,
+        reassert_pins=False,
+    )
+print(json.dumps({
+    "onlyOk": bool(only.get("ok")),
+    "onlyReason": only.get("reason") or "",
+    "calls": calls,
+    "skippedCuda": "cuda" not in calls,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.onlyOk, true);
+        assert.strictEqual(payload.onlyReason, 'torch_rocm_already_satisfied');
+        assert.strictEqual(payload.skippedCuda, true);
+        assert.ok(!payload.calls.includes('rocm'), 'should not reinstall ROCm when already OK');
+        assert.ok(payload.calls.includes('download'));
     });
 });

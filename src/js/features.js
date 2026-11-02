@@ -219,7 +219,7 @@
         }
     }
 
-    /** Keys owned by task / MT chips — presets must not overwrite or persist them. */
+    /** Keys owned by task / MT chips / settings-only audio — presets must not overwrite or persist them. */
     const PRESET_SKIP_KEYS = Object.freeze([
         'task',
         'translateMode',
@@ -227,6 +227,8 @@
         'engineLlmMtModel',
         'glossaryMtEnabled',
         'sakuraNsfwPrompt',
+        'filmAudioEnhance',
+        'enhanceForVadOnly',
     ]);
 
     function optionsForApply(preset) {
@@ -261,9 +263,94 @@
         return { ok: false, needPro: true };
     }
 
+    async function resolveAdvancedEntitledForPreset() {
+        if (typeof core()?.isAdvancedEntitled === 'function' && core().isAdvancedEntitled()) {
+            return true;
+        }
+        try {
+            const st = await electron?.transubAdvancedGetStatus?.();
+            if (st?.entitled || st?.status?.entitled || st?.devUnlock) return true;
+        } catch { /* ignore */ }
+        return false;
+    }
+
+    async function resolveDemucsReadyForPreset() {
+        const gate = global.TransubPresetFilmAudioGate;
+        try {
+            const res = await electron?.transubEngineAudioSeparateStatus?.({});
+            return gate?.isDemucsReadyFromProbe
+                ? gate.isDemucsReadyFromProbe(res, {
+                    isDemucsRuntimeUsable: global.TransubEngineModelsUi?.isDemucsRuntimeUsable,
+                })
+                : !!(res?.ok && (
+                    String(res.status || '').trim() === 'ready'
+                    || res.installed === true
+                ));
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * When a preset turns on film audio enhance / film VAD: strip + toast if not Pro
+     * or (for Demucs path) Demucs is not installed. Does not block applying the rest.
+     */
+    async function gateFilmAudioPresetPatch(patchIn) {
+        const gate = global.TransubPresetFilmAudioGate;
+        const patch = patchIn && typeof patchIn === 'object' ? patchIn : {};
+        if (!gate?.stripFilmAudioFromPresetOptions) return patch;
+        const wantsFilm = !!patch.filmAudioEnhance || !!patch.enhanceForVadOnly;
+        const wantsVad = !!patch.filmVadPreset;
+        if (!wantsFilm && !wantsVad) return patch;
+
+        const entitled = await resolveAdvancedEntitledForPreset();
+        let demucsReady = true;
+        if (wantsFilm && entitled) {
+            demucsReady = await resolveDemucsReadyForPreset();
+        }
+        const result = gate.stripFilmAudioFromPresetOptions(patch, { entitled, demucsReady });
+        if (result.changed) {
+            const messages = gate.buildStripToastMessages(result.reasons, {
+                strippedFilm: result.strippedFilm,
+                strippedVad: result.strippedVad,
+            });
+            for (const msg of messages) {
+                const text = uiTx(msg);
+                global.TransubMainUiUx?.showToast?.(text, 'warn');
+                core()?.appendLog?.(text, 'warn');
+            }
+        }
+        return result.options;
+    }
+
+    /**
+     * Cantonese ASR emits Chinese characters — force task=transcribe at apply time
+     * (not stored on preset JSON). Toast only when the task actually changes.
+     */
+    function applyYueTranscribeSideEffect(options, { presetId = '' } = {}) {
+        const gate = global.TransubPresetYueTranscribe;
+        if (!gate?.mergeYueTranscribeTask) {
+            return options && typeof options === 'object' ? options : {};
+        }
+        const result = gate.mergeYueTranscribeTask(options, { presetId });
+        if (result.changed && result.tipMessage) {
+            const text = uiTx(result.tipMessage);
+            global.TransubMainUiUx?.showToast?.(text, 'info');
+            core()?.appendLog?.(text, 'info');
+            setPresetStatus(text, 'ok');
+        }
+        return result.options;
+    }
+
     async function applyPresetOptions(optionsPatch, { presetId = '', persist = false } = {}) {
         if (!core()?.applyOptionsToForm) return false;
-        const patch = optionsForApply({ options: optionsPatch });
+        // Ensure hidden #languageSelect / #taskSelect exist so 片源/目标 chips stick.
+        try {
+            const ensureDom = global.TransubSettingsDomLoad?.ensureSettingsDom;
+            if (typeof ensureDom === 'function') await ensureDom();
+        } catch { /* optional */ }
+        let patch = optionsForApply({ options: optionsPatch });
+        patch = await gateFilmAudioPresetPatch(patch);
         const requiredIds = (typeof (global.TransubEngineMissingModels?.collectRequiredModelIdsFromOptions) === 'function')
             ? global.TransubEngineMissingModels.collectRequiredModelIdsFromOptions(patch)
             : [patch.engineAsrModel, patch.engineVadModel].map((id) => String(id || '').trim()).filter(Boolean);
@@ -279,9 +366,15 @@
             if (!ready) return false;
         }
         const current = core().buildSavedOptionsFromForm();
-        const next = { ...current, ...patch };
+        let next = { ...current, ...patch };
         if (presetId) next.activePresetId = presetId;
+        next = applyYueTranscribeSideEffect(next, { presetId });
         await core().applyOptionsToForm(next);
+        // Keep lazy-form keys (timingAlign*) in snapshot even before settings DOM exists.
+        core().setSavedOptionsSnapshot?.({
+            ...(core().getSavedOptionsSnapshot?.() || {}),
+            ...next,
+        });
         if (presetId) {
             core().applyActivePresetIdToSelect?.(presetId);
         }
@@ -294,6 +387,25 @@
                 ...core().buildSavedOptionsFromForm(),
                 activePresetId: presetId || '',
                 ...(patch.contentProfile ? { contentProfile: patch.contentProfile } : {}),
+                ...(patch.language != null && String(patch.language).trim() !== ''
+                    ? { language: String(patch.language).trim() }
+                    : (next.language != null && String(next.language).trim() !== ''
+                        ? { language: String(next.language).trim() }
+                        : {})),
+                ...(Object.prototype.hasOwnProperty.call(patch, 'timingAlign')
+                    ? { timingAlign: patch.timingAlign !== false }
+                    : {}),
+                ...(patch.timingAlignModel != null && String(patch.timingAlignModel).trim() !== ''
+                    ? { timingAlignModel: String(patch.timingAlignModel).trim() }
+                    : {}),
+                ...(Object.prototype.hasOwnProperty.call(patch, 'singingKaraoke')
+                    ? { singingKaraoke: !!patch.singingKaraoke }
+                    : (presetId === 'zh-yue-qwen3-song'
+                        ? { singingKaraoke: true }
+                        : (presetId ? { singingKaraoke: false } : {}))),
+                ...(presetId === 'zh-yue-qwen3-song'
+                    ? { filmAudioEnhance: false, enhanceForVadOnly: false }
+                    : {}),
             };
             const saveRes = await electron?.transWithAiSaveOptions?.(opts);
             if (saveRes?.ok !== false) {
@@ -656,7 +768,8 @@
         const res = await electron?.transWithAiGetPresets?.();
         const preset = res?.presets?.find((p) => p.id === presetId);
         if (!preset?.options || !core()?.applyOptionsToForm) return false;
-        const patch = optionsForApply(preset);
+        let patch = optionsForApply(preset);
+        patch = await gateFilmAudioPresetPatch(patch);
         const requiredIds = (typeof (global.TransubEngineMissingModels?.collectRequiredModelIdsFromOptions) === 'function')
             ? global.TransubEngineMissingModels.collectRequiredModelIdsFromOptions(patch)
             : [patch.engineAsrModel, patch.engineVadModel].map((id) => String(id || '').trim()).filter(Boolean);
@@ -670,8 +783,14 @@
             if (!ready) return false;
         }
         const current = core().buildSavedOptionsFromForm();
-        const next = { ...current, ...patch, activePresetId: presetId };
+        let next = { ...current, ...patch, activePresetId: presetId };
+        next = applyYueTranscribeSideEffect(next, { presetId });
         await core().applyOptionsToForm(next);
+        // Keep lazy-form keys (timingAlign*) in snapshot even before settings DOM exists.
+        core().setSavedOptionsSnapshot?.({
+            ...(core().getSavedOptionsSnapshot?.() || {}),
+            ...next,
+        });
         core().applyActivePresetIdToSelect?.(presetId);
         global.TransubScenePresetsUi?.refreshFromDomSelect?.();
         core().updateParamsSummary?.();
@@ -683,6 +802,25 @@
                 activePresetId: presetId,
                 ...(patch.contentProfile
                     ? { contentProfile: patch.contentProfile }
+                    : {}),
+                ...(patch.language != null && String(patch.language).trim() !== ''
+                    ? { language: String(patch.language).trim() }
+                    : (next.language != null && String(next.language).trim() !== ''
+                        ? { language: String(next.language).trim() }
+                        : {})),
+                ...(Object.prototype.hasOwnProperty.call(patch, 'timingAlign')
+                    ? { timingAlign: patch.timingAlign !== false }
+                    : {}),
+                ...(patch.timingAlignModel != null && String(patch.timingAlignModel).trim() !== ''
+                    ? { timingAlignModel: String(patch.timingAlignModel).trim() }
+                    : {}),
+                ...(Object.prototype.hasOwnProperty.call(patch, 'singingKaraoke')
+                    ? { singingKaraoke: !!patch.singingKaraoke }
+                    : (presetId === 'zh-yue-qwen3-song'
+                        ? { singingKaraoke: true }
+                        : { singingKaraoke: false })),
+                ...(presetId === 'zh-yue-qwen3-song'
+                    ? { filmAudioEnhance: false, enhanceForVadOnly: false }
                     : {}),
             };
             const saveRes = await electron?.transWithAiSaveOptions?.(opts);
@@ -1001,7 +1139,13 @@
                 const builtin = (list?.presets || []).find((p) => p.builtin && /默认|均衡|default/i.test(p.name || ''))
                     || (list?.presets || []).find((p) => p.builtin);
                 if (builtin?.options) {
-                    core()?.applyOptionsToForm?.(builtin.options);
+                    const patch = optionsForApply(builtin);
+                    // Reset-to-defaults: film enhance stays settings-owned but defaults off.
+                    core()?.applyOptionsToForm?.({
+                        ...patch,
+                        filmAudioEnhance: false,
+                        enhanceForVadOnly: false,
+                    });
                     core()?.markSettingsDirty?.(true);
                     core()?.setSaveParamsStatus?.(uiTf('已套用「{name}」，请点「保存设置」写入磁盘', { name: builtin.name }), 'warn');
                     if (status) status.textContent = uiTf('已套用内置预设「{name}」— 请点底部「保存设置」', { name: builtin.name });
@@ -1096,7 +1240,16 @@
 
     global.addEventListener?.('transub-ui-fragment-ready', (ev) => {
         const key = ev?.detail?.key;
-        if (key === 'settings-panels') bindSettingsExtras();
+        if (key === 'settings-panels') {
+            bindSettingsExtras();
+            // Re-apply timingAlign* into freshly injected controls from snapshot.
+            try {
+                const snap = core()?.getSavedOptionsSnapshot?.();
+                if (snap && (snap.timingAlignModel != null || snap.timingAlign != null)) {
+                    void core()?.applyOptionsToForm?.(snap, { applyUiMode: false });
+                }
+            } catch { /* ignore */ }
+        }
         if (key === 'factory-modals') bindModals();
     });
 

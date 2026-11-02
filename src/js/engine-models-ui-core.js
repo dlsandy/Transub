@@ -15,16 +15,31 @@
         vad: 1,
         mt: 2,
         llm: 3,
-        separate: 4,
+        decision: 4,
+        separate: 5,
     });
 
-    const MODELS_GROUP_FILTERS = Object.freeze(['all', 'asr', 'vad', 'llm', 'separate']);
+    const MODELS_GROUP_FILTERS = Object.freeze(['all', 'asr', 'vad', 'llm', 'decision', 'separate']);
     const MODELS_STATUS_FILTERS = Object.freeze([
         'all', 'installed', 'available', 'recommended', 'incomplete', 'experimental',
     ]);
     /** @deprecated use MODELS_GROUP_FILTERS + MODELS_STATUS_FILTERS */
     const MODELS_FILTERS = Object.freeze([...MODELS_GROUP_FILTERS, ...MODELS_STATUS_FILTERS.filter((x) => x !== 'all')]);
-    const RETIRED_ENGINE_ASR_IDS = new Set(['qwen3-asr-1.7b-ja']);
+    const RETIRED_ENGINE_ASR_IDS = new Set([
+        'qwen3-asr-1.7b-ja',
+        'qwen3-asr-1.7b-ja-anime-lora-v3',
+    ]);
+
+    /** Runtime-bundled VAD — no Hub download; keep selectable even if catalog omits them. */
+    const BUNDLED_ALWAYS_READY_MODEL_IDS = Object.freeze(['silero-vad', 'ten-vad']);
+    const BUNDLED_ALWAYS_READY_LABELS = Object.freeze({
+        'silero-vad': 'Silero VAD（随 faster-whisper 内置）',
+        'ten-vad': 'TEN VAD（随引擎运行时）',
+    });
+
+    function isBundledAlwaysReadyModelId(id) {
+        return BUNDLED_ALWAYS_READY_MODEL_IDS.includes(String(id || '').trim());
+    }
 
     function isRetiredMtModelId(id) {
         return /^transub-ja/i.test(String(id || '').trim());
@@ -95,6 +110,7 @@
         if (kind === 'asr') return 'ASR';
         if (kind === 'mt') return 'MT';
         if (kind === 'vad') return 'VAD';
+        if (kind === 'decision') return '决策';
         if (kind === 'demucs' || kind === 'separate') return '人声分离';
         return String(kind || '').toUpperCase() || '模型';
     }
@@ -143,6 +159,9 @@
             || lower.includes('connection reset')
             || lower.includes('econnreset')
             || msg.includes('远程主机强迫关闭')
+            || lower.includes('localentrynotfound')
+            || (lower.includes('local cache') && (lower.includes('hub') || lower.includes('internet') || lower.includes('connection')))
+            || (lower.includes('cannot find the requested files') && (lower.includes('hub') || lower.includes('internet') || lower.includes('connection')))
             || (lower.includes('hub') && lower.includes('internet connection'))
             || (lower.includes('snapshot folder') && lower.includes('internet'))
         );
@@ -220,6 +239,7 @@
             ];
             if (item.group === 'separate') hayParts.push('人声分离', 'demucs');
             if (item.group === 'llm') hayParts.push('llm', '推理', 'gguf');
+            if (item.group === 'decision') hayParts.push('决策', 'laya', 'opendecider', 'system one');
             if (item.experimental || item.lab || item.source === 'lab') {
                 hayParts.push('实验', '实验室', 'lab', 'experimental');
             }
@@ -257,13 +277,14 @@
             asr: 0,
             vad: 0,
             llm: 0,
+            decision: 0,
             separate: 0,
         };
         for (const item of list) {
             if (itemMatchesModelsStatusFilter(item, status)) {
                 counts.all += 1;
                 const g = String(item?.group || '');
-                if (g === 'asr' || g === 'vad' || g === 'separate') {
+                if (g === 'asr' || g === 'vad' || g === 'decision' || g === 'separate') {
                     counts[g] += 1;
                 } else if (g === 'llm' || g === 'mt') {
                     counts.llm += 1;
@@ -367,6 +388,22 @@
             if (typeof args.modelFilter === 'function' && !args.modelFilter(m)) return false;
             return true;
         });
+        // Inject runtime-bundled VAD even when /v1/models or fallback catalog omits them.
+        if (!kind || kind === 'vad') {
+            const allModels = Array.isArray(args.models) ? args.models : [];
+            for (const id of BUNDLED_ALWAYS_READY_MODEL_IDS) {
+                if (list.some((m) => String(m.id || '') === id)) continue;
+                const src = allModels.find((m) => String(m?.id || '') === id);
+                if (src && typeof args.modelFilter === 'function' && !args.modelFilter(src)) continue;
+                list.push({
+                    id,
+                    name: String(src?.name || BUNDLED_ALWAYS_READY_LABELS[id] || id),
+                    kind: 'vad',
+                    installed: true,
+                    incomplete: false,
+                });
+            }
+        }
         let want = String(args.selectedId || '');
         const wantBlocked = !!(want && list.some((m) => {
             if (String(m.id || '') !== want) return false;
@@ -390,7 +427,12 @@
             opts.push(`<option value="${esc(id)}"${sel}${disabledAttr}${titleAttr}>${esc(label)}</option>`);
         }
         if (want && !list.some((m) => String(m.id || '') === want)) {
-            opts.push(`<option value="${esc(want)}" selected>${esc(want)}（未下载）</option>`);
+            if (isBundledAlwaysReadyModelId(want)) {
+                const label = BUNDLED_ALWAYS_READY_LABELS[want] || want;
+                opts.push(`<option value="${esc(want)}" selected>${esc(label)}</option>`);
+            } else {
+                opts.push(`<option value="${esc(want)}" selected>${esc(want)}（未下载）</option>`);
+            }
         }
         if (!opts.length) {
             opts.push('<option value="">（暂无已下载模型）</option>');
@@ -483,6 +525,7 @@
         if (group === 'mt') return 'MT机器翻译';
         if (group === 'llm') return 'LLM推理翻译';
         if (group === 'vad') return 'VAD语音活动检测';
+        if (group === 'decision') return '决策辅助';
         if (group === 'separate') return '人声分离';
         return engineModelKindLabel(group);
     }
@@ -660,7 +703,9 @@
                 ? 'llm'
                 : (rawKind === 'demucs' || rawKind === 'separate'
                     ? 'separate'
-                    : (rawKind === 'asr' || rawKind === 'mt' || rawKind === 'vad' ? rawKind : rawKind || 'other'));
+                    : (rawKind === 'asr' || rawKind === 'mt' || rawKind === 'vad' || rawKind === 'decision'
+                        ? rawKind
+                        : rawKind || 'other'));
             const sizeHint = model.sizeHint
                 || (Number(model.size_hint_mb) > 0 ? `约 ${model.size_hint_mb} MB` : '');
             const ramHint = resolvePickItemRamHint({
@@ -805,18 +850,35 @@
         return [...byId.values()];
     }
 
+    /** Normalize Demucs probe status; ignore HTTP codes left by older IPC bugs. */
+    function resolveDemucsProbeStatus(probe = {}) {
+        const raw = String(probe?.status || '').trim();
+        if (/^\d{3}$/.test(raw)) {
+            // Older bridge overwrote body status with HTTP code; trust installed flag.
+            return probe?.installed === true ? 'ready' : '';
+        }
+        if (raw) return raw;
+        if (probe?.installed === true) return 'ready';
+        return '';
+    }
+
     function buildDemucsPickItem(probe = {}, demucsModelId = 'demucs') {
-        const status = String(probe?.status || '').trim();
+        const status = resolveDemucsProbeStatus(probe);
         const hint = String(probe?.hint || '').trim();
         const ver = probe?.version ? `v${probe.version}` : '';
         const fullyReady = status === 'ready';
-        const cpuUsable = status === 'partial' || status === 'need_torch_cuda';
-        const installed = fullyReady || cpuUsable;
+        const cpuUsable = status === 'partial'
+            || status === 'need_torch_cuda'
+            || status === 'need_torch_rocm'
+            || status === 'need_torch_xpu';
+        const installed = fullyReady || cpuUsable || probe?.installed === true;
         const incomplete = cpuUsable;
-        let note = '开启「常规 → 影视音频增强」前请先下载。pip 安装 Demucs；有 GPU 时会补齐 CUDA PyTorch。';
+        let note = '开启「常规 → 影视音频增强」前请先下载。pip 安装 Demucs；NVIDIA 补齐 CUDA，AMD 补齐 ROCm，Intel Arc 补齐 XPU PyTorch。';
         if (hint || ver) note = [hint || status, ver].filter(Boolean).join(' · ');
-        else if (status === 'partial') note = 'Demucs 可用（CPU）；建议补齐 CUDA PyTorch';
+        else if (status === 'partial') note = 'Demucs 可用（CPU）；建议按显卡补齐 CUDA / ROCm / XPU PyTorch';
         else if (status === 'need_torch_cuda') note = '已装 Demucs，建议补齐 CUDA PyTorch';
+        else if (status === 'need_torch_rocm') note = '已装 Demucs，建议补齐 ROCm PyTorch';
+        else if (status === 'need_torch_xpu') note = '已装 Demucs，建议补齐 XPU PyTorch';
         else if (fullyReady && ver) note = ['已就绪', ver].filter(Boolean).join(' · ');
         return {
             id: demucsModelId,
@@ -836,14 +898,19 @@
     /** True when Demucs can run (GPU ready or CPU fallback). */
     function isDemucsRuntimeUsable(probe = {}) {
         if (!probe || probe.ok === false) return false;
-        const status = String(probe.status || '').trim();
-        return status === 'ready' || status === 'partial' || status === 'need_torch_cuda';
+        const status = resolveDemucsProbeStatus(probe);
+        return status === 'ready'
+            || status === 'partial'
+            || status === 'need_torch_cuda'
+            || status === 'need_torch_rocm'
+            || status === 'need_torch_xpu'
+            || probe.installed === true;
     }
 
     /** True only when CUDA Demucs path is fully ready. */
     function isDemucsFullyReady(probe = {}) {
         if (!probe || probe.ok === false) return false;
-        return String(probe.status || '').trim() === 'ready';
+        return resolveDemucsProbeStatus(probe) === 'ready';
     }
 
     function mergeDemucsPickItem(items, probe = {}, demucsModelId = 'demucs') {
@@ -921,6 +988,8 @@
         countModelsByFilter,
         matchesEngineSelectKind,
         mergeManagedInstalledIntoEngineModels,
+        BUNDLED_ALWAYS_READY_MODEL_IDS,
+        isBundledAlwaysReadyModelId,
         buildInstalledModelSelectOptionsHtml,
         decideEngineDlProgressLogAction,
         formatEngineTestResultMessage,

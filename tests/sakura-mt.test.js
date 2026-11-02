@@ -19,13 +19,34 @@ describe('sakura-mt-catalog-core', () => {
         assert.ok(sakuraCatalog.findCatalogEntry('sakura-galtransl-14b'));
         assert.ok(sakuraCatalog.findCatalogEntry('sakura-galtransl-14b-q4km'));
         assert.ok(sakuraCatalog.findCatalogEntry('sakura-galtransl-14b-q6k'));
+        assert.ok(sakuraCatalog.findCatalogEntry('murasaki-4b-v03'));
+        assert.ok(sakuraCatalog.findCatalogEntry('murasaki-4b-v03-q6k'));
+        assert.ok(sakuraCatalog.findCatalogEntry('murasaki-4b-v03-q8'));
+        assert.strictEqual(sakuraCatalog.findCatalogEntry('murasaki-4b-v03-f16'), null);
+        assert.ok(sakuraCatalog.findCatalogEntry('murasaki-4b-v03-q8').recommended);
+        assert.strictEqual(sakuraCatalog.findCatalogEntry('murasaki-8b-v02'), null);
+        assert.strictEqual(sakuraCatalog.findCatalogEntry('murasaki-14b-v02'), null);
+        assert.ok(sakuraCatalog.findCatalogEntry('orion-4b-v2608'));
         assert.ok(sakuraCatalog.findCatalogEntry('hy-mt2-1.8b'));
         assert.ok(sakuraCatalog.findCatalogEntry('hy-mt2-7b'));
+        assert.ok(sakuraCatalog.findCatalogEntry('index-translate-2b'));
+        assert.ok(sakuraCatalog.findCatalogEntry('index-translate-9b'));
+        assert.ok(sakuraCatalog.findCatalogEntry('index-translate-35b-a3b'));
+        assert.ok(sakuraCatalog.findCatalogEntry('index-translate-35b-a3b-mini'));
+        assert.ok(sakuraCatalog.findCatalogEntry('index-translate-35b-a3b-quality'));
+        assert.ok(sakuraCatalog.findCatalogEntry('index-translate-35b-a3b-q4km'));
+        // Hy-MT2 30B Heretic APEX is proprietary; soft-merge when closed core is present.
+        const hy30 = sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic');
+        if (hy30) {
+            assert.ok(sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-mini'));
+            assert.ok(sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-quality'));
+        }
         assert.ok(sakuraCatalog.findCatalogEntry('hunyuan-mt-chimera-7b-abliterated'));
         assert.ok(sakuraCatalog.findCatalogEntry('hunyuan-mt-7b-abliterated'));
         assert.ok(sakuraCatalog.findCatalogEntry('hy-mt15-1.8b-abliterated'));
         assert.ok(sakuraCatalog.findCatalogEntry('hy-mt15-7b-abliterated'));
         assert.ok(sakuraCatalog.findCatalogEntry('translategemma-4b'));
+        assert.ok(sakuraCatalog.findCatalogEntry('translategemma-4-sub-e2b'));
         assert.ok(sakuraCatalog.findCatalogEntry('translategemma-4-sub-e4b'));
         assert.ok(sakuraCatalog.findCatalogEntry('translategemma-12b'));
         assert.ok(sakuraCatalog.findCatalogEntry('translategemma-27b'));
@@ -33,6 +54,7 @@ describe('sakura-mt-catalog-core', () => {
         assert.ok(sakuraCatalog.findCatalogEntry('sakura-ln-korean-14b'));
         assert.ok(sakuraCatalog.findCatalogEntry('sakura-ln-ko2ja-14b'));
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('translategemma-4b'), 'translategemma');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('translategemma-4-sub-e2b'), 'translategemmasub');
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('translategemma-4-sub-e4b'), 'translategemmasub');
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('hunyuan-mt-chimera-7b-abliterated'), 'hunyuan');
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('hunyuan-mt-7b-abliterated'), 'hunyuan');
@@ -41,14 +63,31 @@ describe('sakura-mt-catalog-core', () => {
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('sakura-ln-korean-7b'), 'ln-korean');
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('sakura-ln-ko2ja-14b'), 'ln-ko2ja');
         assert.strictEqual(sakuraCatalog.isJaZhOnlyMtModel('translategemma-4b'), false);
+        assert.strictEqual(sakuraCatalog.isJaZhOnlyMtModel('translategemma-4-sub-e2b'), false);
         assert.strictEqual(sakuraCatalog.isJaZhOnlyMtModel('translategemma-4-sub-e4b'), false);
+        assert.strictEqual(sakuraCatalog.findCatalogEntry('translategemma-4-sub-e2b').paramBillion, 2);
+        assert.strictEqual(
+            sakuraCatalog.findCatalogEntry('translategemma-4-sub-e2b').fileName,
+            'translate_gemma4_sub-E2B-Q4_K_XL.gguf',
+        );
         assert.strictEqual(sakuraCatalog.isJaZhOnlyMtModel('hunyuan-mt-chimera-7b-abliterated'), false);
-        assert.strictEqual(sakuraCatalog.isJaZhOnlyMtModel('hy-mt2-7b'), true);
+        assert.strictEqual(sakuraCatalog.isJaZhOnlyMtModel('hy-mt2-7b'), false);
+        assert.strictEqual(sakuraCatalog.isJaZhOnlyMtModel('index-translate-9b'), false);
         assert.strictEqual(sakuraCatalog.isJaZhOnlyMtModel('sakura-ln-korean-7b'), false);
+        assert.strictEqual(sakuraCatalog.resolveMtPair('hy-mt2-7b'), null);
+        assert.strictEqual(sakuraCatalog.resolveMtPair('index-translate-9b'), null);
+        assert.strictEqual(sakuraCatalog.mtModelSupportsPair('hy-mt2-7b', 'yue', 'zh'), true);
+        assert.strictEqual(sakuraCatalog.mtModelSupportsPair('hy-mt2-7b', 'ja', 'zh'), true);
+        assert.strictEqual(sakuraCatalog.mtModelSupportsPair('hy-mt2-7b', 'ja', 'ko'), false);
+        assert.strictEqual(sakuraCatalog.mtModelSupportsPair('index-translate-9b', 'ja', 'en'), true);
+        assert.strictEqual(sakuraCatalog.mtModelSupportsPair('index-translate-9b', 'en', 'zh'), true);
         assert.strictEqual(sakuraCatalog.isJaZhOnlyMtModel('sakura-ln-ko2ja-14b'), false);
         assert.deepStrictEqual(sakuraCatalog.resolveMtPair('sakura-ln-korean-7b'), { source: 'ko', target: 'zh' });
         assert.deepStrictEqual(sakuraCatalog.resolveMtPair('sakura-ln-ko2ja-14b'), { source: 'ko', target: 'ja' });
         assert.deepStrictEqual(sakuraCatalog.resolveMtPair('sakura-1.5b'), { source: 'ja', target: 'zh' });
+        assert.ok(sakuraCatalog.isJaZhOnlyMtModel('murasaki-4b-v03'));
+        assert.ok(sakuraCatalog.isJaZhOnlyMtModel('orion-4b-v2608'));
+        assert.deepStrictEqual(sakuraCatalog.resolveMtPair('murasaki-4b-v03'), { source: 'ja', target: 'zh' });
         assert.strictEqual(sakuraCatalog.mtModelSupportsPair('sakura-ln-korean-7b', 'ko', 'zh'), true);
         assert.strictEqual(sakuraCatalog.mtModelSupportsPair('sakura-ln-korean-7b', 'ja', 'zh'), false);
         assert.strictEqual(sakuraCatalog.mtModelSupportsPair('sakura-ln-ko2ja-14b', 'ko', 'ja'), true);
@@ -78,11 +117,31 @@ describe('sakura-mt-catalog-core', () => {
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('sakura-galtransl-7b-q6k'), 'galtransl');
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('sakura-galtransl-v4-4b'), 'galtransl');
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('sakura-galtransl-14b-q6k'), 'galtransl');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('murasaki-4b-v03'), 'murasaki');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('murasaki-4b-v03-q6k'), 'murasaki');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('murasaki-4b-v03-q8'), 'murasaki');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('orion-4b-v2608'), 'orion');
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('hy-mt2-7b'), 'hymt');
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('hy-mt2-1.8b'), 'hymt');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('hy-mt2-30b-a3b-heretic'), 'hymt');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('hy-mt2-30b-a3b-heretic-mini'), 'hymt');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('hy-mt2-30b-a3b-heretic-quality'), 'hymt');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('index-translate-2b'), 'index');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('index-translate-9b'), 'index');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('index-translate-35b-a3b'), 'index');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('index-translate-35b-a3b-mini'), 'index');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('index-translate-35b-a3b-quality'), 'index');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('index-translate-35b-a3b-q4km'), 'index');
+        assert.strictEqual(sakuraCatalog.isJaZhOnlyMtModel('hy-mt2-30b-a3b-heretic'), false);
+        assert.strictEqual(sakuraCatalog.mtModelSupportsPair('hy-mt2-30b-a3b-heretic', 'yue', 'zh'), true);
+        assert.strictEqual(sakuraCatalog.mtModelSupportsPair('hy-mt2-30b-a3b-heretic', 'ja', 'ko'), false);
         assert.strictEqual(
             sakuraCatalog.mtChunkProgressLabel('hunyuan-mt-chimera-7b-abliterated'),
             'Hunyuan MT 翻译',
+        );
+        assert.strictEqual(
+            sakuraCatalog.mtChunkProgressLabel('translategemma-4-sub-e2b'),
+            'TG Sub 翻译',
         );
         assert.strictEqual(
             sakuraCatalog.mtChunkProgressLabel('translategemma-4-sub-e4b'),
@@ -97,8 +156,20 @@ describe('sakura-mt-catalog-core', () => {
             'Hy-MT2 翻译',
         );
         assert.strictEqual(
+            sakuraCatalog.mtChunkProgressLabel('index-translate-9b'),
+            'Index-Translate 翻译',
+        );
+        assert.strictEqual(
             sakuraCatalog.mtChunkProgressLabel('sakura-galtransl-7b'),
             'GalTransl 翻译',
+        );
+        assert.strictEqual(
+            sakuraCatalog.mtChunkProgressLabel('murasaki-4b-v03'),
+            'Murasaki 翻译',
+        );
+        assert.strictEqual(
+            sakuraCatalog.mtChunkProgressLabel('orion-4b-v2608'),
+            'Orion 翻译',
         );
         assert.strictEqual(
             sakuraCatalog.mtChunkProgressLabel('sakura-1.5b'),
@@ -110,9 +181,53 @@ describe('sakura-mt-catalog-core', () => {
         );
         assert.strictEqual(sakuraCatalog.findCatalogEntry('hy-mt2-7b').fileName, 'Hy-MT2-7B-Q4_K_M.gguf');
         assert.strictEqual(sakuraCatalog.findCatalogEntry('hy-mt2-1.8b').fileName, 'Hy-MT2-1.8B-Q4_K_M.gguf');
+        {
+            const compact = sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic');
+            if (compact) {
+                assert.strictEqual(
+                    compact.fileName,
+                    'Hy-MT2-30B-A3B-Uncensored-Heretic-APEX-I-Compact.gguf',
+                );
+                assert.strictEqual(
+                    sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-mini').fileName,
+                    'Hy-MT2-30B-A3B-Uncensored-Heretic-APEX-I-Mini.gguf',
+                );
+                assert.strictEqual(
+                    sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-quality').fileName,
+                    'Hy-MT2-30B-A3B-Uncensored-Heretic-APEX-I-Quality.gguf',
+                );
+                assert.strictEqual(compact.moe, true);
+                assert.strictEqual(compact.activeParamBillion, 3);
+                assert.strictEqual(compact.llamaServer?.nCpuMoe, 18);
+                assert.strictEqual(compact.llamaServer?.nGpuLayers, 40);
+                assert.strictEqual(sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-mini').llamaServer?.nCpuMoe, 12);
+                assert.strictEqual(sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-mini').llamaServer?.nGpuLayers, 60);
+                assert.strictEqual(sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-quality').llamaServer?.nGpuLayers, 99);
+                assert.strictEqual(compact.contextSize, 4096);
+                assert.strictEqual(sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-mini').contextSize, 4096);
+                assert.strictEqual(sakuraCatalog.findCatalogEntry('hy-mt2-30b-a3b-heretic-quality').contextSize, 8192);
+            }
+        }
         assert.strictEqual(sakuraCatalog.findCatalogEntry('hy-mt2-7b').contextSize, 8192);
         assert.strictEqual(sakuraCatalog.findCatalogEntry('hy-mt2-1.8b').contextSize, 8192);
         assert.strictEqual(sakuraCatalog.findCatalogEntry('sakura-galtransl-v4-4b').fileName, 'Galtransl-v4-4B-2601.gguf');
+        assert.strictEqual(
+            sakuraCatalog.findCatalogEntry('murasaki-4b-v03-q6k').fileName,
+            'Murasaki-4B-v0.3-Q6_K.gguf',
+        );
+        assert.ok(String(sakuraCatalog.findCatalogEntry('murasaki-4b-v03-q6k').ggufUrl).includes('shoutmon/Murasaki-Backup'));
+        assert.strictEqual(sakuraCatalog.findCatalogEntry('murasaki-4b-v03-q6k').contextSize, 4096);
+        assert.strictEqual(
+            sakuraCatalog.findCatalogEntry('murasaki-4b-v03-q8').fileName,
+            'Murasaki-4B-v0.3.Q8_0.gguf',
+        );
+        assert.ok(String(sakuraCatalog.findCatalogEntry('murasaki-4b-v03-q8').ggufUrl).includes('mradermacher/Murasaki-4B-v0.3-GGUF'));
+        assert.strictEqual(sakuraCatalog.findCatalogEntry('murasaki-4b-v03-q8').contextSize, 4096);
+        assert.strictEqual(
+            sakuraCatalog.findCatalogEntry('orion-4b-v2608').fileName,
+            'orion-qwen3-4b-sft-v2608-q8_0.gguf',
+        );
+        assert.ok(String(sakuraCatalog.findCatalogEntry('orion-4b-v2608').ggufUrl).includes('shoutmon/Orion-Qwen3-4B-SFT-v2608'));
         assert.strictEqual(
             sakuraCatalog.findCatalogEntry('sakura-galtransl-14b').fileName,
             'Sakura-Galtransl-14B-v3.8-IQ4_XS.gguf',
@@ -126,6 +241,9 @@ describe('sakura-mt-catalog-core', () => {
         assert.ok(!sakuraCatalog.isSakuraMtModel('transub-ja-1.5b-q4km'));
         assert.ok(sakuraCatalog.isRetiredTransubJaModelId('transub-ja-1.5b-q4km'));
         assert.strictEqual(sakuraCatalog.remapRetiredMtModelId('transub-ja-1.5b-f16'), 'sakura-1.5b');
+        assert.strictEqual(sakuraCatalog.remapRetiredMtModelId('murasaki-8b-v02'), 'murasaki-4b-v03-q6k');
+        assert.strictEqual(sakuraCatalog.remapRetiredMtModelId('murasaki-8b-v02-q6k'), 'murasaki-4b-v03-q6k');
+        assert.strictEqual(sakuraCatalog.remapRetiredMtModelId('murasaki-14b-v02'), 'murasaki-4b-v03-q6k');
     });
 
     it('resolves engine HTTP batch size by model size', () => {
@@ -136,6 +254,8 @@ describe('sakura-mt-catalog-core', () => {
         assert.strictEqual(sakuraCatalog.resolveLlmMtEngineBatchSize({ modelId: 'sakura-galtransl-v4-4b' }), 24);
         assert.strictEqual(sakuraCatalog.resolveLlmMtEngineBatchSize({ modelId: 'sakura-7b' }), 16);
         assert.strictEqual(sakuraCatalog.resolveLlmMtEngineBatchSize({ modelId: 'hy-mt2-7b' }), 16);
+        // MoE 30B-A3B batches by ~3B active params, not total experts.
+        assert.strictEqual(sakuraCatalog.resolveLlmMtEngineBatchSize({ modelId: 'hy-mt2-30b-a3b-heretic' }), 24);
         assert.strictEqual(sakuraCatalog.resolveLlmMtEngineBatchSize({ modelId: 'sakura-14b' }), 8);
         assert.strictEqual(sakuraCatalog.resolveLlmMtEngineBatchSize({ modelId: 'sakura-galtransl-14b' }), 8);
         assert.strictEqual(sakuraCatalog.resolveLlmMtEngineBatchSize({ paramBillion: 14 }), 8);
@@ -310,6 +430,17 @@ describe('sakura-translate-core', () => {
         assert.ok(msgs[1].content.includes('こんにちは'));
     });
 
+    it('Qwen/default path uses Yue→Mandarin wording when language=yue', () => {
+        const msgs = sakuraCore.buildChatMessages(
+            [{ index: 0, text: '拥有呢个世界一切嘅' }],
+            { language: 'yue', modelId: 'qwen25-7b' },
+        );
+        assert.ok(msgs[0].content.includes('粤语书面语') || msgs[0].content.includes('普通话'));
+        assert.ok(msgs[1].content.includes('粤语书面语'));
+        assert.ok(msgs[1].content.includes('普通话'));
+        assert.ok(!msgs[1].content.includes('日文文本'));
+    });
+
     it('injects translate style into Sakura system and user prompts', () => {
         const msgs = sakuraCore.buildChatMessages(
             [{ index: 0, text: 'こんにちは' }],
@@ -370,6 +501,341 @@ describe('sakura-translate-core', () => {
             sakuraCore.resolveLightMtFinalizeSanitizeOpts({ modelId: 'sakura-7b' }),
             {},
         );
+    });
+
+    it('uses Murasaki script-mode prompt family for murasaki-4b-v03', () => {
+        const murasakiCore = require('../src/js/murasaki-translate-core');
+        const msgs = sakuraCore.buildChatMessages(
+            [{ index: 0, text: 'こんにちは' }],
+            { modelId: 'murasaki-4b-v03' },
+        );
+        assert.strictEqual(sakuraCore.resolvePromptFamily({ modelId: 'murasaki-4b-v03' }), 'murasaki');
+        assert.strictEqual(murasakiCore.resolveMurasakiPreset({ modelId: 'murasaki-4b-v03' }), 'script');
+        assert.ok(msgs[0].content.includes('Galgame 与动漫台词'));
+        assert.ok(msgs[0].content.includes('拒绝翻译腔'));
+        assert.ok(msgs[0].content.includes('术语校对'));
+        assert.ok(msgs[0].content.includes('对白调校'));
+        assert.ok(msgs[0].content.includes('ゴミ屋敷'));
+        assert.ok(!msgs[0].content.includes('【术语表】'));
+        assert.ok(msgs[1].content.startsWith('请翻译：\n'));
+        assert.ok(msgs[1].content.includes('こんにちは'));
+        assert.ok(!msgs[1].content.includes('共 1 行'));
+        const withGloss = sakuraCore.buildChatMessages(
+            [{ index: 0, text: 'レールガン' }],
+            {
+                modelId: 'murasaki-4b-v03',
+                glossaryTerms: [{ term: 'レールガン', translation: '超电磁炮' }],
+            },
+        );
+        // v0.3: glossary in user message keeps system stable for cachePrompt.
+        assert.ok(!withGloss[0].content.includes('【术语表】'));
+        assert.ok(withGloss[1].content.includes('【术语表】'));
+        assert.ok(withGloss[1].content.includes('レールガン'));
+        assert.ok(withGloss[1].content.includes('超电磁炮'));
+        assert.ok(withGloss[1].content.includes('请翻译：'));
+        assert.strictEqual(
+            sakuraCore.shouldUseNsfwPrompt({ modelId: 'murasaki-4b-v03', sakuraNsfwPrompt: true }),
+            false,
+        );
+        const light = sakuraCore.resolveLightMtFinalizeSanitizeOpts({ modelId: 'murasaki-4b-v03' });
+        assert.strictEqual(light.unstickInventWipe, false);
+        const tok = murasakiCore.estimateMaxTokens([{ text: 'こんにちは' }], { modelId: 'murasaki-4b-v03' });
+        assert.ok(tok >= sakuraCore.estimateMaxTokens([{ text: 'こんにちは' }]));
+        assert.ok(tok <= 2048);
+        const largeInf = murasakiCore.resolveMurasakiInferenceOptions({
+            modelId: 'murasaki-4b-v03',
+            paramBillion: 8,
+        });
+        assert.strictEqual(largeInf.enableThinking, false);
+        assert.strictEqual(largeInf.contextSize, 4096);
+        assert.ok(largeInf.maxTokensCap <= 768);
+        const smallInf = murasakiCore.resolveMurasakiInferenceOptions({ modelId: 'murasaki-4b-v03' });
+        assert.strictEqual(smallInf.enableThinking, false);
+        assert.strictEqual(smallInf.contextSize, 4096);
+        assert.strictEqual(smallInf.windowLines, 3);
+        assert.strictEqual(murasakiCore.resolveMurasakiPreset({ _blankRetry: true }), 'short');
+        assert.strictEqual(murasakiCore.resolveMurasakiPreset({ murasakiPreset: 'novel' }), 'novel');
+        const shortMsgs = sakuraCore.buildChatMessages(
+            [{ index: 0, text: 'ええと…' }],
+            { modelId: 'murasaki-4b-v03', _blankRetry: true },
+        );
+        assert.ok(shortMsgs[0].content.includes('短句翻译引擎'));
+        assert.ok(shortMsgs[0].content.includes('零上下文'));
+        assert.ok(!shortMsgs[0].content.includes('对白调校'));
+        const shortInf = murasakiCore.resolveMurasakiInferenceOptions({
+            modelId: 'murasaki-4b-v03',
+            _blankRetry: true,
+        });
+        assert.strictEqual(shortInf.windowLines, 1);
+        assert.strictEqual(shortInf.enableThinking, false);
+        const novelSys = murasakiCore.resolveSystemPrompt({
+            murasakiPreset: 'novel',
+            enableThinking: false,
+        });
+        assert.ok(novelSys.includes('轻小说翻译家'));
+        assert.ok(novelSys.includes('术语校对'));
+        const novelThink = murasakiCore.resolveSystemPrompt({
+            murasakiPreset: 'novel',
+            enableThinking: true,
+        });
+        assert.ok(novelThink.includes('深度思考'));
+        assert.ok(novelThink.includes('<think>'));
+        const novelInf = murasakiCore.resolveMurasakiInferenceOptions({
+            murasakiPreset: 'novel',
+            enableThinking: true,
+        });
+        assert.ok(novelInf.contextSize >= 8192);
+        assert.ok(novelInf.windowLines >= 6);
+        assert.strictEqual(novelInf.enableThinking, true);
+        assert.strictEqual(novelInf.forceSingleSlot, true);
+        const glossRetryInf = murasakiCore.resolveMurasakiInferenceOptions({
+            modelId: 'murasaki-4b-v03',
+            _glossaryRetry: true,
+        });
+        assert.strictEqual(glossRetryInf.windowLines, 1);
+        assert.ok(glossRetryInf.repetition_penalty >= 1.08);
+        assert.ok(glossRetryInf.temperature <= 0.2);
+        const miss = murasakiCore.collectMurasakiGlossaryMissIndexes(
+            [{ index: 0, text: 'レールガンを撃て' }],
+            [{ index: 0, text: '发射电磁炮' }],
+            {
+                glossaryTerms: [{ term: 'レールガン', translation: '超电磁炮' }],
+            },
+        );
+        assert.deepStrictEqual(miss.indexes, [0]);
+        const hitOk = murasakiCore.collectMurasakiGlossaryMissIndexes(
+            [{ index: 0, text: 'レールガンを撃て' }],
+            [{ index: 0, text: '发射超电磁炮' }],
+            {
+                glossaryTerms: [{ term: 'レールガン', translation: '超电磁炮' }],
+            },
+        );
+        assert.deepStrictEqual(hitOk.indexes, []);
+        assert.ok(murasakiCore.looksLikeMurasakiRepetition('哈哈哈哈哈哈哈哈哈哈哈哈'));
+        assert.ok(murasakiCore.looksLikeMurasakiRepetition('快点快点快点快点快点'));
+        assert.ok(!murasakiCore.looksLikeMurasakiRepetition('过来一下'));
+        const qRetry = murasakiCore.collectMurasakiQualityRetryIndexes(
+            [{ index: 1, text: 'なになになになになになになに' }],
+            [{ index: 1, text: '什么什么什么什么什么什么什么' }],
+            {},
+        );
+        assert.ok(qRetry.indexes.includes(1));
+        const glossMsgs = sakuraCore.buildChatMessages(
+            [{ index: 0, text: 'レールガン' }],
+            {
+                modelId: 'murasaki-4b-v03',
+                glossaryTerms: [{ term: 'レールガン', translation: '超电磁炮' }],
+                _glossaryRetry: true,
+                _blankRetry: true,
+            },
+        );
+        assert.ok(glossMsgs[1].content.includes('严格使用上方术语表'));
+        assert.deepStrictEqual(
+            murasakiCore.orderMurasakiModelIdsForVram(4),
+            [
+                'murasaki-4b-v03',
+                'murasaki-4b-v03-q6k',
+                'murasaki-4b-v03-q8',
+            ],
+        );
+        assert.deepStrictEqual(
+            murasakiCore.orderMurasakiModelIdsForVram(8),
+            [
+                'murasaki-4b-v03-q8',
+                'murasaki-4b-v03-q6k',
+                'murasaki-4b-v03',
+            ],
+        );
+        assert.deepStrictEqual(
+            murasakiCore.orderMurasakiModelIdsForVram(12),
+            [
+                'murasaki-4b-v03-q8',
+                'murasaki-4b-v03-q6k',
+                'murasaki-4b-v03',
+            ],
+        );
+        assert.strictEqual(murasakiCore.canonicalizeMurasakiModelId('murasaki-4b-v03-f16'), 'murasaki-4b-v03-q8');
+        assert.strictEqual(
+            murasakiCore.pickMurasakiModelIdForVram({
+                vramGb: 5,
+                installedIds: ['murasaki-4b-v03-q6k', 'murasaki-4b-v03'],
+            }),
+            'murasaki-4b-v03',
+        );
+        assert.strictEqual(
+            murasakiCore.pickMurasakiModelIdForVram({
+                vramGb: 10,
+                installedIds: ['murasaki-4b-v03-q8', 'murasaki-4b-v03-q6k', 'murasaki-4b-v03'],
+            }),
+            'murasaki-4b-v03-q8',
+        );
+        // Retired F16 on disk must not win over Q8.
+        assert.strictEqual(
+            murasakiCore.pickMurasakiModelIdForVram({
+                vramGb: 12,
+                installedIds: ['murasaki-4b-v03-f16', 'murasaki-4b-v03-q8'],
+            }),
+            'murasaki-4b-v03-q8',
+        );
+        assert.strictEqual(
+            murasakiCore.resolveMurasakiPreset({
+                contentProfile: 'av_soft',
+                cues: [{ text: 'これは長いナレーションです。背景と状況を詳しく説明しています。' }],
+            }),
+            'script',
+        );
+        // Leftover「…」direct fill must use Script (editor batch retranslate parity).
+        assert.strictEqual(
+            murasakiCore.resolveMurasakiPreset({
+                contentProfile: 'av_soft',
+                _ellipsisQuickDirect: true,
+                cues: [{ text: 'ええと…' }],
+            }),
+            'script',
+        );
+        assert.strictEqual(
+            murasakiCore.finalizeMurasakiCue('たかちゃん', '高仓。\n上文参考（勿翻译）：\n俺だって'),
+            '高仓',
+        );
+        assert.strictEqual(
+            murasakiCore.finalizeMurasakiCue('ゆうくん', '上文参考（勿翻译）：……'),
+            '',
+        );
+        assert.strictEqual(
+            murasakiCore.finalizeMurasakiCue('ただいま', '我回来了。'),
+            '我回来了',
+        );
+        assert.strictEqual(
+            murasakiCore.finalizeMurasakiCue('いいの？', '可以吗？'),
+            '可以吗？',
+        );
+        assert.strictEqual(
+            murasakiCore.resolveMurasakiPreset({
+                contentProfile: 'av_soft',
+                _blankRetry: true,
+                cues: [{ text: 'ええと…' }],
+            }),
+            'short',
+        );
+        assert.strictEqual(
+            murasakiCore.resolveMurasakiPreset({
+                contentProfile: 'talk',
+                cues: [
+                    { text: '本日は製品の使い方について詳しくご説明いたします。まず最初のステップをご覧ください。' },
+                    { text: '次に設定画面を開いて必要な項目を順番に入力していきますのでご注意ください。' },
+                ],
+            }),
+            'novel',
+        );
+        assert.ok(murasakiCore.resolveMurasakiRetryBudget(1000) <= 160);
+        assert.ok(murasakiCore.resolveMurasakiRetryBudget(10) >= 48);
+        const prevCtx = murasakiCore.buildMurasakiPreviousContext({
+            sourceCues: [
+                { index: 0, text: '前の線' },
+                { index: 1, text: '今の線' },
+            ],
+            translatedByIndex: new Map([[0, '上一行']]),
+            currentChunkCues: [{ index: 1, text: '今の線' }],
+            maxLines: 2,
+        });
+        assert.strictEqual(prevCtx.previousSourceText, '前の線');
+        assert.strictEqual(prevCtx.previousTranslationText, '上一行');
+        const scriptWithPrev = murasakiCore.buildMurasakiChatMessages(
+            [{ index: 1, text: 'こんにちは' }],
+            {
+                modelId: 'murasaki-4b-v03',
+                previousSourceText: '前の線',
+                previousTranslationText: '上一行',
+            },
+        );
+        assert.ok(scriptWithPrev[1].content.includes('上文参考'));
+        assert.ok(scriptWithPrev[1].content.includes('前の線'));
+        const infStop = murasakiCore.resolveMurasakiInferenceOptions({ modelId: 'murasaki-4b-v03' });
+        assert.ok(Array.isArray(infStop.stop) && infStop.stop.some((s) => /Style|对白调校/.test(s)));
+        const profile = require('../src/js/murasaki-profile-core');
+        assert.strictEqual(profile.stripMurasakiLeak('女主「嗯嗯'), '嗯嗯');
+        assert.strictEqual(profile.stripMurasakiLeak('路过垃圾屋~~'), '路过垃圾屋');
+        assert.ok(profile.LINE_PROMPT_ADDON.includes('ゴミ屋敷'));
+        assert.ok(profile.LINE_PROMPT_ADDON.includes('禁止输出「~~」'));
+        assert.ok(profile.LINE_PROMPT_ADDON.includes('不是「上面」'));
+        assert.ok(profile.LINE_PROMPT_ADDON.includes('挺好吗'));
+        assert.ok(profile.LINE_PROMPT_ADDON.includes('いいか?'));
+        assert.strictEqual(profile.stripMurasakiLeak('- 场景：日常对话中的转折点'), '');
+        assert.ok(profile.looksLikeMurasakiPromptLeak('- 场景：日常对话中的转折点，角色意识到自己说错话'));
+        assert.strictEqual(profile.stripMurasakiLeak('- 基调：轻松、俏皮'), '');
+        assert.ok(profile.looksLikeMurasakiPromptLeak('- 基调：急促、愤怒、充满张力。'));
+        assert.ok(profile.looksLikeMurasakiPromptLeak('[Style & Persona]'));
+        assert.ok(profile.LINE_PROMPT_ADDON.includes('[Style & Persona]'));
+        assert.strictEqual(profile.stripMurasakiLeak('- 女方：语气词表现出呼吸'), '');
+        assert.ok(profile.looksLikeMurasakiPromptLeak('说话人（长辈）：使用了「」'));
+        assert.ok(profile.looksLikeMurasakiPromptLeak('[说话人]'));
+        assert.strictEqual(profile.stripMurasakiLeak('[说话人]'), '');
+        assert.strictEqual(profile.stripMurasakiLeak('{'), '');
+        assert.strictEqual(profile.stripMurasakiLeak('“不可以哦，客人…”'), '不可以哦，客人…');
+        assert.ok(profile.isMurasakiUnusableZh('{'));
+        assert.ok(profile.isMurasakiUnusableZh('}'));
+        assert.strictEqual(profile.finalizeMurasakiCue('で、よく来れたね', '{'), '');
+        assert.ok(profile.looksLikeFeelGoodStemDrop('気持ちいい…?', '吗…？'));
+        assert.strictEqual(profile.finalizeMurasakiCue('気持ちいい…?', '吗…？'), '');
+        assert.ok(profile.LINE_PROMPT_ADDON.includes('舒服'));
+        assert.strictEqual(profile.INFERENCE_SMALL.temperature, 0.26);
+        const murasakiTx = require('../src/js/murasaki-translate-core');
+        assert.ok(murasakiTx.SHORT_PROMPT_ADDON.includes('いいか?'));
+        assert.ok(murasakiTx.SHORT_PROMPT_ADDON.includes('就这样'));
+        assert.ok(!murasakiTx.MURASAKI_MODEL_IDS.includes('murasaki-4b-v03-f16'));
+    });
+
+    it('uses Index-Translate official prompt family', () => {
+        assert.strictEqual(
+            sakuraCore.resolvePromptFamily({ modelId: 'index-translate-9b' }),
+            'index',
+        );
+        const msgs = sakuraCore.buildChatMessages(
+            [{ index: 0, text: 'こんにちは' }],
+            { modelId: 'index-translate-9b', subtitleTargetLang: 'zh-Hans', language: 'ja' },
+        );
+        assert.strictEqual(msgs.length, 1);
+        assert.strictEqual(msgs[0].role, 'user');
+        assert.match(msgs[0].content, /请将以下日语文本翻译为简体中文/);
+        assert.match(msgs[0].content, /こんにちは/);
+    });
+
+    it('uses Orion JSONLINE prompt family for orion-4b-v2608', () => {
+        const msgs = sakuraCore.buildChatMessages(
+            [{ index: 0, text: 'こんにちは' }],
+            { modelId: 'orion-4b-v2608' },
+        );
+        assert.strictEqual(sakuraCore.resolvePromptFamily({ modelId: 'orion-4b-v2608' }), 'orion');
+        assert.strictEqual(msgs.length, 1);
+        assert.strictEqual(msgs[0].role, 'user');
+        assert.ok(msgs[0].content.includes('JSONLINE'));
+        assert.ok(msgs[0].content.includes('"1"'));
+        assert.ok(msgs[0].content.includes('こんにちは'));
+        const withGloss = sakuraCore.buildChatMessages(
+            [{ index: 0, text: 'レールガン' }],
+            {
+                modelId: 'orion-4b-v2608',
+                glossaryTerms: [{ term: 'レールガン', translation: '超电磁炮' }],
+            },
+        );
+        assert.ok(withGloss[0].content.includes('术语表：'));
+        assert.ok(withGloss[0].content.includes('レールガン→超电磁炮'));
+        assert.strictEqual(
+            sakuraCore.shouldUseNsfwPrompt({ modelId: 'orion-4b-v2608', sakuraNsfwPrompt: true }),
+            false,
+        );
+        const orionCore = require('../src/js/orion-translate-core');
+        const parsed = orionCore.parseOrionJsonlineOutput(
+            '{"1":"早上好"}\n{"2":"晚安"}',
+            [{ index: 10, text: 'おはよう' }, { index: 11, text: 'おやすみ' }],
+        );
+        assert.ok(parsed?.ok);
+        assert.strictEqual(parsed.cues[0].index, 10);
+        assert.strictEqual(parsed.cues[0].text, '早上好');
+        assert.strictEqual(parsed.cues[1].text, '晚安');
+        const inf = orionCore.resolveOrionInferenceOptions();
+        assert.strictEqual(inf.enableThinking, false);
+        assert.strictEqual(inf.temperature, 0);
     });
 
     it('builds LN-Korean and LN-ko2ja official prompt shapes', () => {
@@ -622,6 +1088,24 @@ describe('sakura-translate-core', () => {
         assert.strictEqual(parsed.cues[3].text, '');
     });
 
+    it('assessPositionalAlignQuality audits window of 2 cues', () => {
+        const src = [
+            { index: 0, text: '感度は三千倍' },
+            { index: 1, text: '全身が' },
+        ];
+        const scrambled = [
+            { index: 0, text: '全身都' },
+            { index: 1, text: '灵敏度为三千倍' },
+        ];
+        const q = sakuraCore.assessPositionalAlignQuality(src, scrambled);
+        assert.ok(q.suspicious, JSON.stringify(q));
+        const ok = sakuraCore.assessPositionalAlignQuality(src, [
+            { index: 0, text: '灵敏度为三千倍' },
+            { index: 1, text: '全身都' },
+        ]);
+        assert.strictEqual(ok.suspicious, false, JSON.stringify(ok));
+    });
+
     it('assessPositionalAlignQuality detects silent +1 mis-attach with digit anchors', () => {
         const src = [
             { index: 0, text: '感度は三千倍' },
@@ -668,6 +1152,41 @@ describe('sakura-translate-core', () => {
             || /offset_.*semantic/.test(String(q.reason || '')),
             JSON.stringify(q),
         );
+    });
+
+    it('assessPositionalAlignQuality detects soft-AV opening silent +1 (JUR-852 shape)', () => {
+        const src = [
+            { index: 1, text: 'ダメですよ、お客様…' },
+            { index: 2, text: 'そんな顔しないでください' },
+            { index: 3, text: 'お店のルールは…' },
+            { index: 4, text: 'ダメです、出番…' },
+            { index: 5, text: 'お店に怒られちゃうんで…' },
+            { index: 6, text: 'ダメですよ…' },
+        ];
+        // Each ZH is the gloss of the *next* JA (first cue dropped → whole-window +1).
+        const shifted = [
+            { index: 1, text: '请不要露出那种表情…' },
+            { index: 2, text: '店里的规矩是…' },
+            { index: 3, text: '不行，该你上场了…' },
+            { index: 4, text: '不然会被店里责怪的…' },
+            { index: 5, text: '不行的哦…' },
+            { index: 6, text: '就算用那种眼神看着我…' },
+        ];
+        const q = sakuraCore.assessPositionalAlignQuality(src, shifted);
+        assert.ok(q.suspicious, JSON.stringify(q));
+        assert.ok(
+            /offset_plus_one|cross_needle|semantic/.test(String(q.reason || '')),
+            JSON.stringify(q),
+        );
+        const ok = sakuraCore.assessPositionalAlignQuality(src, [
+            { index: 1, text: '不可以哦，客人…' },
+            { index: 2, text: '请不要露出那种表情…' },
+            { index: 3, text: '店里的规矩是…' },
+            { index: 4, text: '不行，该你上场了…' },
+            { index: 5, text: '不然会被店里责怪的…' },
+            { index: 6, text: '不可以哦…' },
+        ]);
+        assert.strictEqual(ok.suspicious, false, JSON.stringify(ok));
     });
 
     it('collectMisalignedCueIndexes flags filming invent and shifted windows', () => {
@@ -743,6 +1262,63 @@ describe('sakura-translate-core', () => {
         ];
         const bad = sakuraCore.collectMisalignedCueIndexes(src, zh, { windowSize: 8 });
         assert.deepStrictEqual(bad, []);
+    });
+
+    it('assessHybridAlignGate does not hard-reject blank/ellipsis leftovers', () => {
+        // XVSR-class: ~32-cue hybrid batch after 省略号直译 still has many empties,
+        // but non-blank lines are correctly attached — must keep hybrid, not chat fallback.
+        const src = [];
+        const zh = [];
+        for (let i = 0; i < 32; i += 1) {
+            src.push({ index: i, text: i % 3 === 0 ? 'えっと…' : `今日はよろしくお願いします${i}` });
+            zh.push({
+                index: i,
+                text: i % 3 === 0 ? (i % 6 === 0 ? '…' : '') : `今天请多关照${i}`,
+            });
+        }
+        const withBlank = sakuraCore.collectMisalignedCueIndexes(src, zh, { includeBlank: true });
+        assert.ok(withBlank.length >= 8, JSON.stringify(withBlank));
+        const structural = sakuraCore.collectMisalignedCueIndexes(src, zh, { includeBlank: false });
+        assert.deepStrictEqual(structural, []);
+        const gate = sakuraCore.assessHybridAlignGate(src, zh);
+        assert.strictEqual(gate.hardReject, false, JSON.stringify(gate));
+        assert.ok(gate.blankOnly.length >= 8, JSON.stringify(gate));
+        assert.strictEqual(gate.structural.length, 0, JSON.stringify(gate));
+    });
+
+    it('assessHybridAlignGate hard-rejects dense structural invent/misattach', () => {
+        const src = [
+            { index: 0, text: 'ちゃんと撮れてるかな?' },
+            { index: 1, text: '今日は会社の後輩の翔くんとお出かけします' },
+            { index: 2, text: 'どう?' },
+            { index: 3, text: 'ちょっとセクシーな感じにしてみて' },
+            { index: 4, text: 'セクシーってかちょっと見えてる?' },
+            { index: 5, text: 'あら 大丈夫かな?' },
+            { index: 6, text: '天気がいいね' },
+            { index: 7, text: 'デートに行こう' },
+            { index: 8, text: '先輩ありがとう' },
+            { index: 9, text: '後輩の翔くん' },
+            { index: 10, text: '桜がきれい' },
+            { index: 11, text: 'Vログ撮るよ' },
+        ];
+        // Shifted / scrambled ZH so invent+misattach detectors fire densely.
+        const zh = [
+            { index: 0, text: '拍得好吗？' },
+            { index: 1, text: '拍得好吗？' },
+            { index: 2, text: '稍微打扮得性感一点' },
+            { index: 3, text: '性感吗？还是有点儿露出来？' },
+            { index: 4, text: '啊 这样合适吗？' },
+            { index: 5, text: '应该没问题吧' },
+            { index: 6, text: '去约会吧' },
+            { index: 7, text: '前辈谢谢' },
+            { index: 8, text: '后辈翔君' },
+            { index: 9, text: '樱花真美' },
+            { index: 10, text: '拍Vlog哦' },
+            { index: 11, text: '天气真好' },
+        ];
+        const gate = sakuraCore.assessHybridAlignGate(src, zh, { windowSize: 4, minBad: 4, maxRatio: 0.25 });
+        assert.ok(gate.structural.length >= 4, JSON.stringify(gate));
+        assert.strictEqual(gate.hardReject, true, JSON.stringify(gate));
     });
 
     it('exact line count is not a mismatch', () => {

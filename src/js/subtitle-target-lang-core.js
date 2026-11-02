@@ -39,6 +39,104 @@
         'ko',
     ]);
 
+    /** Main-window 目标 chip: 原文 = 仅转写（task=transcribe），不写入成片目标语。 */
+    const SOURCE_TARGET_FORM_VALUE = 'source';
+
+    function isSourceTargetFormValue(raw) {
+        const v = String(raw || '').trim().toLowerCase();
+        return v === SOURCE_TARGET_FORM_VALUE
+            || v === 'original'
+            || v === 'transcribe'
+            || v === '源文'
+            || v === '原文';
+    }
+
+    /** Cantonese ASR already emits Chinese characters (no JA/EN MT pair). */
+    function isYueSourceLanguage(raw) {
+        const lang = String(raw || '').trim().toLowerCase();
+        return lang === 'yue' || lang === 'zh-yue' || lang === 'cantonese';
+    }
+
+    /**
+     * Normalize source language codes. Keep `zh-yue` / cantonese as `yue`
+     * (must run before split('-')[0] which would collapse to `zh`).
+     */
+    function normalizeSourceLanguageCode(raw) {
+        const full = String(raw || '').trim().toLowerCase().replace(/_/g, '-');
+        if (!full || full === 'auto' || full === 'unknown') return '';
+        if (isYueSourceLanguage(full)) return 'yue';
+        if (full === 'jp' || full === 'jpn' || full === 'japanese') return 'ja';
+        if (full === 'eng' || full === 'english') return 'en';
+        if (full === 'kr' || full === 'kor' || full === 'korean') return 'ko';
+        if (full === 'cn' || full === 'chinese' || full === 'zh-cn' || full === 'zh-hans') return 'zh';
+        const s = full.split(/[-_]/)[0];
+        if (!s || s === 'auto' || s === 'unknown') return '';
+        return s;
+    }
+
+    /** Written Cantonese particle heuristic (simplified ASR forms). */
+    function cuesLookLikeWrittenCantonese(cuesOrText) {
+        const sample = typeof cuesOrText === 'string'
+            ? cuesOrText
+            : (Array.isArray(cuesOrText) ? cuesOrText : [])
+                .slice(0, 48)
+                .map((c) => String(c?.text || ''))
+                .join('');
+        if (!sample.trim()) return false;
+        const hits = (sample.match(/[嘅佢喺啲唔哋冇嚟嗰噉嘢]/g) || []).length;
+        return hits >= 2;
+    }
+
+    /**
+     * Use Yue→Mandarin prompts when language is yue, or zh/auto/empty + cue heuristic.
+     * @param {string|object} langOrOptions
+     * @param {Array|{text?:string}|string|null} [chunkCues]
+     */
+    function shouldUseYueToMandarinPrompt(langOrOptions, chunkCues = null) {
+        let lang = '';
+        let cues = chunkCues;
+        if (langOrOptions && typeof langOrOptions === 'object' && !Array.isArray(langOrOptions)) {
+            lang = String(langOrOptions.language || langOrOptions.sourceLanguage || '').trim().toLowerCase();
+            if (cues == null && Array.isArray(langOrOptions.cues)) cues = langOrOptions.cues;
+        } else {
+            lang = String(langOrOptions || '').trim().toLowerCase();
+        }
+        if (isYueSourceLanguage(lang)) return true;
+        const n = normalizeSourceLanguageCode(lang);
+        if (n && n !== 'zh' && n !== 'yue') return false;
+        return cuesLookLikeWrittenCantonese(cues);
+    }
+
+    /** Short lock line for chat / Qwen / smart prompts. */
+    function yueToMandarinPromptLock() {
+        return '片源为粤语书面语：必须译成普通话简体中文，须改写粤语特有用法，禁止照抄粤语原文。';
+    }
+
+    /** Form chip / settings values that stay in the Chinese script family. */
+    function isZhSubtitleFormValue(raw) {
+        if (isSourceTargetFormValue(raw)) return false;
+        const v = String(raw || '').trim().toLowerCase();
+        if (!v) return false;
+        if (v === 'en' || v === 'ja' || v === 'ko') return false;
+        if (
+            v === 'simplified' || v === 'traditional'
+            || v === 'traditional-tw' || v === 'traditional-hk' || v === 'traditional-twp'
+        ) {
+            return true;
+        }
+        return isZhSubtitleTarget(v);
+    }
+
+    /**
+     * Yue + 原文：仅听写，不跑机器/推理翻译。
+     * Yue + 简体/繁体：走翻译（粤语书面→普通话；繁体再按需 OpenCC）。
+     * Yue + en/ja/ko：仍走翻译任务。
+     */
+    function yueTargetSkipsMachineTranslate(sourceLang, targetForm) {
+        if (!isYueSourceLanguage(sourceLang)) return false;
+        return isSourceTargetFormValue(targetForm);
+    }
+
     function normalizeSubtitleTargetLang(raw) {
         const t = String(raw || '').trim().toLowerCase().replace(/_/g, '-');
         if (!t) return '';
@@ -223,6 +321,15 @@
     return {
         SUBTITLE_TARGET_LANGS,
         FORM_TARGET_VALUES,
+        SOURCE_TARGET_FORM_VALUE,
+        isSourceTargetFormValue,
+        isYueSourceLanguage,
+        normalizeSourceLanguageCode,
+        cuesLookLikeWrittenCantonese,
+        shouldUseYueToMandarinPrompt,
+        yueToMandarinPromptLock,
+        isZhSubtitleFormValue,
+        yueTargetSkipsMachineTranslate,
         normalizeSubtitleTargetLang,
         isZhSubtitleTarget,
         targetLangFromFormValue,

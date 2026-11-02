@@ -1,6 +1,80 @@
 /**
  * Per-item engine batch job outcomes / wait-event progress (pure).
  */
+
+/**
+ * Resolve 推理翻译 model id the same way editor IPC does when the form left「自动」.
+ * Empty model + dual/translate used to ship jobs with no mtBackend; engine then defaults
+ * empty → llama and fails phase-2 with "mtLlama is required".
+ * @param {object} merged
+ * @param {(id: string) => boolean} isLlmMtId
+ * @returns {string}
+ */
+function resolveInferenceMtModelId(merged = {}, isLlmMtId = () => false) {
+    const check = typeof isLlmMtId === 'function' ? isLlmMtId : () => false;
+    const direct = [
+        merged.engineMtModel,
+        merged.engineLlmMtModel,
+        merged.modelId,
+    ].map((x) => String(x || '').trim()).filter(Boolean);
+    for (const id of direct) {
+        if (check(id)) return id;
+    }
+    try {
+        const { loadSettings } = require('./settings-data');
+        const settings = loadSettings()?.options || {};
+        for (const candidate of [settings.engineLlmMtModel, settings.engineMtModel]) {
+            const id = String(candidate || '').trim();
+            if (id && check(id)) return id;
+        }
+    } catch { /* optional */ }
+    try {
+        const sakuraMt = require('../src/js/sakura-mt-catalog-core');
+        const def = String(sakuraMt.DEFAULT_MODEL_ID || '').trim();
+        if (def && check(def)) return def;
+    } catch { /* optional */ }
+    return String(merged.engineMtModel || merged.engineLlmMtModel || '').trim();
+}
+
+/**
+ * Translate-like engine jobs must carry mtBackend=llama+mtLlama or mtBackend=external+mtExternal.
+ * Engine treats missing mtBackend as llama and then requires mtLlama.
+ * @param {object} jobBody
+ * @param {string} engineTask
+ * @returns {{ ok: true } | { ok: false, error: string, code: string }}
+ */
+function assertTranslateJobMtFields(jobBody = {}, engineTask = '') {
+    const task = String(engineTask || jobBody?.task || '').trim();
+    if (task !== 'dual' && task !== 'translate_mt' && task !== 'translate') {
+        return { ok: true };
+    }
+    const backend = String(jobBody?.mtBackend || jobBody?.mt_backend || '').trim().toLowerCase();
+    const mtLlama = jobBody?.mtLlama || jobBody?.mt_llama;
+    const mtExternal = jobBody?.mtExternal || jobBody?.mt_external;
+    if (backend === 'llama' || backend === 'gguf' || backend === 'sakura' || backend === 'llm') {
+        if (mtLlama && typeof mtLlama === 'object') return { ok: true };
+        return {
+            ok: false,
+            code: 'MT_LLAMA_CONFIG',
+            error: 'mtLlama is required when mtBackend=llama（主任务开译配置缺失；编辑器走桌面推理翻译故不受影响）',
+        };
+    }
+    if (backend === 'external' || backend === 'http' || backend === 'llm-external') {
+        if (mtExternal && typeof mtExternal === 'object') return { ok: true };
+        return {
+            ok: false,
+            code: 'MT_EXTERNAL_CONFIG',
+            error: 'mtExternal is required when mtBackend=external',
+        };
+    }
+    // Empty backend: engine defaults to llama — catch before ASR burns hours.
+    return {
+        ok: false,
+        code: 'MT_BACKEND_MISSING',
+        error: '翻译任务未配置 mtBackend（引擎会默认 llama 并要求 mtLlama）。请选择已下载的推理翻译模型，或改用智能翻译',
+    };
+}
+
 function interpretCreateJobResponse(created) {
     if (created?.ok && created?.data?.id) {
         return { ok: true, jobId: String(created.data.id) };
@@ -206,6 +280,22 @@ function resolveFileMtPlan(fileMerged = {}, {
     } catch { /* optional */ }
 
     const task = merged.task;
+    const translateLike = task === 'translate' || task === 'dual';
+    const useSmartTranslate = !!merged.smartTranslate && translateLike;
+
+    // Editor IPC falls back to settings / DEFAULT_MODEL_ID; batch must do the same
+    // before deciding sakura vs bare dual (empty model → engine defaults mtBackend=llama).
+    if (translateLike && !useSmartTranslate) {
+        const resolvedMt = resolveInferenceMtModelId(merged, isLlmMtId);
+        if (resolvedMt && resolvedMt !== String(merged.engineMtModel || '').trim()) {
+            merged = {
+                ...merged,
+                engineMtModel: resolvedMt,
+                engineLlmMtModel: merged.engineLlmMtModel || resolvedMt,
+            };
+        }
+    }
+
     const intlTarget = !!(route && route.isZhTarget === false);
     const modelId = String(merged.engineMtModel || '').trim();
     const modelIsSakuraFamily = mtRouteApi?.isSakuraOrGalMtId
@@ -213,16 +303,14 @@ function resolveFileMtPlan(fileMerged = {}, {
         : /^sakura-|galtransl|^hy-?mt/i.test(modelId);
 
     let useSakuraMt = isLlmMtId(merged.engineMtModel)
-        && !merged.smartTranslate
-        && (task === 'translate' || task === 'dual');
+        && !useSmartTranslate
+        && translateLike;
     // Sakura/Gal/Hy-MT are JA→ZH specialists — never use for intl 成片
     if (intlTarget && modelIsSakuraFamily) {
         useSakuraMt = false;
         blockedNativeOpus = true;
     }
 
-    const useSmartTranslate = !!merged.smartTranslate
-        && (task === 'translate' || task === 'dual');
     const useLlamaMt = !!(
         useSakuraMt
         && preferEngineLlamaMt
@@ -249,18 +337,38 @@ function resolveFileMtPlan(fileMerged = {}, {
         && !useLlamaMt
         && !useSmartTranslate
         && !(jobMtModel && isLlmMtId(jobMtModel) && !modelIsSakuraFamily);
+    const modeRaw = String(merged.translateMode || '').trim().toLowerCase();
+    // Legacy Opus mode was `engine`; normalizeTranslateMode maps it to `llm`.
+    const inferenceMode = !modeRaw
+        || modeRaw === 'engine'
+        || modeRaw === 'llm'
+        || modeRaw === 'sakura';
     const opusOnlyPlan = isOpusJob
         || (
             !useExternalMt
             && !useLlamaMt
             && !useSmartTranslate
             && !jobMtModel
-            && String(merged.translateMode || '').toLowerCase() === 'engine'
+            && inferenceMode
+            && translateLike
         );
+    // Dual/translate with no llama/external/smart plan would POST bare jobs; engine
+    // defaults empty mtBackend→llama and fails at开译 with mtLlama is required.
+    const missingMtBackend = translateLike
+        && !useExternalMt
+        && !useLlamaMt
+        && !useSmartTranslate
+        && !opusOnlyPlan
+        && !isOpusJob;
 
-    const blocked = blockedNativeOpus || intlBlocksNativeOpus || opusOnlyPlan || isOpusJob;
+    const blocked = blockedNativeOpus
+        || intlBlocksNativeOpus
+        || opusOnlyPlan
+        || isOpusJob
+        || missingMtBackend;
     const opusRemovedMsg = mtRouteApi?.OPUS_REMOVED_MSG
         || '机器翻译（Opus）已移除，请改用推理翻译或智能翻译';
+    const missingMtMsg = '翻译任务未配置推理翻译模型（主任务不会像编辑器那样自动回退默认模型）。请在设置中选择已下载的推理翻译模型';
     return {
         useSakuraMt,
         useSmartTranslate,
@@ -274,8 +382,10 @@ function resolveFileMtPlan(fileMerged = {}, {
         intlMtError: blocked
             ? (isOpusJob || opusOnlyPlan
                 ? opusRemovedMsg
-                : (route?.reason
-                    || '非中文成片：请使用通用推理模型或智能翻译；Sakura 仅支持译入中文'))
+                : (missingMtBackend
+                    ? missingMtMsg
+                    : (route?.reason
+                        || '非中文成片：请使用通用推理模型或智能翻译；Sakura 仅支持译入中文')))
             : '',
     };
 }
@@ -367,6 +477,8 @@ module.exports = {
     progressFieldsFromWaitEvent,
     isPostTaskProgressStage,
     sanitizeBatchEngineSseProgress,
+    resolveInferenceMtModelId,
+    assertTranslateJobMtFields,
     resolveFileMtPlan,
     buildFailedItemResult,
     buildCancelledItemResult,

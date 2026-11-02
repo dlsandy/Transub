@@ -94,6 +94,7 @@ function formatUpdateFailureMeta(fail = {}) {
         extract: '解压失败：确认磁盘空间充足且安装目录可写',
         probe: '清单探测失败：检查网络，或稍后再试 GitHub / GitCode',
         download: '下载失败：可改用其它镜像，或从发布页手动下载',
+        assets_pending: '安装包尚未就绪：稍后再检查，或打开发布页确认附件已上传',
         cancelled: '已取消',
     };
     const tip = tipByCode[String(fail.code || '')]
@@ -455,8 +456,149 @@ function appendWebsiteUpdateUrls(state) {
 }
 
 /**
- * Collect zip / manifest / component asset URLs from GitHub + GitCode
- * for the same latest version, then append official-site mirrors for download speed probes.
+ * @returns {{
+ *   zipUrls: string[],
+ *   zipName: string,
+ *   manifestUrls: string[],
+ *   manifestName: string,
+ *   deltaUrls: string[],
+ *   deltaName: string,
+ *   componentUrls: Record<string, string[]>,
+ *   primaryRelease: object|null,
+ * }}
+ */
+function collectAssetsForVersion(hosts, version) {
+    const zipUrls = [];
+    const manifestUrls = [];
+    const deltaUrls = [];
+    /** @type {Record<string, string[]>} */
+    const componentUrls = Object.fromEntries(BLOCK_NAMES.map((c) => [c, []]));
+    let zipName = '';
+    let manifestName = '';
+    let deltaName = '';
+    let primaryRelease = null;
+    let githubRelease = null;
+
+    for (const host of hosts) {
+        if (!host.release || !host.ver || compareVersions(host.ver, version) !== 0) continue;
+        if (host.key === 'github') githubRelease = host.release;
+        if (!primaryRelease) primaryRelease = host.release;
+
+        const zip = pickZipAsset(host.release);
+        if (zip?.browser_download_url) {
+            zipUrls.push(String(zip.browser_download_url));
+            if (!zipName) zipName = String(zip.name || '');
+        }
+        const manifest = pickManifestAsset(host.release);
+        if (manifest?.browser_download_url) {
+            manifestUrls.push(String(manifest.browser_download_url));
+            if (!manifestName) manifestName = String(manifest.name || '');
+        }
+        const delta = pickDeltaAsset(host.release, version);
+        if (delta?.browser_download_url) {
+            deltaUrls.push(String(delta.browser_download_url));
+            if (!deltaName) deltaName = String(delta.name || '');
+        }
+        for (const block of BLOCK_NAMES) {
+            const asset = pickBlockAsset(host.release, block, version)
+                || pickComponentAsset(host.release, block, version);
+            if (asset?.browser_download_url) {
+                componentUrls[block].push(String(asset.browser_download_url));
+            }
+        }
+    }
+
+    // Prefer GitHub payload when several hosts share the same version.
+    if (githubRelease) primaryRelease = githubRelease;
+    for (const block of BLOCK_NAMES) {
+        componentUrls[block] = [...new Set(componentUrls[block])];
+    }
+    return {
+        zipUrls: [...new Set(zipUrls)],
+        zipName,
+        manifestUrls: [...new Set(manifestUrls)],
+        manifestName,
+        deltaUrls: [...new Set(deltaUrls)],
+        deltaName,
+        componentUrls,
+        primaryRelease,
+    };
+}
+
+/**
+ * Prefer the newest release that actually has a full auto-update zip.
+ * If a newer tag exists without zip assets (upload race / host skew), keep it as
+ * announcedVersion and set assetsPending so the UI can explain "no downloadable files".
+ *
+ * @param {object|null} github
+ * @param {object|null} gitcode
+ * @param {{ githubError?: string, gitcodeError?: string }} [errors]
+ */
+function buildDualHostReleaseState(github, gitcode, errors = {}) {
+    const hosts = [
+        { key: 'github', release: github, ver: github ? releaseVersion(github) : '' },
+        { key: 'gitcode', release: gitcode, ver: gitcode ? releaseVersion(gitcode) : '' },
+    ].filter((h) => h.release && h.ver);
+
+    let announcedVersion = '';
+    for (const host of hosts) {
+        if (!announcedVersion || compareVersions(host.ver, announcedVersion) > 0) {
+            announcedVersion = host.ver;
+        }
+    }
+
+    const versionsDesc = [...new Set(hosts.map((h) => h.ver))]
+        .sort((a, b) => compareVersions(b, a));
+
+    let selected = null;
+    let selectedVersion = '';
+    for (const ver of versionsDesc) {
+        const collected = collectAssetsForVersion(hosts, ver);
+        if (collected.zipUrls.length) {
+            selected = collected;
+            selectedVersion = ver;
+            break;
+        }
+    }
+
+    // No zip on any host — still surface the announced tag so UI can say assets are missing.
+    if (!selected && announcedVersion) {
+        selected = collectAssetsForVersion(hosts, announcedVersion);
+        selectedVersion = announcedVersion;
+    }
+
+    const assetsPending = Boolean(
+        announcedVersion
+        && (
+            !selected?.zipUrls?.length
+            || compareVersions(announcedVersion, selectedVersion) > 0
+        ),
+    );
+
+    return {
+        github,
+        gitcode,
+        announcedVersion: announcedVersion || selectedVersion,
+        latestVersion: selectedVersion,
+        primaryRelease: selected?.primaryRelease || null,
+        zipUrls: selected?.zipUrls || [],
+        zipName: selected?.zipName || '',
+        manifestUrls: selected?.manifestUrls || [],
+        manifestName: selected?.manifestName || '',
+        deltaUrls: selected?.deltaUrls || [],
+        deltaName: selected?.deltaName || '',
+        componentUrls: selected?.componentUrls
+            || Object.fromEntries(BLOCK_NAMES.map((c) => [c, []])),
+        assetsPending,
+        website: false,
+        githubError: String(errors.githubError || ''),
+        gitcodeError: String(errors.gitcodeError || ''),
+    };
+}
+
+/**
+ * Collect zip / manifest / component asset URLs from GitHub + GitCode.
+ * Prefers the newest version that has a downloadable full zip.
  */
 async function fetchDualHostLatestReleases() {
     const settled = await Promise.allSettled([
@@ -470,83 +612,14 @@ async function fetchDualHostLatestReleases() {
         throw new Error(err?.message || '无法连接 GitHub / GitCode 发布接口');
     }
 
-    const hosts = [
-        { key: 'github', release: github, ver: github ? releaseVersion(github) : '' },
-        { key: 'gitcode', release: gitcode, ver: gitcode ? releaseVersion(gitcode) : '' },
-    ];
-    let latestVersion = '';
-    let primaryRelease = null;
-    for (const host of hosts) {
-        if (!host.release || !host.ver) continue;
-        if (!latestVersion || compareVersions(host.ver, latestVersion) > 0) {
-            latestVersion = host.ver;
-            primaryRelease = host.release;
-        } else if (compareVersions(host.ver, latestVersion) === 0 && !primaryRelease) {
-            primaryRelease = host.release;
-        }
-    }
-    // Prefer GitHub when several hosts share the same latest version.
-    if (github && releaseVersion(github) === latestVersion) {
-        primaryRelease = github;
-    }
-
-    const zipUrls = [];
-    const manifestUrls = [];
-    const deltaUrls = [];
-    /** @type {Record<string, string[]>} */
-    const componentUrls = Object.fromEntries(BLOCK_NAMES.map((c) => [c, []]));
-    let zipName = '';
-    let manifestName = '';
-    let deltaName = '';
-    for (const { release, ver } of hosts) {
-        if (!release || !ver || compareVersions(ver, latestVersion) !== 0) continue;
-        const zip = pickZipAsset(release);
-        if (zip?.browser_download_url) {
-            zipUrls.push(String(zip.browser_download_url));
-            if (!zipName) zipName = String(zip.name || '');
-        }
-        const manifest = pickManifestAsset(release);
-        if (manifest?.browser_download_url) {
-            manifestUrls.push(String(manifest.browser_download_url));
-            if (!manifestName) manifestName = String(manifest.name || '');
-        }
-        const delta = pickDeltaAsset(release, latestVersion);
-        if (delta?.browser_download_url) {
-            deltaUrls.push(String(delta.browser_download_url));
-            if (!deltaName) deltaName = String(delta.name || '');
-        }
-        for (const block of BLOCK_NAMES) {
-            const asset = pickBlockAsset(release, block, latestVersion)
-                || pickComponentAsset(release, block, latestVersion);
-            if (asset?.browser_download_url) {
-                componentUrls[block].push(String(asset.browser_download_url));
-            }
-        }
-    }
-    for (const block of BLOCK_NAMES) {
-        componentUrls[block] = [...new Set(componentUrls[block])];
-    }
-
-    const dual = {
-        github,
-        gitcode,
-        latestVersion,
-        primaryRelease,
-        zipUrls: [...new Set(zipUrls)],
-        zipName,
-        manifestUrls: [...new Set(manifestUrls)],
-        manifestName,
-        deltaUrls: [...new Set(deltaUrls)],
-        deltaName,
-        componentUrls,
-        website: false,
+    const dual = buildDualHostReleaseState(github, gitcode, {
         githubError: settled[0].status === 'rejected'
             ? String(settled[0].reason?.message || settled[0].reason || '')
             : '',
         gitcodeError: settled[1].status === 'rejected'
             ? String(settled[1].reason?.message || settled[1].reason || '')
             : '',
-    };
+    });
     try {
         const {
             likelyDomesticNetwork,
@@ -605,10 +678,44 @@ async function downloadJsonFromUrls(urls, destPath, downloader) {
     return readJsonFile(destPath);
 }
 
+function buildUpdateAvailableMessage({
+    updateAvailable,
+    zipAuto,
+    incrementalReady,
+    latestVersion,
+    announcedVersion,
+    currentVersion,
+    assetsPending,
+    hasZip,
+    installKind,
+}) {
+    if (!updateAvailable) {
+        return `已是最新版本 v${currentVersion}`;
+    }
+    const announced = String(announcedVersion || latestVersion || '').trim();
+    const downloadable = String(latestVersion || '').trim();
+    if (assetsPending && announced && (!hasZip || compareVersions(announced, downloadable) > 0)) {
+        if (zipAuto && downloadable && compareVersions(announced, downloadable) > 0) {
+            return `发现新版本 v${announced}，安装包尚未就绪；可先升级到已有安装包的 v${downloadable}`;
+        }
+        return `发现新版本 v${announced}，但暂无可下载的安装包（发布页资源仍在上传或尚未同步）`;
+    }
+    if (zipAuto) {
+        return incrementalReady
+            ? `发现新版本 v${downloadable}（将按区块摘要增量更新；已下载的模型、支持库与 Advanced LLM 会保留）`
+            : `发现新版本 v${downloadable}（国内优先 GitCode，并测速其它线路后下载；已下载的模型、支持库与 Advanced LLM 会保留）`;
+    }
+    if (installKind === 'zip' && !hasZip) {
+        return `发现新版本 v${announced || downloadable}，但暂无可下载的安装包`;
+    }
+    return `发现新版本 v${announced || downloadable}`;
+}
+
 async function checkViaGithubApi() {
     const currentVersion = getCurrentVersion();
     const dual = await fetchDualHostLatestReleases();
     const latestVersion = dual.latestVersion;
+    const announcedVersion = dual.announcedVersion || latestVersion;
     const release = dual.primaryRelease;
     if (!latestVersion || !release) {
         return {
@@ -623,13 +730,15 @@ async function checkViaGithubApi() {
             message: '无法解析最新版本号',
         };
     }
-    const updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
-    const installKind = getInstallKind();
-    const electronApp = getElectronApp();
     const zipUrls = dual.zipUrls;
     const preferredZip = zipUrls[0] || '';
+    const hasZip = Boolean(preferredZip && /\.zip$/i.test(dual.zipName || preferredZip));
+    const updateAvailable = compareVersions(announcedVersion || latestVersion, currentVersion) > 0;
+    const downloadableUpdate = hasZip && compareVersions(latestVersion, currentVersion) > 0;
+    const installKind = getInstallKind();
+    const electronApp = getElectronApp();
     const zipAuto = Boolean(
-        updateAvailable
+        downloadableUpdate
         && installKind === 'zip'
         && preferredZip
         && /\.zip$/i.test(dual.zipName || preferredZip),
@@ -664,6 +773,8 @@ async function checkViaGithubApi() {
             deltaName: dual.deltaName || '',
             componentUrls: dual.componentUrls || {},
         };
+    } else {
+        pendingUpdate = null;
     }
 
     const pageUrl = release.html_url
@@ -671,14 +782,21 @@ async function checkViaGithubApi() {
         || (dual.gitcode?.html_url)
         || RELEASES_URL;
 
+    const displayVersion = (dual.assetsPending && announcedVersion)
+        ? announcedVersion
+        : latestVersion;
+
     return {
         ok: true,
         currentVersion,
-        latestVersion,
+        latestVersion: displayVersion,
+        downloadableVersion: latestVersion,
+        announcedVersion,
         updateAvailable,
+        assetsPending: Boolean(dual.assetsPending),
         mode: 'release-api',
         installKind,
-        releaseName: release.name || `v${latestVersion}`,
+        releaseName: release.name || `v${displayVersion}`,
         releaseNotes,
         releasesUrl: dual.github?.html_url || RELEASES_URL,
         gitcodeReleasesUrl: dual.gitcode?.html_url || GITCODE_RELEASES_URL,
@@ -688,7 +806,7 @@ async function checkViaGithubApi() {
         manifestUrls: dual.manifestUrls || [],
         updateSources: sources,
         hostVersions,
-        serverVersion: latestVersion,
+        serverVersion: displayVersion,
         portable: isPortableBuild(),
         packaged: Boolean(electronApp?.isPackaged),
         canAutoInstall: zipAuto,
@@ -698,13 +816,17 @@ async function checkViaGithubApi() {
         transWithAiReleasesUrl: TRANWITHAI_RELEASES_URL,
         githubError: dual.githubError || '',
         gitcodeError: dual.gitcodeError || '',
-        message: updateAvailable
-            ? (zipAuto
-                ? (incrementalReady
-                    ? `发现新版本 v${latestVersion}（将按区块摘要增量更新；已下载的模型、支持库与 Advanced LLM 会保留）`
-                    : `发现新版本 v${latestVersion}（国内优先 GitCode，并测速其它线路后下载；已下载的模型、支持库与 Advanced LLM 会保留）`)
-                : `发现新版本 v${latestVersion}`)
-            : `已是最新版本 v${currentVersion}`,
+        message: buildUpdateAvailableMessage({
+            updateAvailable,
+            zipAuto,
+            incrementalReady,
+            latestVersion,
+            announcedVersion,
+            currentVersion,
+            assetsPending: Boolean(dual.assetsPending),
+            hasZip,
+            installKind,
+        }),
     };
 }
 
@@ -727,12 +849,20 @@ async function checkForAppUpdate() {
             : `${result.message}（当前为旧版 Setup 安装；新版本请改用 zip 解压版）`;
         pendingUpdate = null;
     } else if (installKind === 'portable') {
+        result.canAutoInstall = false;
         result.message = result.updateAvailable
             ? `${result.message}。便携版已停更，请改用 zip 解压版。`
             : result.message;
+        pendingUpdate = null;
     } else if (installKind === 'dev') {
+        result.canAutoInstall = false;
         result.message = `${result.message}（开发模式仅检查，不自动安装）`;
+        pendingUpdate = null;
     }
+    try {
+        const { rememberAppUpdateCheckResult } = require('./app-update-available');
+        rememberAppUpdateCheckResult(result);
+    } catch { /* optional badge notify */ }
     return result;
 }
 
@@ -1190,7 +1320,17 @@ async function downloadZipUpdate(options = {}) {
     if (!downloadUrl || !looksLikeZip) {
         const check = await checkViaGithubApi();
         if (!check.updateAvailable || !check.canAutoInstall) {
-            return { ok: false, error: check.message || '没有可下载的 zip 更新' };
+            const pendingMsg = check.assetsPending
+                ? (check.message || '发现新版本，但暂无可下载的安装包')
+                : '';
+            return {
+                ok: false,
+                error: pendingMsg
+                    || (check.canAutoInstall === false && check.updateAvailable
+                        ? (check.message || '没有可下载的安装包')
+                        : (check.message || '没有可下载的 zip 更新')),
+                code: check.assetsPending ? 'assets_pending' : 'download',
+            };
         }
         downloadUrl = String(check.downloadUrl || '').trim();
         downloadUrls = Array.isArray(check.downloadUrls)
@@ -1343,6 +1483,11 @@ function stopEngineBeforeUpdate() {
         require('./advanced-llama-server').stopLlamaServer();
     } catch (err) {
         console.warn('[app-updater] stop llama-server:', err?.message || err);
+    }
+    try {
+        require('./jev-local-service').stopLocalLaya();
+    } catch (err) {
+        console.warn('[app-updater] stop Laya:', err?.message || err);
     }
 }
 
@@ -1508,6 +1653,8 @@ module.exports = {
     getPendingUpdate,
     isUpdateReady,
     fetchDualHostLatestReleases,
+    buildDualHostReleaseState,
+    buildUpdateAvailableMessage,
     buildUpdateFailure,
     formatUpdateFailureMeta,
 };

@@ -247,6 +247,8 @@
         etaRate: null,
         lastProgressBumpAt: 0,
         lastProgressBumpPct: 0,
+        itemDetail: '',
+        translateStageStartedAt: 0,
         historyEntries: [],
         focusedTaskPath: '',
         lastContentProfile: null,
@@ -292,14 +294,15 @@
     const pageQuery = new URLSearchParams(global.location?.search || '');
     const isStandaloneSettings = pageQuery.get('standaloneSettings') === '1';
     const isStandaloneWizard = pageQuery.get('standaloneWizard') === '1';
-    const isStandaloneChrome = isStandaloneSettings || isStandaloneWizard;
+    const isStandaloneEnvDoctor = pageQuery.get('envDoctor') === '1';
+    const isStandaloneChrome = isStandaloneSettings || isStandaloneWizard || isStandaloneEnvDoctor;
     const initialSettingsTab = String(pageQuery.get('tab') || '').trim();
     const initialOpenModelsLibrary = pageQuery.get('openLibrary') === '1';
 
     const ux = () => global.TransubMainUiUx;
 
     function showToast(message, tone = 'info', options = {}) {
-        if (isStandaloneSettings || isStandaloneWizard) return;
+        if (isStandaloneSettings || isStandaloneWizard || isStandaloneEnvDoctor) return;
         ux()?.showToast?.(message, tone, options);
     }
 
@@ -485,11 +488,13 @@
         // session getters / setters
         getIsStandaloneSettings: () => !!isStandaloneSettings,
         getIsStandaloneWizard: () => !!isStandaloneWizard,
+        getIsStandaloneEnvDoctor: () => !!isStandaloneEnvDoctor,
         getIsStandaloneChrome: () => !!isStandaloneChrome,
         getInitialSettingsTab: () => initialSettingsTab,
         getInitialOpenModelsLibrary: () => !!initialOpenModelsLibrary,
         isStandaloneSettings,
         isStandaloneWizard,
+        isStandaloneEnvDoctor,
         isStandaloneChrome,
         initialSettingsTab,
         initialOpenModelsLibrary,

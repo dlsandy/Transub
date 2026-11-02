@@ -170,6 +170,10 @@ function isEditorOnlyArgv(argv = process.argv.slice(1)) {
     return Boolean(parseCliEditSubtitle(argv));
 }
 
+function isFactoryDaemonArgv(argv = process.argv.slice(1)) {
+    return argv.some((arg) => arg === '--factory-daemon' || arg === '--factory-only');
+}
+
 /**
  * Apply Player handoff URL / argv. Returns which path was taken.
  * @returns {'edit'|'queue'|'open'|null}
@@ -230,6 +234,12 @@ function resolveStartupWindowPref(options = {}) {
 }
 
 let editorOnlyMode = isEditorOnlyArgv(process.argv.slice(1));
+/** Background Factory host with no main window (started by Editor ensure). */
+let factoryDaemonMode = isFactoryDaemonArgv(process.argv.slice(1));
+if (factoryDaemonMode) {
+    // Daemon wins over editor-only / normal window boot.
+    editorOnlyMode = false;
+}
 
 function warmEditorBridges() {
     try {
@@ -323,6 +333,41 @@ appTheme.linkSuppressMinimizeToTray((ms) => {
 });
 appTheme.registerAppThemeIpc(ipcMain);
 
+const { registerEnvDoctorIpc, openEnvDoctorWindow } = require('./env-doctor-window');
+const { needsEnvDoctorGate } = require('./env-doctor-gate');
+registerEnvDoctorIpc((channel, handler) => ipcMain.handle(channel, handler), {
+    app,
+    getAppRoot: () => getAppRoot(app),
+    getWindowManager: () => windowManager,
+});
+
+/**
+ * Open main factory window, or env-doctor first when this install has not
+ * stamped the current app version (including a fresh folder with no settings).
+ */
+function bootMainFactoryWindow(options = {}) {
+    try {
+        const ver = String(app.getVersion() || '').trim();
+        if (needsEnvDoctorGate(ver, { getAppRoot: () => getAppRoot(app) })) {
+            return openEnvDoctorWindow(app, {
+                onPassed: () => {
+                    try { windowManager.createMainWindow(options); } catch (err) {
+                        console.warn('[main] createMainWindow after env-doctor failed:', err?.message || err);
+                    }
+                },
+                onAbortQuit: () => {
+                    try { windowManager.quitApp(); } catch (_) {
+                        try { app.quit(); } catch { /* ignore */ }
+                    }
+                },
+            });
+        }
+    } catch (err) {
+        console.warn('[main] env-doctor gate check failed:', err?.message || err);
+    }
+    return windowManager.createMainWindow(options);
+}
+
 // Cold-start IPC: answer without loading heavy bridges (extensions / full transwithai).
 ipcMain.handle('transub-get-app-version', async () => {
     try {
@@ -336,6 +381,21 @@ ipcMain.handle('transub-get-app-version', async () => {
         return { ok: true, version };
     } catch (err) {
         return { ok: false, error: err.message || String(err), version: '' };
+    }
+});
+
+ipcMain.handle('transub-get-app-update-availability', async () => {
+    try {
+        const { getAppUpdateAvailability } = require('./app-update-available');
+        return { ok: true, ...getAppUpdateAvailability() };
+    } catch (err) {
+        return {
+            ok: false,
+            error: err?.message || String(err),
+            updateAvailable: false,
+            latestVersion: '',
+            currentVersion: '',
+        };
     }
 });
 
@@ -576,7 +636,6 @@ deferredBridges.installLazyRoutes({
     'transub-export-glossary': 'extensions',
     'transub-import-glossary': 'extensions',
     'transub-import-anilist-glossary': 'extensions',
-    'transub-import-bad-pool-glossary': 'extensions',
     'transub-get-text-presets': 'extensions',
     'transub-save-text-presets': 'extensions',
     'transub-export-text-presets': 'extensions',
@@ -593,6 +652,7 @@ deferredBridges.installLazyRoutes({
     'transub-station-select-model': 'transwithai',
     'transub-test-hf-endpoint': 'transwithai',
     'transub-pick-hf-endpoint': 'transwithai',
+    'transub-ensure-first-run-hf-endpoint': 'transwithai',
     'transub-test-github-mirrors': 'transwithai',
     'transwithai-set-post-task': 'transwithai',
     'transub-batch-finalize': 'transwithai',
@@ -706,6 +766,13 @@ deferredBridges.installLazyRoutes({
     'transub-advanced-deactivate': 'advanced',
     'transub-advanced-save-byok': 'advanced',
     'transub-advanced-clear-byok-key': 'advanced',
+    'transub-advanced-save-jev': 'advanced',
+    'transub-advanced-clear-jev-key': 'advanced',
+    'transub-advanced-test-jev': 'advanced',
+    'transub-advanced-probe-jev': 'advanced',
+    'transub-advanced-laya-local-status': 'advanced',
+    'transub-advanced-laya-install': 'advanced',
+    'transub-advanced-laya-start': 'advanced',
     'transub-advanced-managed-llm-status': 'advanced',
     'transub-advanced-managed-llm-select': 'advanced',
     'transub-advanced-managed-llm-open-pick': 'advanced',
@@ -811,37 +878,71 @@ deferredBridges.defer('transwithai', (api) => {
 
 app.on('second-instance', (_event, commandLine) => {
     const cliArgs = commandLine.slice(1);
+    // Editor ensure while Factory already up: stay quiet (single-instance host).
+    if (isFactoryDaemonArgv(cliArgs)) {
+        return;
+    }
+
+    const leaveDaemonIfNeeded = () => {
+        if (!factoryDaemonMode) return;
+        factoryDaemonMode = false;
+        try {
+            const { destroyFactoryDaemonTray } = require('./factory-daemon-tray');
+            destroyFactoryDaemonTray();
+        } catch (_) { /* ignore */ }
+        try {
+            const { promoteFactoryHostToGui } = require('./editor-factory-server');
+            promoteFactoryHostToGui();
+        } catch (_) { /* ignore */ }
+    };
+
     const proto = parsePlayerProtocolArgv(cliArgs);
     if (proto) {
+        leaveDaemonIfNeeded();
         const kind = applyPlayerProtocolHandoff(proto);
         if (kind === 'edit') return;
         if (editorOnlyMode) {
             editorOnlyMode = false;
-            windowManager.createMainWindow();
+            bootMainFactoryWindow();
             windowManager.setupTray();
             return;
         }
-        windowManager.showMainWindow();
+        if (!windowManager.getMainWindow?.()) {
+            bootMainFactoryWindow();
+            windowManager.setupTray();
+        } else {
+            windowManager.showMainWindow();
+        }
         return;
     }
 
     const cliEdit = parseCliEditSubtitle(cliArgs);
     if (cliEdit) {
+        leaveDaemonIfNeeded();
         openCliSubtitleEditor(cliEdit);
         return;
     }
 
     const cliFiles = parseCliFiles(cliArgs);
     if (cliFiles.length) {
+        leaveDaemonIfNeeded();
         setPendingFilesForWindow(cliFiles);
         try {
             windowManager.sendToRenderer('transub-cli-files-pending', { count: cliFiles.length });
         } catch (_) { /* ignore */ }
     }
 
+    leaveDaemonIfNeeded();
+
     if (editorOnlyMode) {
         editorOnlyMode = false;
-        windowManager.createMainWindow();
+        bootMainFactoryWindow();
+        windowManager.setupTray();
+        return;
+    }
+
+    if (!windowManager.getMainWindow?.()) {
+        bootMainFactoryWindow();
         windowManager.setupTray();
         return;
     }
@@ -869,6 +970,14 @@ app.whenReady().then(() => {
     try {
         require('./advanced-runtime-prefer').refreshPreferCuda().catch(() => {});
     } catch (_) { /* ignore */ }
+    // 初次运行：未配置时写入国内 HF 镜像（已有本机设置则保留）
+    try {
+        require('./hf-endpoint-first-run').ensureFirstRunHfEndpoint({
+            getAppRoot: () => getAppRoot(app),
+        }).catch((err) => {
+            console.warn('[main] HF endpoint first-run pick failed:', err?.message || err);
+        });
+    } catch (_) { /* ignore */ }
     const cliProto = parsePlayerProtocolArgv();
     const cliEdit = cliProto?.mode === 'edit'
         ? { subPath: cliProto.sub, videoPath: cliProto.media || '' }
@@ -879,7 +988,7 @@ app.whenReady().then(() => {
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
 
     let preferEditorStartup = false;
-    if (!editorOnlyMode && !cliEdit && !cliFiles.length) {
+    if (!factoryDaemonMode && !editorOnlyMode && !cliEdit && !cliFiles.length) {
         try {
             const loaded = loadSettings(() => getAppRoot(app));
             preferEditorStartup = resolveStartupWindowPref(loaded?.options || {}) === 'editor';
@@ -888,7 +997,35 @@ app.whenReady().then(() => {
         }
     }
 
-    if (editorOnlyMode || preferEditorStartup) {
+    if (factoryDaemonMode) {
+        try {
+            const { setupFactoryDaemonTray } = require('./factory-daemon-tray');
+            setupFactoryDaemonTray({
+                onOpenMain: () => {
+                    factoryDaemonMode = false;
+                    try {
+                        const { destroyFactoryDaemonTray } = require('./factory-daemon-tray');
+                        destroyFactoryDaemonTray();
+                    } catch (_) { /* ignore */ }
+                    try {
+                        const { promoteFactoryHostToGui } = require('./editor-factory-server');
+                        promoteFactoryHostToGui();
+                    } catch (_) { /* ignore */ }
+                    bootMainFactoryWindow();
+                    windowManager.setupTray();
+                },
+                onQuit: () => {
+                    windowManager.quitApp();
+                },
+            });
+        } catch (err) {
+            console.warn('[main] factory-daemon tray failed:', err?.message || err);
+        }
+        // Warm engine bridges so first Editor RPC is not cold.
+        setTimeout(() => {
+            try { deferredBridges.ensure('transwithai'); } catch (_) { /* ignore */ }
+        }, 800);
+    } else if (editorOnlyMode || preferEditorStartup) {
         if (preferEditorStartup) editorOnlyMode = true;
         warmEditorBridges();
         if (cliEdit) {
@@ -900,13 +1037,13 @@ app.whenReady().then(() => {
         scheduleWarmEditorHeavyBridges();
     } else if (cliEdit) {
         openCliSubtitleEditor(cliEdit);
-        windowManager.createMainWindow({ startMinimizedToTray: true });
+        bootMainFactoryWindow({ startMinimizedToTray: true });
     } else {
         // Main window path: bridges load on first IPC (validate / generate / …)
-        windowManager.createMainWindow();
+        bootMainFactoryWindow();
     }
 
-    if (process.argv.slice(1).some((a) => a === '--open-shelf' || a === '--shelf')) {
+    if (!factoryDaemonMode && process.argv.slice(1).some((a) => a === '--open-shelf' || a === '--shelf')) {
         try {
             const { openSubtitleShelfWindow } = require('./subtitle-shelf-window');
             openSubtitleShelfWindow(app, {});
@@ -932,8 +1069,15 @@ app.whenReady().then(() => {
             }
             try {
                 const { startEditorFactoryServer } = require('./editor-factory-server');
-                void startEditorFactoryServer().then((r) => {
-                    if (r?.ok) console.log('[factory] Editor RPC at', r.baseUrl);
+                void startEditorFactoryServer({
+                    hostKind: factoryDaemonMode ? 'daemon' : 'gui',
+                    registerUiClient: !factoryDaemonMode,
+                    onIdleShutdown: () => {
+                        if (!factoryDaemonMode) return;
+                        try { windowManager.quitApp(); } catch (_) { app.quit(); }
+                    },
+                }).then((r) => {
+                    if (r?.ok) console.log('[factory] Editor RPC at', r.baseUrl, `(${factoryDaemonMode ? 'daemon' : 'gui'})`);
                     else console.warn('[factory] start failed:', r?.error || 'unknown');
                 }).catch((err) => {
                     console.warn('[factory] start failed:', err?.message || err);
@@ -942,11 +1086,13 @@ app.whenReady().then(() => {
                 console.warn('[factory] load failed:', err?.message || err);
             }
             try {
-                const { scheduleAutoUpdateChecks } = require('./auto-update-check');
-                scheduleAutoUpdateChecks(app, {
-                    getAppRoot: () => getAppRoot(app),
-                    getParentWindow: () => windowManager.getMainWindow?.() || null,
-                });
+                if (!factoryDaemonMode) {
+                    const { scheduleAutoUpdateChecks } = require('./auto-update-check');
+                    scheduleAutoUpdateChecks(app, {
+                        getAppRoot: () => getAppRoot(app),
+                        getParentWindow: () => windowManager.getMainWindow?.() || null,
+                    });
+                }
             } catch (err) {
                 console.warn('[main] auto update schedule failed:', err.message || err);
             }
@@ -967,6 +1113,8 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
     if (windowManager.isQuitting()) return;
+    // Daemon host has no windows; keep process alive until idle shutdown / tray quit.
+    if (factoryDaemonMode) return;
     // Spurious last-window close (seen when a dark editor flipped nativeTheme)
     // must not force-quit while the tray is still alive — recreate main instead.
     try {
@@ -975,7 +1123,7 @@ app.on('window-all-closed', () => {
             setImmediate(() => {
                 try {
                     if (windowManager.isQuitting()) return;
-                    windowManager.createMainWindow();
+                    bootMainFactoryWindow();
                 } catch (_) { /* ignore */ }
             });
             return;
@@ -987,6 +1135,10 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
     windowManager.setQuitting(true);
+    try {
+        const { destroyFactoryDaemonTray } = require('./factory-daemon-tray');
+        destroyFactoryDaemonTray();
+    } catch { /* ignore */ }
     try {
         const { stopEditorFactoryServer } = require('./editor-factory-server');
         void stopEditorFactoryServer();
@@ -1014,6 +1166,10 @@ app.on('before-quit', () => {
     try {
         const { stopLlamaServer } = require('./advanced-llama-server');
         stopLlamaServer();
+    } catch { /* ignore */ }
+    try {
+        const { stopLocalLaya } = require('./jev-local-service');
+        stopLocalLaya();
     } catch { /* ignore */ }
     try {
         const { forceRelease } = require('./compute-task-lock');

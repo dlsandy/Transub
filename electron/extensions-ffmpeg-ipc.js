@@ -82,7 +82,7 @@ function registerExtensionsFfmpegIpc(register, deps = {}) {
         }
     });
 
-    register('transub-env-check', async (_event, payload = {}) => {
+    register('transub-env-check', async (event, payload = {}) => {
         try {
             const { runEnvCheck } = require('./env-check');
             const settings = loadSettings(getAppRoot).options || {};
@@ -95,6 +95,13 @@ function registerExtensionsFfmpegIpc(register, deps = {}) {
             const engineAsrModel = payload.engineAsrModel != null
                 ? asString(payload.engineAsrModel, 128).trim()
                 : String(settings.engineAsrModel || '').trim();
+            const sendProgress = (progress) => {
+                try {
+                    if (event?.sender && !event.sender.isDestroyed()) {
+                        event.sender.send('transub-env-check-progress', progress || {});
+                    }
+                } catch (_) { /* ignore */ }
+            };
             return await runEnvCheck({
                 ffmpegPath,
                 engineInstallPath,
@@ -104,6 +111,9 @@ function registerExtensionsFfmpegIpc(register, deps = {}) {
                 scope: payload.scope != null
                     ? asString(payload.scope, 32).trim()
                     : 'full',
+                // Version gate / wizard prepare / system-check: discrete GPU hard-pass.
+                requireDiscreteGpu: payload.requireDiscreteGpu !== false,
+                onProgress: sendProgress,
             });
         } catch (err) {
             return { ok: false, error: err.message || String(err), items: [] };
@@ -342,6 +352,9 @@ function registerExtensionsFfmpegIpc(register, deps = {}) {
                 ffmpegPathSetting,
                 peaksPerSec: Number(payload.peaksPerSec),
                 maxPeaks: Number(payload.maxPeaks),
+                startSec: Number(payload.startSec) || 0,
+                durationSec: Number(payload.durationSec) || 0,
+                normRef: Number(payload.normRef) || 0,
             });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };

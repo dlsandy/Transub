@@ -34,6 +34,24 @@ describe('delivery-underfill-qc-core', () => {
         );
     });
 
+    it('repairs filler「嗯」over soft-AV lexical JA (ぺるぺるしちゃうね)', () => {
+        assert.strictEqual(
+            qc.classifyDeliveryUnderfill('嗯', 'ぺるぺるしちゃうね…んっ')?.kind,
+            'vocative_stub',
+        );
+        const repaired = qc.repairDeliveryUnderfillCues(
+            [
+                { index: 0, startMs: 0, endMs: 36950, text: '嗯' },
+            ],
+            [
+                { index: 0, startMs: 0, endMs: 3000, text: 'ぺるぺるしちゃうね…んっ' },
+            ],
+        );
+        assert.ok(repaired.changed);
+        assert.ok(/舔/.test(repaired.cues[0].text), repaired.cues[0].text);
+        assert.ok(!/^(?:嗯+|啊+)$/u.test(String(repaired.cues[0].text || '').trim()));
+    });
+
     it('repairs bare 哈 and under-translated 舔 after viewing-punct style collapse', () => {
         const repaired = qc.repairDeliveryUnderfillCues(
             [

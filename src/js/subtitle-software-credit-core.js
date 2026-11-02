@@ -202,26 +202,51 @@
 
     /**
      * Heal corrupted software-credit cues in a list (e.g. www → ww！ after QC compress).
+     * Packed credit+dialogue cues are expanded into two cues (never left glued).
      * @returns {{ cues: object[], changed: number }}
      */
     function normalizeSoftwareCreditInCues(cues, opts = {}) {
         const list = Array.isArray(cues) ? cues : [];
         let changed = 0;
-        const next = list.map((c) => {
+        const next = [];
+        for (const c of list) {
             const before = String(c?.text ?? '');
             if (
                 !isSoftwareCreditText(before)
                 && !(/(?:字幕由|字幕は|자막은)/.test(before) && /Transub/i.test(before))
             ) {
-                return c && typeof c === 'object' ? { ...c } : c;
+                next.push(c && typeof c === 'object' ? { ...c } : c);
+                continue;
             }
             const split = splitSoftwareCreditAndDialogue(before);
-            const text = split
-                ? `${normalizeSoftwareCreditText(split.creditText, opts)}\n${split.dialogueText}`
-                : normalizeSoftwareCreditText(before, opts);
+            if (split?.creditText && split?.dialogueText) {
+                const creditText = normalizeSoftwareCreditText(split.creditText, opts);
+                const startMs = Number(c?.startMs);
+                const endMs = Number(c?.endMs);
+                const dur = Number.isFinite(startMs) && Number.isFinite(endMs)
+                    ? Math.max(0, endMs - startMs)
+                    : CREDIT_DURATION_MS;
+                const creditEnd = Number.isFinite(startMs)
+                    ? startMs + Math.min(dur, CREDIT_DURATION_MS)
+                    : endMs;
+                next.push({
+                    ...c,
+                    text: creditText,
+                    endMs: Number.isFinite(creditEnd) ? creditEnd : c?.endMs,
+                });
+                next.push({
+                    ...c,
+                    text: split.dialogueText,
+                    startMs: Number.isFinite(creditEnd) ? creditEnd : c?.startMs,
+                    endMs: c?.endMs,
+                });
+                changed += 1;
+                continue;
+            }
+            const text = normalizeSoftwareCreditText(before, opts);
             if (text !== before) changed += 1;
-            return { ...c, text };
-        });
+            next.push({ ...c, text });
+        }
         return { cues: next, changed };
     }
 
@@ -333,19 +358,66 @@
         }
 
         // Short media: head window already covers the file — skip a second cue.
-        const tailEnd = mediaMs > 0 ? mediaMs : headEnd;
-        const tailStart = Math.max(0, tailEnd - durationMs);
+        // Tail watermark must NEVER overlap non-credit dialogue. When mediaDurationMs
+        // is missing, resolveMediaDurationMs falls back to last cue end — placing the
+        // credit in the final 2s then sits on top of ending lines (NIMA-085 ZH tail).
+        const lastDialogueEnd = list.reduce((max, cue) => {
+            if (isSoftwareCreditText(cue?.text)
+                && !splitSoftwareCreditAndDialogue(String(cue?.text || ''))) {
+                return max;
+            }
+            return Math.max(max, Math.round(Number(cue?.endMs) || 0));
+        }, 0);
+        let tailEnd = mediaMs > 0 ? mediaMs : headEnd;
+        let tailStart = Math.max(0, tailEnd - durationMs);
+        if (lastDialogueEnd > 0 && tailStart < lastDialogueEnd) {
+            if (mediaMs >= lastDialogueEnd + durationMs) {
+                tailEnd = mediaMs;
+                tailStart = Math.max(lastDialogueEnd, mediaMs - durationMs);
+            } else {
+                tailStart = lastDialogueEnd;
+                tailEnd = lastDialogueEnd + durationMs;
+            }
+        }
         const tailDistinct = tailEnd > headEnd && tailStart >= headEnd;
 
         if (tailDistinct) {
-            const tailHits = list.filter((c) => cuesOverlapRange(c, tailStart, tailEnd));
+            const tailHits = list.filter((c) => {
+                if (cuesOverlapRange(c, tailStart, tailEnd)) return true;
+                // Packed credit+dialogue often ends exactly at lastDialogueEnd (== new tailStart)
+                // and would otherwise miss the peel window (NIMA-085 / FNS-257).
+                const packed = splitSoftwareCreditAndDialogue(String(c?.text || ''));
+                if (!packed?.dialogueText) return false;
+                const end = Math.round(Number(c?.endMs) || 0);
+                return end >= tailStart - 80 && end <= tailStart + 80;
+            });
             if (tailHits.length) {
                 tailHits.sort((a, b) => (b.startMs - a.startMs) || (b.endMs - a.endMs));
                 const target = tailHits[0];
-                const next = prependCreditLine(target.text, creditText);
-                if (next !== String(target.text || '')) {
-                    target.text = next;
-                    tailMerged = true;
+                const targetText = String(target.text || '');
+                // Already credit-only: leave as-is (duplicate skip via creditAlreadyInText).
+                if (isSoftwareCreditText(targetText) && !splitSoftwareCreditAndDialogue(targetText)) {
+                    const next = prependCreditLine(targetText, creditText);
+                    if (next !== targetText) {
+                        target.text = next;
+                        tailMerged = true;
+                    }
+                } else {
+                    // Real dialogue (or credit+dialogue packed) in the tail window:
+                    // never glue watermark onto dialogue — insert a dedicated cue.
+                    // FNS-257 / MARR-014: 「字幕由…\\n我这是自我满足啊…」
+                    const packed = splitSoftwareCreditAndDialogue(targetText);
+                    if (packed?.dialogueText) {
+                        target.text = packed.dialogueText;
+                    }
+                    if (!list.some((c) => (
+                        isSoftwareCreditText(c.text)
+                        && !splitSoftwareCreditAndDialogue(String(c.text || ''))
+                        && cuesOverlapRange(c, tailStart, tailEnd)
+                    ))) {
+                        list.push({ startMs: tailStart, endMs: tailEnd, text: creditText });
+                        tailInserted = true;
+                    }
                 }
             } else {
                 list.push({ startMs: tailStart, endMs: tailEnd, text: creditText });
@@ -612,31 +684,48 @@
             [/Vログ/, ['Vlog', 'vlog', '博客']],
             [/彼女/, ['女友', '女朋友']],
             [/高校/, ['高中']],
+            // Interview / soft-AV door openings (reusable; IENF-450 head shift)
+            [/よろしいでしょうか/, ['方便', '可以吗', '打扰']],
+            [/お時間/, ['时间', '方便']],
+            [/ご用件|どいったご用件|どういったご用件/, ['什么事', '何事', '有事']],
+            [/私ですね/, ['是我', '我啊']],
+            [/衛星|番組を作/, ['卫星', '节目', '制作']],
+            [/深夜帯|お色気/, ['深夜', '色气']],
+            [/顔出|顔出し/, ['露脸']],
+            [/どう思います|どう思う/, ['怎么看', '觉得']],
+            [/結婚/, ['结婚']],
+            [/お子さん/, ['孩子', '小孩']],
         ];
-        const anchors = [];
-        for (let i = 0; i < Math.min(pairs.length, 160); i += 1) {
-            const jt = pairs[i].jaText;
-            if ([...jt.replace(/\s/g, '')].length < 4) continue;
-            const gloss = mtSanitize?.remapMundaneHospitalOrMealJa?.(jt) || '';
-            const needles = [];
-            if (gloss) needles.push(gloss.replace(/[。．.!！?？\s]+$/g, '').slice(0, 8));
-            for (const [re, zhList] of GENERIC_JA_ZH_NEEDLES) {
-                if (re.test(jt)) needles.push(...zhList);
-            }
-            if (/沙羅/.test(jt)) needles.push('沙罗');
-            if (/奏くん|かなめ/.test(jt)) needles.push('奏君');
-            const uniq = [...new Set(needles.filter(Boolean))];
-            if (!uniq.length) continue;
-            anchors.push({ i, needles: uniq });
-            if (anchors.length >= 24) break;
-        }
-        if (anchors.length < 3) return { offset: 0, hits: 0, checks: 0 };
 
-        function score(off) {
+        function collectAnchors(pairList, { maxScan = 160, maxAnchors = 24 } = {}) {
+            const anchors = [];
+            for (let i = 0; i < Math.min(pairList.length, maxScan); i += 1) {
+                const jt = pairList[i].jaText;
+                if ([...jt.replace(/\s/g, '')].length < 3) continue;
+                const gloss = mtSanitize?.remapMundaneHospitalOrMealJa?.(jt) || '';
+                const needles = [];
+                if (gloss) needles.push(gloss.replace(/[。．.!！?？\s]+$/g, '').slice(0, 8));
+                for (const [re, zhList] of GENERIC_JA_ZH_NEEDLES) {
+                    if (re.test(jt)) needles.push(...zhList);
+                }
+                if (/沙羅/.test(jt)) needles.push('沙罗');
+                if (/奏くん|かなめ/.test(jt)) needles.push('奏君');
+                const uniq = [...new Set(needles.filter(Boolean))];
+                if (!uniq.length) continue;
+                anchors.push({ i, needles: uniq });
+                if (anchors.length >= maxAnchors) break;
+            }
+            return anchors;
+        }
+
+        const anchors = collectAnchors(pairs);
+        if (anchors.length < 3) return { offset: 0, hits: 0, checks: 0, scope: 'full' };
+
+        function score(off, anchorList, pairList) {
             let hits = 0;
             let checks = 0;
-            for (const a of anchors) {
-                const pair = pairs[a.i - off];
+            for (const a of anchorList) {
+                const pair = pairList[a.i - off];
                 if (!pair) continue;
                 const zt = String(pair.zhText || '');
                 if (!zt.trim() || isSoftwareCreditText(zt) || /^…+$/.test(zt.trim())) continue;
@@ -649,9 +738,9 @@
         let bestOff = 0;
         let bestHits = -1;
         let bestChecks = 0;
-        const zero = score(0);
+        const zero = score(0, anchors, pairs);
         for (let off = 0; off <= maxOffset; off += 1) {
-            const s = score(off);
+            const s = score(off, anchors, pairs);
             if (s.hits > bestHits || (s.hits === bestHits && off === 0)) {
                 bestHits = s.hits;
                 bestOff = off;
@@ -662,7 +751,7 @@
         const bestRate = bestChecks > 0 ? bestHits / bestChecks : 0;
         // Already well aligned — never rotate (false +N from sparse needles wrecks tracks).
         if (zero.checks >= 3 && zeroRate >= 0.4) {
-            return { offset: 0, hits: zero.hits, checks: zero.checks };
+            return { offset: 0, hits: zero.hits, checks: zero.checks, scope: 'full' };
         }
         // Require clear win over aligned (0) so we don't rotate on weak noise.
         // Hy-MT post-sanitize must not "fix" a good track into a shifted one.
@@ -675,9 +764,178 @@
             && bestRate >= zeroRate + 0.4
             && zeroRate < 0.35
         ) {
-            return { offset: bestOff, hits: bestHits, checks: bestChecks };
+            return { offset: bestOff, hits: bestHits, checks: bestChecks, scope: 'full' };
         }
-        return { offset: 0, hits: zero.hits, checks: zero.checks };
+        return { offset: 0, hits: zero.hits, checks: zero.checks, scope: 'full' };
+    }
+
+    /**
+     * Detect +N content shift only in the opening dialogue window.
+     * Full-track detect misses IENF-450-style heads that self-realign later.
+     */
+    function detectDialogueHeadContentShift(zhCues, jaCues, opts = {}) {
+        const zh = Array.isArray(zhCues) ? zhCues : [];
+        const ja = Array.isArray(jaCues) ? jaCues : [];
+        const headPairs = Math.max(10, Math.min(40, Number(opts.headPairs) || 24));
+        const maxOffset = Math.max(1, Math.min(4, Number(opts.maxOffset) || 3));
+        if (zh.length < 10 || ja.length < 10) {
+            return { offset: 0, hits: 0, checks: 0, scope: 'head', headPairs };
+        }
+        const jaSorted = [...ja].sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs));
+        const zhSorted = [...zh].sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs));
+        const pairs = buildDialogueTimingPairs(zhSorted, jaSorted).slice(0, headPairs);
+        if (pairs.length < 8) {
+            return { offset: 0, hits: 0, checks: 0, scope: 'head', headPairs };
+        }
+        // Score a short opening slice only — later head pairs often realign and mask +N.
+        // `headPairs` controls repair window size; keep detect window tight (~10).
+        const scorePairs = pairs.slice(0, Math.min(pairs.length, 10));
+        const GENERIC = [
+            [/よろしいでしょうか/, ['方便', '可以吗']],
+            [/お時間/, ['时间', '方便']],
+            [/ご用件|どいったご用件|どういったご用件/, ['什么事', '何事', '有事']],
+            [/私ですね/, ['是我']],
+            [/衛星|番組/, ['卫星', '节目']],
+            [/深夜帯|お色気/, ['深夜', '色气']],
+            [/顔出|顔出し/, ['露脸']],
+            [/結婚/, ['结婚']],
+            [/お子さん/, ['孩子']],
+            [/ごめん|すみません|失礼|すいません/, ['抱歉', '对不起', '失礼', '不好意思']],
+            [/大丈夫/, ['没事', '没关系', '没问题']],
+        ];
+        const anchors = [];
+        for (let i = 0; i < scorePairs.length; i += 1) {
+            const jt = String(scorePairs[i].jaText || '');
+            const needles = [];
+            for (const [re, zhList] of GENERIC) {
+                if (re.test(jt)) needles.push(...zhList);
+            }
+            if (!needles.length) continue;
+            anchors.push({ i, needles: [...new Set(needles)] });
+        }
+        if (anchors.length < 3) {
+            return { offset: 0, hits: 0, checks: 0, scope: 'head', headPairs: pairs.length };
+        }
+        function score(off) {
+            let hits = 0;
+            let checks = 0;
+            for (const a of anchors) {
+                const pair = scorePairs[a.i - off];
+                if (!pair) continue;
+                const zt = String(pair.zhText || '');
+                if (!zt.trim() || isSoftwareCreditText(zt) || /^…+$/.test(zt.trim())) continue;
+                checks += 1;
+                if (a.needles.some((n) => zt.includes(n))) hits += 1;
+            }
+            return { hits, checks };
+        }
+        const zero = score(0);
+        let bestOff = 0;
+        let best = zero;
+        for (let off = 1; off <= maxOffset; off += 1) {
+            const s = score(off);
+            if (s.hits > best.hits) {
+                best = s;
+                bestOff = off;
+            }
+        }
+        const zeroRate = zero.checks ? zero.hits / zero.checks : 0;
+        const bestRate = best.checks ? best.hits / best.checks : 0;
+        // Opening shifts are often +1 with only a modest hit delta (later head
+        // anchors still match at 0). Prefer higher rate + at least +1 hit.
+        if (
+            bestOff >= 1
+            && best.hits >= 3
+            && best.checks >= 3
+            && best.hits > zero.hits
+            && bestRate >= 0.5
+            && bestRate >= zeroRate + 0.08
+        ) {
+            // Trim repair to the last head anchor that matches only at +N
+            // (later anchors that already match at 0 must stay put).
+            let lastShiftOnly = -1;
+            for (const a of anchors) {
+                const atBest = scorePairs[a.i - bestOff];
+                const atZero = scorePairs[a.i];
+                if (!atBest) continue;
+                const ztBest = String(atBest.zhText || '');
+                const ztZero = String(atZero?.zhText || '');
+                const hitBest = a.needles.some((n) => ztBest.includes(n));
+                const hitZero = a.needles.some((n) => ztZero.includes(n));
+                if (hitBest && !hitZero) lastShiftOnly = Math.max(lastShiftOnly, a.i);
+            }
+            const repairPairs = lastShiftOnly >= 0
+                ? Math.min(pairs.length, Math.max(6, lastShiftOnly + bestOff + 1))
+                : Math.min(pairs.length, Math.max(6, scorePairs.length));
+            return {
+                offset: bestOff,
+                hits: best.hits,
+                checks: best.checks,
+                scope: 'head',
+                headPairs: repairPairs,
+            };
+        }
+        return {
+            offset: 0,
+            hits: zero.hits,
+            checks: zero.checks,
+            scope: 'head',
+            headPairs: pairs.length,
+        };
+    }
+
+    /**
+     * Rotate only the opening dialogue window by +N (leave the rest intact).
+     */
+    function repairDialogueHeadContentShift(zhCues, jaCues, offset, opts = {}) {
+        if (opts.skipDialogueContentShiftRepair === true) {
+            return {
+                cues: (Array.isArray(zhCues) ? zhCues : []).map((c) => ({ ...c })),
+                changed: false,
+                repaired: 0,
+                offset: 0,
+                skipped: true,
+                scope: 'head',
+            };
+        }
+        const n = Math.max(0, Math.min(4, Number(offset) || 0));
+        const headPairs = Math.max(6, Math.min(40, Number(opts.headPairs) || 24));
+        const zh = (Array.isArray(zhCues) ? zhCues : []).map((c) => ({ ...c }));
+        const ja = Array.isArray(jaCues) ? jaCues : [];
+        if (n < 1 || zh.length < 6) {
+            return { cues: zh, changed: false, repaired: 0, offset: 0, scope: 'head' };
+        }
+        zh.sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs));
+        const jaSorted = [...ja].sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs));
+        const dialogueIdx = [];
+        for (let i = 0; i < zh.length; i += 1) {
+            const zt = String(zh[i]?.text ?? '');
+            const jt = String(jaSorted[i]?.text ?? '');
+            if (isSoftwareCreditText(zt) || isSoftwareCreditText(jt)) continue;
+            dialogueIdx.push(i);
+            if (dialogueIdx.length >= headPairs) break;
+        }
+        if (dialogueIdx.length < 6) {
+            return { cues: zh, changed: false, repaired: 0, offset: 0, scope: 'head' };
+        }
+        const texts = dialogueIdx.map((i) => String(zh[i]?.text ?? ''));
+        let repaired = 0;
+        for (let k = 0; k < dialogueIdx.length; k += 1) {
+            const i = dialogueIdx[k];
+            const next = k < n ? '…' : texts[k - n];
+            if (zh[i].text !== next) {
+                zh[i].text = next;
+                repaired += 1;
+            }
+        }
+        return {
+            cues: reindexCues(zh),
+            changed: repaired > 0,
+            repaired,
+            offset: n,
+            scope: 'head',
+            headPairs: dialogueIdx.length,
+        };
     }
 
     /**
@@ -755,11 +1013,36 @@
             };
         }
         const detected = detectDialogueContentShift(zhCues, jaCues, opts);
-        if (!detected.offset) {
-            return { cues: Array.isArray(zhCues) ? zhCues.map((c) => ({ ...c })) : [], changed: false, repaired: 0, offset: 0, detected };
+        if (detected.offset) {
+            const fixed = repairDialogueContentShift(zhCues, jaCues, detected.offset, opts);
+            return { ...fixed, detected };
         }
-        const fixed = repairDialogueContentShift(zhCues, jaCues, detected.offset, opts);
-        return { ...fixed, detected };
+        // Opening-only shift (self-realigns later) — do not whole-track rotate.
+        if (opts.skipDialogueHeadShiftRepair === true) {
+            return {
+                cues: Array.isArray(zhCues) ? zhCues.map((c) => ({ ...c })) : [],
+                changed: false,
+                repaired: 0,
+                offset: 0,
+                detected,
+            };
+        }
+        const head = detectDialogueHeadContentShift(zhCues, jaCues, opts);
+        if (!head.offset) {
+            return {
+                cues: Array.isArray(zhCues) ? zhCues.map((c) => ({ ...c })) : [],
+                changed: false,
+                repaired: 0,
+                offset: 0,
+                detected,
+                head,
+            };
+        }
+        const fixedHead = repairDialogueHeadContentShift(zhCues, jaCues, head.offset, {
+            ...opts,
+            headPairs: head.headPairs,
+        });
+        return { ...fixedHead, detected: head };
     }
 
     /**
@@ -907,7 +1190,9 @@
         looksLikeOffByOneCreditShift,
         repairOffByOneCreditShift,
         detectDialogueContentShift,
+        detectDialogueHeadContentShift,
         repairDialogueContentShift,
+        repairDialogueHeadContentShift,
         repairDetectedDialogueContentShift,
         zhTrackLooksAsrContaminated,
         resolveSourceCreditLang,

@@ -77,6 +77,27 @@
         if (/galtransl.*14b/i.test(id)) return 'GalTransl14';
         if (/galtransl.*q6/i.test(id)) return 'Gal7·Q6';
         if (/galtransl/i.test(id)) return 'GalTransl7';
+        if (/murasaki.*14b.*q6/i.test(id)) return 'Mura14·Q6';
+        if (/murasaki.*14b/i.test(id)) return 'Murasaki14';
+        if (/murasaki.*8b/i.test(id)) return 'Mura8·Q6';
+        // Legacy F16 (retired from catalog) — keep chip for old task history rows.
+        if (/murasaki.*f16/i.test(id)) return 'Mura4·F16';
+        if (/murasaki.*q8/i.test(id)) return 'Mura4·Q8';
+        if (/murasaki.*q6/i.test(id)) return 'Mura4·Q6';
+        if (/murasaki/i.test(id)) return 'Murasaki4';
+        if (/orion.*4b/i.test(id)) return 'Orion4·Q8';
+        if (/orion/i.test(id)) return 'Orion';
+        if (/index[-_]?translate.*35b.*mini/i.test(id)) return 'Index·35M';
+        if (/index[-_]?translate.*35b.*quality/i.test(id)) return 'Index·35Q';
+        if (/index[-_]?translate.*35b.*q4km/i.test(id)) return 'Index·35Q4';
+        if (/index[-_]?translate.*35b/i.test(id)) return 'Index·35C';
+        if (/index[-_]?translate.*9b/i.test(id)) return 'Index·9';
+        if (/index[-_]?translate.*2b/i.test(id)) return 'Index·2';
+        if (/index[-_]?translate/i.test(id)) return 'Index';
+        if (/hy-?mt2.*30b.*mini|hy-?mt2-30b-a3b-heretic-mini/i.test(id)) return 'Hy-MT2·30M';
+        if (/hy-?mt2.*30b.*quality|hy-?mt2-30b-a3b-heretic-quality/i.test(id)) return 'Hy-MT2·30Q';
+        if (/hy-?mt2.*30b|hy-?mt2-30b/i.test(id)) return 'Hy-MT2·30A';
+        if (/hy-?mt2.*1\.?8/i.test(id)) return 'Hy-MT2·1.8';
         if (/^hy-?mt2/i.test(id)) return 'Hy-MT2·7';
         if (/hy-?mt1\.?5-?1\.?8|hy-?mt15-1\.8/i.test(id)) return 'HyMT15·1.8A';
         if (/hy-?mt1\.?5|hy-?mt15/i.test(id)) return 'HyMT15·A';
@@ -86,6 +107,9 @@
         if (/gemma4-e4b|gemma-4-e4b/i.test(id)) return 'G4·E4A';
         if (/gemma4-26b|gemma-4-26b/i.test(id)) return 'G4·26A';
         if (/gemma4-12b|gemma-4-12b/i.test(id)) return 'G4·12A';
+        if (/translategemma-4-sub-e2b|translate[-_]?gemma[-_]?4[-_]?sub[-_]?e2b|gemma4[-_]?sub[-_]?e2b/i.test(id)) {
+            return 'TGSub·E2';
+        }
         if (/translategemma-4-sub|translate[-_]?gemma[-_]?4[-_]?sub/i.test(id)) return 'TGSub·E4';
         if (/translategemma-4b/i.test(id)) return 'TG·4';
         if (/translategemma-12b/i.test(id)) return 'TG·12';

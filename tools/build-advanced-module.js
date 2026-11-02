@@ -80,6 +80,18 @@ async function main() {
         process.exit(1);
     }
 
+    if (!fs.existsSync(entry)) {
+        console.error(
+            '[build-advanced] Missing local Pro entry (gitignored):\n'
+            + `  ${entry}\n`
+            + 'This file and the algorithm sources it imports are never on public remotes.\n'
+            + 'Copy them from your Pro working tree (e.g. Transub3/tools/advanced-module-entry.js\n'
+            + 'plus electron/advanced-*.js and src/js/advanced-*-core.js), then retry.\n'
+            + 'See tools/proprietary-paths.js → PROPRIETARY_ALGORITHM_SOURCES.',
+        );
+        process.exit(1);
+    }
+
     fs.mkdirSync(outDir, { recursive: true });
 
     const result = await esbuild.build({

@@ -158,7 +158,17 @@
 
         h.readTaskFromForm = function readTaskFromForm() {
             const els = h.els || {};
-            const v = String(els.taskSelect?.value || els.quickTaskSelect?.value || 'translate').trim();
+            // Prefer live DOM: #paramsModal fragment replaceWith can leave els.taskSelect detached.
+            const liveTask = typeof document !== 'undefined'
+                ? document.getElementById('taskSelect')
+                : null;
+            if (liveTask && els.taskSelect !== liveTask) els.taskSelect = liveTask;
+            const v = String(
+                els.taskSelect?.value
+                || liveTask?.value
+                || els.quickTaskSelect?.value
+                || 'translate',
+            ).trim();
             if (v === 'transcribe' || v === 'dual' || v === 'translate') return v;
             return 'translate';
         };
@@ -172,6 +182,11 @@
 
         h.toQuickTargetLang = function toQuickTargetLang(v) {
             const s = String(v || '').trim();
+            const tgt = (global && global.TransubSubtitleTargetLang) || {};
+            if (typeof tgt.isSourceTargetFormValue === 'function' && tgt.isSourceTargetFormValue(s)) {
+                return tgt.SOURCE_TARGET_FORM_VALUE || 'source';
+            }
+            if (s === 'source' || s === 'original' || s === 'transcribe') return 'source';
             if (s === 'traditional' || s === 'traditional-tw' || s === 'traditional-hk') return 'traditional';
             if (s === 'en' || s === 'ja' || s === 'ko') return s;
             return 'simplified';
@@ -274,9 +289,14 @@
                 // Must rebind after #paramsModal replaceWith — els/cache alone is not enough.
                 h.getAppEventsBinder?.()?.bindTransubStationSettingsEvents?.();
                 h.getAppEventsBinder?.()?.bindGithubMirrorSettingsEvents?.();
+                h.getAppEventsBinder?.()?.bindProxyAndHfSettingsEvents?.();
             } catch (err) {
                 console.warn('[Transub] bind settings fragment events failed:', err?.message || err);
             }
+            try {
+                // Re-gate 目标芯片 after taskSelect lands in the live settings DOM.
+                h.syncChineseSubtitleVariantUi?.();
+            } catch (_) { /* ignore */ }
             try {
                 h.getSettingsModalUi?.()?.invalidateSettingsSearchIndex?.();
                 h.getSettingsModalUi?.()?.bindSettingsSearch?.();
@@ -343,6 +363,7 @@
                 ['TransubAppProgressShell', !!(global && global.TransubAppProgressShell?.createAppProgressShell)],
                 ['TransubAppMenuCoord', !!(global && global.TransubAppMenuCoord?.createAppMenuCoord)],
                 ['TransubAppShellDeps', !!(global && global.TransubAppShellDeps?.mergeDeps)],
+                // TransubEditorParts only loads in subtitle-editor.html — do not check on main window.
             ];
             if (includeDeferred) {
                 const names = [
@@ -366,6 +387,7 @@
                     ['TransubAdvancedEntitlementUi', 'TransubAdvancedEntitlementUi', 'createAdvancedEntitlementUi'],
                     ['TransubTaskListActionsUi', 'TransubTaskListActionsUi', 'createTaskListActionsUi'],
                     ['TransubMissingModelsPrompt', 'TransubMissingModelsPrompt', 'createMissingModelsPrompt'],
+                    ['TransubJevLayaInstallPrompt', 'TransubJevLayaInstallPrompt', 'createJevLayaInstallPrompt'],
                     ['TransubEngineModelsWorkspace', 'TransubEngineModelsWorkspace', 'createEngineModelsWorkspace'],
                     ['TransubEngineModelsLibraryUi', 'TransubEngineModelsLibraryUi', 'createEngineModelsLibraryUi'],
                     ['TransubEngineModelsLabUi', 'TransubEngineModelsLabUi', 'createEngineModelsLabUi'],
@@ -387,8 +409,9 @@
                     ['TransubTwaiModelSelectUi', 'TransubTwaiModelSelectUi', 'createTwaiModelSelectUi'],
                     ['TransubCliCommandUi', 'TransubCliCommandUi', 'createCliCommandUi'],
                     ['TransubStartReadinessUi', 'TransubStartReadinessUi', 'createStartReadinessUi'],
-                    ['TransubAppInit', 'TransubAppInit', 'createAppInit'],
-                    ['TransubLiveBatchRehydrate', 'TransubLiveBatchRehydrate', 'createLiveBatchRehydrate'],
+                ['TransubAppInit', 'TransubAppInit', 'createAppInit'],
+                ['TransubAppUpdateBadge', 'TransubAppUpdateBadge', 'createAppUpdateBadge'],
+                ['TransubLiveBatchRehydrate', 'TransubLiveBatchRehydrate', 'createLiveBatchRehydrate'],
                     ['TransubAppWireUtils', 'TransubAppWireUtils', 'getBindApi'],
                     ['TransubAppWireChromeShell', 'TransubAppWireChromeShell', 'install'],
                     ['TransubAppWireChromeEntitlement', 'TransubAppWireChromeEntitlement', 'install'],
@@ -421,6 +444,14 @@
 
         h.computeStartBlockReason = function computeStartBlockReason() {
             if (startReadinessApi.computeStartBlockReason) {
+                let autoSenseEnabled = false;
+                try {
+                    if (typeof h.isAutoSenseEnabled === 'function') {
+                        autoSenseEnabled = !!h.isAutoSenseEnabled();
+                    } else if (typeof h.getAutoSenseEnabled === 'function') {
+                        autoSenseEnabled = !!h.getAutoSenseEnabled();
+                    }
+                } catch { /* optional */ }
                 return startReadinessApi.computeStartBlockReason({
                     running: !!h.state?.running,
                     postBatchBusy: !!h.state?.postBatchBusy,
@@ -429,6 +460,7 @@
                     computeBusy: !!h.state?.computeBusy,
                     computeBusyLabel: h.state?.computeBusyLabel,
                     items: h.state?.items,
+                    autoSenseEnabled,
                 });
             }
             return '界面核心未加载，请重启应用';

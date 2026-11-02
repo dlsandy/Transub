@@ -104,6 +104,44 @@ describe('TransubQuickToolbarChipsUi', () => {
         assert.strictEqual(presetUi.shortSenseModelsSummary(), '预设');
         assert.strictEqual(presetAsrLabel.textContent, '预设');
 
+        const comboBtn = makeEl({ hidden: true, classList: {
+            toggle() {},
+            add() {},
+            remove(name) { if (name === 'hidden') comboBtn.hidden = false; },
+            contains() { return false; },
+        } });
+        const footHint = makeEl({ hidden: false, classList: {
+            toggle() {},
+            add(name) { if (name === 'hidden') footHint.hidden = true; },
+            remove() {},
+            contains() { return false; },
+        } });
+        const slotUi = createQuickToolbarChipsUi({
+            els: {
+                modelsChipLabel: makeEl(),
+                asrChipLabel: makeEl(),
+                mtChipLabel: makeEl(),
+                asrChipBtn: makeEl(),
+                mtChipBtn: makeEl(),
+                modelsChipBtn: makeEl(),
+                modelsMenu: makeEl(),
+                modelsPickLiveSummary: makeEl(),
+                comboPlanChipBtn: comboBtn,
+                modelsPickFootHint: footHint,
+            },
+            readTaskFromForm: () => 'translate',
+            setPostTaskMenuOpen: () => {},
+            setAddMenuOpen: () => {},
+            setPostBatchQcFixMenuOpen: () => {},
+            setExpertExtrasMenuOpen: () => {},
+            loadDeferredGroup: async () => {},
+        });
+        slotUi.setModelsPickSlot('asr', { force: true });
+        assert.strictEqual(comboBtn.hidden, false);
+        assert.strictEqual(footHint.hidden, true);
+        slotUi.setModelsPickSlot('mt', { force: true });
+        assert.strictEqual(comboBtn.hidden, false);
+
         ui.setModelsPickSlot('mt', { force: true });
         ui.syncModelsChipLabel();
         assert.strictEqual(live.textContent, `当前模式：${fullMt}`);
@@ -409,5 +447,73 @@ describe('TransubQuickToolbarChipsUi', () => {
         assert.ok(paramsSummary.textContent.includes('GPU'));
         assert.ok(paramsSummary.textContent.includes('翻译'));
         assert.ok(paramsSummary.textContent.includes('srt/ass'));
+    });
+
+    it('updateParamsSummary keeps quick language=yue over stale hidden languageSelect=auto', () => {
+        const quickLanguageSelect = makeEl({
+            value: 'yue',
+            options: [
+                { value: 'auto' }, { value: 'ja' }, { value: 'zh' }, { value: 'yue' },
+            ],
+        });
+        const languageSelect = makeEl({
+            value: 'auto',
+            options: [
+                { value: 'auto' }, { value: 'ja' }, { value: 'zh' }, { value: 'yue' },
+            ],
+        });
+        const staleQuick = makeEl({ value: '' }); // detached cache must not win
+        const quickTargetLangSelect = makeEl({ value: 'simplified' });
+        const taskSelect = makeEl({ value: 'transcribe' });
+        globalThis.TransubSubtitleTargetLang = {
+            yueTargetSkipsMachineTranslate: (src, form) => {
+                const s = String(src || '').toLowerCase();
+                const f = String(form || '').toLowerCase();
+                return (s === 'yue' || s === 'cantonese')
+                    && (f === 'source' || f === 'original' || f === 'transcribe');
+            },
+        };
+        const ui = createQuickToolbarChipsUi({
+            els: {
+                paramsSummary: makeEl(),
+                deviceSelect: makeEl({ value: 'cuda' }),
+                quickLanguageSelect: staleQuick,
+                languageSelect,
+                quickTargetLangSelect,
+                taskSelect,
+                chineseSubtitleVariantSelect: makeEl({ value: 'simplified' }),
+            },
+            deviceLabels: { cuda: 'GPU' },
+            getDocument: () => ({
+                getElementById: (id) => {
+                    if (id === 'quickLanguageSelect') return quickLanguageSelect;
+                    if (id === 'languageSelect') return languageSelect;
+                    if (id === 'taskSelect') return taskSelect;
+                    return null;
+                },
+            }),
+            readTaskFromForm: () => 'transcribe',
+            taskLabelOf: () => '原语言',
+            readSubFormatsFromForm: () => 'srt',
+            toQuickTargetLang: (v) => (v === 'traditional' ? 'traditional' : 'simplified'),
+            getPostBatchQcFixMode: () => 'none',
+            postBatchQcFixModeLabel: () => '无',
+            updateEnvBanner: () => {},
+            updateAutoSenseUi: () => {},
+            syncTranslateModeChipUi: () => {},
+            syncMtModelChipUi: () => {},
+            syncPostBatchQcFixChipUi: () => {},
+            updateReadinessStrip: () => {},
+            updateRecipeCapsule: () => {},
+        });
+        ui.updateParamsSummary();
+        assert.strictEqual(quickLanguageSelect.value, 'yue');
+        assert.strictEqual(languageSelect.value, 'yue');
+        // Stale empty cache must not force chip back to auto
+        assert.strictEqual(staleQuick.value, '');
+        // Yue + 简体：heal stale transcribe → translate（粤→普通话）
+        assert.strictEqual(quickTargetLangSelect.value, 'simplified');
+        assert.strictEqual(taskSelect.value, 'translate');
+        delete globalThis.TransubSubtitleTargetLang;
     });
 });

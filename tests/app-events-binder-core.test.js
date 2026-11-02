@@ -213,4 +213,87 @@ describe('TransubAppEventsBinder', () => {
             global.window = prevWindow;
         }
     });
+
+    it('bindProxyAndHfSettingsEvents delegates 测试连接 after settings fragment inject', async () => {
+        const prevDocument = global.document;
+        const prevWindow = global.window;
+        const proxyStatus = { textContent: '', className: '' };
+        const hfStatus = { textContent: '', className: '' };
+        const hfInput = { value: 'https://hf-mirror.com' };
+        const proxyBtn = { id: 'proxyTestBtn', disabled: false };
+        const hfBtn = { id: 'engineHfTestBtn', disabled: false };
+        const nodes = {
+            proxyEnabledCheck: { checked: true },
+            proxyUrlInput: { value: 'http://127.0.0.1:7890' },
+            proxyBypassInput: { value: '' },
+            proxyTestBtn: proxyBtn,
+            proxyTestStatus: proxyStatus,
+            engineHfEndpointInput: hfInput,
+            engineHfTestBtn: hfBtn,
+            networkHfStatus: hfStatus,
+        };
+        const clickHandlers = [];
+        let proxyPayload = null;
+        let hfPayload = null;
+        global.document = {
+            getElementById: (id) => nodes[id] || null,
+            addEventListener: (type, fn) => {
+                if (type === 'click') clickHandlers.push(fn);
+            },
+        };
+        global.window = { addEventListener: () => {} };
+        try {
+            const binder = createAppEventsBinder({
+                electron: {
+                    transubTestProxy: async (payload) => {
+                        proxyPayload = payload;
+                        return { ok: true, message: '代理可用' };
+                    },
+                    transubTestHfEndpoint: async (payload) => {
+                        hfPayload = payload;
+                        return { ok: true, message: '镜像可用' };
+                    },
+                },
+                els: {},
+                state: { items: [] },
+                setProxyTestStatus: () => {},
+                setNetworkHfStatus: () => {},
+                syncProxySettingsUi: () => {},
+                markSettingsDirty: () => {},
+            });
+            binder.bindProxyAndHfSettingsEvents();
+            assert.ok(clickHandlers.length >= 1);
+            const clickHandler = clickHandlers[0];
+
+            clickHandler({
+                target: {
+                    closest: (sel) => (sel === '#proxyTestBtn' ? proxyBtn : null),
+                },
+                preventDefault() {},
+                stopPropagation() {},
+            });
+            await new Promise((r) => setTimeout(r, 0));
+            assert.ok(proxyPayload);
+            assert.strictEqual(proxyPayload.proxyEnabled, true);
+            assert.strictEqual(proxyPayload.proxyUrl, 'http://127.0.0.1:7890');
+            assert.ok(String(proxyStatus.textContent).includes('代理可用'));
+            assert.strictEqual(proxyBtn.disabled, false);
+
+            clickHandler({
+                target: {
+                    closest: (sel) => (sel === '#engineHfTestBtn' ? hfBtn : null),
+                },
+                preventDefault() {},
+                stopPropagation() {},
+            });
+            await new Promise((r) => setTimeout(r, 0));
+            assert.ok(hfPayload);
+            assert.strictEqual(hfPayload.hfEndpoint, 'https://hf-mirror.com');
+            assert.ok(String(hfStatus.textContent).includes('镜像可用'));
+            assert.strictEqual(hfBtn.disabled, false);
+        } finally {
+            global.document = prevDocument;
+            global.window = prevWindow;
+        }
+    });
 });

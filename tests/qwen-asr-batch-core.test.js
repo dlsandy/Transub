@@ -3,7 +3,7 @@ const batch = require('../src/js/qwen-asr-batch-core');
 
 describe('qwen-asr-batch-core', () => {
     it('normalizeQwenAsrBatchMode', () => {
-        assert.strictEqual(batch.normalizeQwenAsrBatchMode(undefined), 'auto');
+        assert.strictEqual(batch.normalizeQwenAsrBatchMode(undefined), 'aggressive');
         assert.strictEqual(batch.normalizeQwenAsrBatchMode('aggressive'), 'aggressive');
         assert.strictEqual(batch.normalizeQwenAsrBatchMode('fast'), 'aggressive');
         assert.strictEqual(batch.normalizeQwenAsrBatchMode('conservative'), 'conservative');

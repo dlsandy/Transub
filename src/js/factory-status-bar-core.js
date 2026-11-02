@@ -90,28 +90,34 @@
         // Always reserve GPU / VRAM slots so the strip layout stays stable
         // when nvidia-smi is missing or the sample has no GPU block.
         const gpu = hasSample ? sample.gpu : null;
-        const utilPct = gpu != null ? Number(gpu.utilPct) : NaN;
+        const utilPct = gpu != null && gpu.utilPct != null && gpu.utilPct !== ''
+            ? Number(gpu.utilPct)
+            : NaN;
         const utilOk = Number.isFinite(utilPct);
+        const vendor = gpu ? String(gpu.vendor || '').toLowerCase() : '';
+        const vendorLabel = vendor === 'amd' ? 'AMD' : (vendor === 'intel' ? 'Intel' : '');
         chips.push({
             id: 'gpu',
             label: 'GPU',
-            value: utilOk ? `${Math.round(utilPct)}%` : '—',
+            value: utilOk ? `${Math.round(utilPct)}%` : (vendorLabel || '—'),
             pct: utilOk ? Math.max(0, Math.min(100, Math.round(utilPct))) : null,
         });
 
         const memTotalMiB = gpu != null ? Number(gpu.memTotalMiB) : NaN;
-        const memUsedMiB = gpu != null ? Number(gpu.memUsedMiB) : NaN;
+        const memUsedRaw = gpu != null ? gpu.memUsedMiB : null;
+        const memUsedMiB = memUsedRaw == null ? NaN : Number(memUsedRaw);
         if (Number.isFinite(memTotalMiB) && memTotalMiB > 0) {
-            const used = (Number.isFinite(memUsedMiB) ? memUsedMiB : 0) / 1024;
+            const usedOk = Number.isFinite(memUsedMiB);
+            const used = usedOk ? memUsedMiB / 1024 : 0;
             const total = memTotalMiB / 1024;
             const fmt = (n) => n.toFixed(1);
-            const pct = total > 0
+            const pct = usedOk && total > 0
                 ? Math.max(0, Math.min(100, Math.round((used / total) * 100)))
                 : null;
             chips.push({
                 id: 'vram',
                 label: '显存',
-                value: `${fmt(used)}/${fmt(total)}G`,
+                value: usedOk ? `${fmt(used)}/${fmt(total)}G` : `—/${fmt(total)}G`,
                 pct,
             });
         } else {

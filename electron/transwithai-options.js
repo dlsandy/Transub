@@ -90,19 +90,21 @@ function mergeTransWithAiOptions(input = {}) {
         maxBatchSize: 8,
         beamSize: 1,
         language: 'ja',
-        vadThreshold: 0.45,
-        vadMinSpeechDurationMs: 180,
-        vadMinSilenceDurationMs: 500,
-        vadSpeechPadMs: 80,
+        vadThreshold: 0.3,
+        vadMinSpeechDurationMs: 120,
+        vadMinSilenceDurationMs: 280,
+        vadSpeechPadMs: 120,
         maxInitialTimestamp: 30,
         repetitionPenalty: 1.1,
         noSpeechThreshold: 0.6,
         logProbThreshold: -1,
         compressionRatioThreshold: 2.4,
-        hallucinationSilenceThreshold: null,
+        hallucinationSilenceThreshold: 2,
         glossaryPromptEnabled: false,
         glossaryMtEnabled: false,
         chineseSubtitleVariant: 'simplified',
+        /** Main-window 目标 chip (source|simplified|traditional*|en|ja|ko) */
+        subtitleTargetChip: 'simplified',
         /** 成片目标语 (zh-Hans|zh-Hant|…|en|ja|ko); independent of uiLocale */
         subtitleTargetLang: 'zh-Hans',
         /** Remember last manual/auto MT id per 成片语 bucket (zh|en|ja|ko) */
@@ -118,9 +120,9 @@ function mergeTransWithAiOptions(input = {}) {
         /** Write translation/target sidecar next to media (or output dir). */
         outputWriteTarget: true,
         /** Write source/ASR sidecar (e.g. Movie.src.srt / Movie.ja.srt). */
-        outputWriteSource: true,
-        /** lang = Movie.zh-cn.srt; media = Movie.srt (same basename as video). */
-        targetSubtitleNaming: 'lang',
+        outputWriteSource: false,
+        /** media = Movie.srt (same basename as video); lang = Movie.zh-cn.srt. */
+        targetSubtitleNaming: 'media',
         /** Free default on; Pro UI clears on unlock / first Pro default. */
         insertSoftwareCredit: true,
         includeWords: false,
@@ -151,31 +153,52 @@ function mergeTransWithAiOptions(input = {}) {
         smartTranslateFaithfulVerify: true,
         smartTranslateAddressConsistency: true,
         smartTranslatePolishSampleLimit: 36,
+        /** Pro Laya：auto=忠实复核等优先用本地 System One；off=仅启发式/LLM */
+        jevDecisionMode: 'auto',
+        jevDecisionEndpoint: 'local',
+        jevDecisionMinConfidence: 0.55,
         /** auto: follow perfProfile; on/off force */
-        asrSecondOpinion: 'off',
+        asrSecondOpinion: 'auto',
+        /** Hy-MT multi-cue window: auto | 1 | 2 | 3 | 4 */
+        hyMtWindowLines: 'auto',
+        sensevoiceRichTags: 'sidecar',
+        sensevoiceEmotionMtStyle: 'off',
+        sensevoiceSdhExport: false,
+        glossaryPromptInjectMode: 'hitOnly',
+        glossaryAlwaysCharacterMax: 8,
+        glossaryConditionalPostReplace: true,
         qualityPipelineMode: 'auto',
-        postQcLoopMaxPasses: 1,
-        asrBadPoolDrafts: false,
+        postQcLoopMaxPasses: 2,
         /** Pro: off | auto (suspicious cues) | thorough (all dialogue cues); all media types */
         asrSemanticRepair: 'auto',
         /** Film Brief sampling: auto = adaptive (~56 cues); full = all cues */
         filmBriefSampleMode: 'auto',
         sakuraNsfwPrompt: null,
-        filmAudioEnhance: false,
+        filmAudioEnhance: true,
+        /** When filmAudioEnhance: Demucs vocals feed VAD only; ASR keeps original mix */
+        enhanceForVadOnly: true,
         filmVadPreset: false,
         filmVadThreshold: null,
         filmVadMinSpeechDurationMs: null,
         filmVadMinSilenceDurationMs: null,
         filmHallucinationSilenceThreshold: null,
+        /** Demucs: auto outer-chunk when media length ≥ this many minutes (0=off). */
+        filmDemucsAutoSplitMinutes: 150,
+        /** Demucs: outer chunk length in minutes when auto-split triggers. */
+        filmDemucsChunkMinutes: 60,
         neuralDiarize: false,
         vadEnabled: true,
         vadSensitive: false,
         vadAggressive: false,
+        timingAlign: true,
+        timingAlignModel: 'firered',
+        /** Cantonese song/MV karaoke post (preset zh-yue-qwen3-song). */
+        singingKaraoke: false,
         audioLightDenoise: false,
         autoSuggestSpeakers: false,
         speakerCount: 2,
         perfProfile: 'quality',
-        qwenAsrBatchMode: 'auto',
+        qwenAsrBatchMode: 'aggressive',
         vadMaxSingleSegmentMs: 5000,
         smartSplitWithVad: true,
         targetChunkDurationS: 5,
@@ -200,23 +223,23 @@ function mergeTransWithAiOptions(input = {}) {
         wizardPresetIds: [],
         wizardTargetLangs: ['zh-Hans'],
         startupWindow: 'generator',
-        subtitleEditorBackend: 'auto',
+        subtitleEditorBackend: 'electron',
         subtitleEditorPath: '',
         uiLocale: 'zh-Hans',
-        autoUpdateCheckInterval: 'off',
+        autoUpdateCheckInterval: 'weekly',
         lastAutoUpdateCheckAt: '',
         activePresetId: 'ja-av-qwen3-galgame-ten',
         activeComboPlanId: '',
         mtUseForm: true,
         externalImportAction: 'list_when_idle',
         postBatchQc: true,
-        postBatchQcFixMode: 'fix',
+        postBatchQcFixMode: 'smart',
         /** QC 修复：字数超过此值则尝试静音分割（0=关闭）。默认 15。 */
         qcSilenceSplitChars: 15,
         qcSmartLlmSplit: true,
         qcSmartRetranscribe: true,
         qcSmartSemanticReview: true,
-        qcSmartIntensity: 'light',
+        qcSmartIntensity: 'medium',
         qcSmartMaxRetranscribeRanges: 8,
         postBatchTextPresetGroupId: '',
         outputDir: '',
@@ -309,8 +332,8 @@ function mergeTransWithAiOptions(input = {}) {
             const { normalizeQwenAsrBatchMode } = require('../src/js/qwen-asr-batch-core');
             merged.qwenAsrBatchMode = normalizeQwenAsrBatchMode(merged.qwenAsrBatchMode);
         } catch {
-            const v = String(merged.qwenAsrBatchMode || 'auto').trim().toLowerCase();
-            merged.qwenAsrBatchMode = (v === 'conservative' || v === 'aggressive') ? v : 'auto';
+            const v = String(merged.qwenAsrBatchMode || 'aggressive').trim().toLowerCase();
+            merged.qwenAsrBatchMode = (v === 'conservative' || v === 'auto') ? v : 'aggressive';
         }
     }
     delete merged.autoContentProfile;
@@ -358,13 +381,13 @@ function mergeTransWithAiOptions(input = {}) {
         : 'generator';
 
     {
-        const backend = String(merged.subtitleEditorBackend ?? 'auto').trim().toLowerCase();
+        const backend = String(merged.subtitleEditorBackend ?? 'electron').trim().toLowerCase();
         if (backend === 'external' || backend === 'native' || backend === 'csharp') {
             merged.subtitleEditorBackend = 'external';
-        } else if (backend === 'electron' || backend === 'builtin' || backend === 'internal') {
-            merged.subtitleEditorBackend = 'electron';
-        } else {
+        } else if (backend === 'auto') {
             merged.subtitleEditorBackend = 'auto';
+        } else {
+            merged.subtitleEditorBackend = 'electron';
         }
         merged.subtitleEditorPath = String(merged.subtitleEditorPath || '').trim();
     }
@@ -569,11 +592,68 @@ function mergeTransWithAiOptions(input = {}) {
         if (raw === false || raw === 0) merged.asrSecondOpinion = 'off';
         else if (raw === true || raw === 1) merged.asrSecondOpinion = 'on';
         else {
-            const s = String(raw == null ? 'off' : raw).trim().toLowerCase();
+            const s = String(raw == null ? 'auto' : raw).trim().toLowerCase();
             if (s === 'false' || s === '0' || s === 'off' || s === 'no') merged.asrSecondOpinion = 'off';
             else if (s === 'true' || s === '1' || s === 'on' || s === 'always') merged.asrSecondOpinion = 'on';
             else if (s === 'auto') merged.asrSecondOpinion = 'auto';
-            else merged.asrSecondOpinion = 'off';
+            else merged.asrSecondOpinion = 'auto';
+        }
+    }
+    {
+        try {
+            const hymt = require('../src/js/hymt-translate-core');
+            const pref = hymt.normalizeHyMtWindowLinesOption?.(merged.hyMtWindowLines);
+            merged.hyMtWindowLines = pref === 'auto' || pref == null ? 'auto' : String(pref);
+        } catch {
+            const s = String(merged.hyMtWindowLines == null ? 'auto' : merged.hyMtWindowLines).trim().toLowerCase();
+            if (!s || s === 'auto' || s === 'default') merged.hyMtWindowLines = 'auto';
+            else {
+                const n = Number(s);
+                merged.hyMtWindowLines = Number.isFinite(n) && n >= 1
+                    ? String(Math.max(1, Math.min(4, Math.round(n))))
+                    : 'auto';
+            }
+        }
+    }
+    {
+        try {
+            const rich = require('../src/js/sensevoice-rich-tags-core');
+            merged.sensevoiceRichTags = rich.normalizeSensevoiceRichTagsMode(merged.sensevoiceRichTags);
+        } catch {
+            const v = String(merged.sensevoiceRichTags || 'sidecar').trim().toLowerCase();
+            merged.sensevoiceRichTags = (v === 'off' || v === 'sdh') ? v : 'sidecar';
+        }
+        try {
+            const emo = require('../src/js/sensevoice-emotion-mt-style-core');
+            merged.sensevoiceEmotionMtStyle = emo.normalizeSensevoiceEmotionMtStyle(merged.sensevoiceEmotionMtStyle);
+        } catch {
+            const v = String(merged.sensevoiceEmotionMtStyle || 'off').trim().toLowerCase();
+            if (v === 'hint' || v === 'hint+polish' || v === 'hint_polish' || v === 'polish') {
+                merged.sensevoiceEmotionMtStyle = (v === 'hint') ? 'hint' : 'hint+polish';
+            } else {
+                merged.sensevoiceEmotionMtStyle = 'off';
+            }
+        }
+        merged.sensevoiceSdhExport = !!merged.sensevoiceSdhExport
+            && merged.sensevoiceRichTags === 'sdh';
+        try {
+            const gloss = require('../src/js/subtitle-glossary-core');
+            merged.glossaryPromptInjectMode = gloss.normalizeGlossaryPromptInjectMode(
+                merged.glossaryPromptInjectMode,
+            );
+            merged.glossaryAlwaysCharacterMax = gloss.clampGlossaryAlwaysCharacterMax(
+                merged.glossaryAlwaysCharacterMax,
+            );
+        } catch {
+            merged.glossaryPromptInjectMode = 'hitOnly';
+            merged.glossaryAlwaysCharacterMax = 8;
+        }
+        if (merged.glossaryConditionalPostReplace === false
+            || merged.glossaryConditionalPostReplace === 0
+            || String(merged.glossaryConditionalPostReplace).toLowerCase() === 'false') {
+            merged.glossaryConditionalPostReplace = false;
+        } else {
+            merged.glossaryConditionalPostReplace = true;
         }
     }
     {
@@ -602,6 +682,24 @@ function mergeTransWithAiOptions(input = {}) {
             else if (s === 'thorough' || s === 'full' || s === 'all' || s === 'on' || s === 'true' || s === '1') {
                 merged.asrSemanticRepair = 'thorough';
             } else merged.asrSemanticRepair = 'auto';
+        }
+    }
+    {
+        try {
+            const jev = require('../src/js/jev-decision-core');
+            merged.jevDecisionMode = jev.normalizeJevDecisionMode(merged.jevDecisionMode);
+            merged.jevDecisionEndpoint = jev.normalizeJevEndpointPref(
+                merged.jevDecisionEndpoint || merged.jevEndpoint || 'local',
+            );
+            merged.jevDecisionMinConfidence = jev.clampJevMinConfidence(merged.jevDecisionMinConfidence);
+        } catch {
+            const s = String(merged.jevDecisionMode == null ? 'auto' : merged.jevDecisionMode).trim().toLowerCase();
+            merged.jevDecisionMode = (s === 'off' || s === 'false' || s === '0' || s === 'no') ? 'off' : 'auto';
+            merged.jevDecisionEndpoint = String(merged.jevDecisionEndpoint || merged.jevEndpoint || 'local').trim() || 'local';
+            const n = Number(merged.jevDecisionMinConfidence);
+            merged.jevDecisionMinConfidence = Number.isFinite(n)
+                ? Math.max(0.5, Math.min(0.99, Math.round(n * 100) / 100))
+                : 0.65;
         }
     }
     {
@@ -635,12 +733,39 @@ function mergeTransWithAiOptions(input = {}) {
         const h = optFilmNum(merged.filmHallucinationSilenceThreshold, 0.1, 30);
         merged.filmHallucinationSilenceThreshold = h;
     }
+    {
+        let clampAuto;
+        let clampChunk;
+        try {
+            ({
+                clampFilmDemucsAutoSplitMinutes: clampAuto,
+                clampFilmDemucsChunkMinutes: clampChunk,
+            } = require('../src/js/settings-options-normalize-core'));
+        } catch {
+            clampAuto = null;
+            clampChunk = null;
+        }
+        merged.filmDemucsAutoSplitMinutes = typeof clampAuto === 'function'
+            ? clampAuto(merged.filmDemucsAutoSplitMinutes)
+            : (() => {
+                const n = Number(merged.filmDemucsAutoSplitMinutes);
+                if (!Number.isFinite(n)) return 150;
+                return Math.max(0, Math.min(720, Math.round(n)));
+            })();
+        merged.filmDemucsChunkMinutes = typeof clampChunk === 'function'
+            ? clampChunk(merged.filmDemucsChunkMinutes)
+            : (() => {
+                const n = Number(merged.filmDemucsChunkMinutes);
+                if (!Number.isFinite(n)) return 60;
+                return Math.max(10, Math.min(240, Math.round(n)));
+            })();
+    }
     merged.qcSmartLlmSplit = merged.qcSmartLlmSplit !== false;
     merged.qcSmartRetranscribe = merged.qcSmartRetranscribe !== false;
     merged.qcSmartSemanticReview = merged.qcSmartSemanticReview !== false;
     {
         const v = String(merged.qcSmartIntensity || '').trim().toLowerCase();
-        merged.qcSmartIntensity = (v === 'medium' || v === 'strong') ? v : 'light';
+        merged.qcSmartIntensity = (v === 'light' || v === 'strong') ? v : 'medium';
     }
     {
         const n = Number(merged.qcSmartMaxRetranscribeRanges);

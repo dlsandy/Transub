@@ -38,22 +38,83 @@ describe('settings-saved-options-core', () => {
         assert.strictEqual(out.rememberLastOpenDir, true);
         assert.strictEqual(out.uiLocale, 'zh-Hans');
         assert.strictEqual(out.insertSoftwareCredit, true);
-        // engine→llm: not a Pro mode, so hybrid/polish prefs stay off
+        // engine→llm: hybrid path stays off, but polish prefs are independent
         assert.strictEqual(out.smartTranslate, false);
         assert.strictEqual(out.smartTranslateHybridMt, false);
-        assert.strictEqual(out.smartTranslatePlotPolish, false);
-        assert.strictEqual(out.subtitleEditorBackend, 'auto');
+        assert.strictEqual(out.smartTranslatePlotPolish, true);
+        assert.strictEqual(out.subtitleEditorBackend, 'electron');
         assert.strictEqual(out.subtitleEditorPath, '');
-        assert.strictEqual(out.smartTranslateFaithfulVerify, false);
-        assert.strictEqual(out.smartTranslateAddressConsistency, false);
-        assert.strictEqual(out.asrSecondOpinion, 'off');
+        assert.strictEqual(out.smartTranslateFaithfulVerify, true);
+        assert.strictEqual(out.smartTranslateAddressConsistency, true);
+        assert.strictEqual(out.jevDecisionMode, 'auto');
+        assert.strictEqual(out.jevDecisionEndpoint, 'local');
+        assert.strictEqual(out.jevDecisionMinConfidence, 0.55);
+        assert.strictEqual(out.asrSecondOpinion, 'auto');
+        assert.strictEqual(out.hyMtWindowLines, 'auto');
         assert.strictEqual(out.qualityPipelineMode, 'auto');
-        assert.strictEqual(out.postQcLoopMaxPasses, 1);
+        assert.strictEqual(out.postQcLoopMaxPasses, 2);
         assert.strictEqual(out.asrSemanticRepair, 'auto');
         assert.strictEqual(out.filmBriefSampleMode, 'auto');
         assert.strictEqual(out.activePresetId, '');
         assert.deepStrictEqual(out.autoScanFolders, []);
         assert.strictEqual(out.autoScanRecursive, true);
+    });
+
+    it('normalizes Laya endpoint prefs via assemble', () => {
+        const out = saved.assembleSavedOptionsFromFields({
+            task: 'dual',
+            translateMode: 'llm',
+            jevDecisionEndpoint: 'http://127.0.0.1:8000/v1/systemone',
+            jevDecisionMinConfidenceRaw: '0.88',
+            jevDecisionMode: 'auto',
+        }, norm);
+        assert.strictEqual(out.jevDecisionEndpoint, 'http://127.0.0.1:39283/v1/systemone');
+        assert.strictEqual(out.jevDecisionMinConfidence, 0.88);
+        assert.strictEqual(norm.normalizeJevEndpointPref('studio'), 'studio');
+    });
+
+    it('keeps enhanceForVadOnly when film enhance entitled', () => {
+        const out = saved.assembleSavedOptionsFromFields({
+            advancedEntitled: true,
+            filmAudioEnhance: true,
+            enhanceForVadOnly: true,
+            filmVadPreset: true,
+        }, norm);
+        assert.strictEqual(out.filmAudioEnhance, true);
+        assert.strictEqual(out.enhanceForVadOnly, true);
+        assert.strictEqual(out.filmVadPreset, false);
+    });
+
+    it('persists film Demucs auto-split and chunk minutes', () => {
+        const out = saved.assembleSavedOptionsFromFields({
+            advancedEntitled: true,
+            filmAudioEnhance: true,
+            filmDemucsAutoSplitMinutesRaw: '180',
+            filmDemucsChunkMinutesRaw: '90',
+        }, norm);
+        assert.strictEqual(out.filmDemucsAutoSplitMinutes, 180);
+        assert.strictEqual(out.filmDemucsChunkMinutes, 90);
+        const defaults = saved.assembleSavedOptionsFromFields({
+            advancedEntitled: true,
+            filmAudioEnhance: true,
+        }, norm);
+        assert.strictEqual(defaults.filmDemucsAutoSplitMinutes, 150);
+        assert.strictEqual(defaults.filmDemucsChunkMinutes, 60);
+        const off = saved.assembleSavedOptionsFromFields({
+            filmDemucsAutoSplitMinutesRaw: '0',
+            filmDemucsChunkMinutesRaw: '5',
+        }, norm);
+        assert.strictEqual(off.filmDemucsAutoSplitMinutes, 0);
+        assert.strictEqual(off.filmDemucsChunkMinutes, 10);
+    });
+
+    it('clears enhanceForVadOnly when film enhance off', () => {
+        const out = saved.assembleSavedOptionsFromFields({
+            advancedEntitled: true,
+            filmAudioEnhance: false,
+            enhanceForVadOnly: true,
+        }, norm);
+        assert.strictEqual(out.enhanceForVadOnly, false);
     });
 
     it('persists autoScanFolders and recursive flag', () => {
@@ -90,6 +151,29 @@ describe('settings-saved-options-core', () => {
         assert.strictEqual(hant.subtitleTargetLang, 'zh-Hant');
         assert.strictEqual(hant.dualTargetSuffix, 'zh-tw');
         assert.strictEqual(hant.chineseSubtitleVariant, 'traditional');
+    });
+
+    it('persists subtitleTargetChip including 原文', () => {
+        const source = saved.assembleSavedOptionsFromFields({
+            task: 'transcribe',
+            subtitleTargetChip: 'source',
+            chineseSubtitleVariant: 'simplified',
+        }, norm);
+        assert.strictEqual(source.subtitleTargetChip, 'source');
+        assert.strictEqual(source.chineseSubtitleVariant, 'simplified');
+
+        const hans = saved.assembleSavedOptionsFromFields({
+            task: 'transcribe',
+            subtitleTargetChip: 'simplified',
+            chineseSubtitleVariant: 'simplified',
+        }, norm);
+        assert.strictEqual(hans.subtitleTargetChip, 'simplified');
+
+        const legacy = saved.assembleSavedOptionsFromFields({
+            task: 'transcribe',
+            chineseSubtitleVariant: 'simplified',
+        }, norm);
+        assert.strictEqual(legacy.subtitleTargetChip, 'source');
     });
 
     it('persists lastMtByTarget buckets', () => {
@@ -171,7 +255,7 @@ describe('settings-saved-options-core', () => {
 
     it('normalizes asrSecondOpinion on/auto', () => {
         assert.strictEqual(norm.normalizeAsrSecondOpinion('ON'), 'on');
-        assert.strictEqual(norm.normalizeAsrSecondOpinion(undefined), 'off');
+        assert.strictEqual(norm.normalizeAsrSecondOpinion(undefined), 'auto');
         assert.strictEqual(norm.normalizeAsrSecondOpinion(false), 'off');
         const on = saved.assembleSavedOptionsFromFields({ asrSecondOpinion: 'always' }, norm);
         assert.strictEqual(on.asrSecondOpinion, 'on');
@@ -187,15 +271,6 @@ describe('settings-saved-options-core', () => {
         }, norm);
         assert.strictEqual(out.qualityPipelineMode, 'off');
         assert.strictEqual(out.postQcLoopMaxPasses, 2);
-    });
-
-    it('persists asrBadPoolDrafts default false', () => {
-        const def = saved.assembleSavedOptionsFromFields({}, norm);
-        assert.strictEqual(def.asrBadPoolDrafts, false);
-        const off = saved.assembleSavedOptionsFromFields({ asrBadPoolDrafts: false }, norm);
-        assert.strictEqual(off.asrBadPoolDrafts, false);
-        const on = saved.assembleSavedOptionsFromFields({ asrBadPoolDrafts: true }, norm);
-        assert.strictEqual(on.asrBadPoolDrafts, true);
     });
 
     it('persists insertSoftwareCredit false when unchecked', () => {
@@ -299,8 +374,8 @@ describe('settings-saved-options-core', () => {
     it('assembles output track write prefs and target naming', () => {
         const def = saved.assembleSavedOptionsFromFields({}, norm);
         assert.strictEqual(def.outputWriteTarget, true);
-        assert.strictEqual(def.outputWriteSource, true);
-        assert.strictEqual(def.targetSubtitleNaming, 'lang');
+        assert.strictEqual(def.outputWriteSource, false);
+        assert.strictEqual(def.targetSubtitleNaming, 'media');
         const media = saved.assembleSavedOptionsFromFields({
             outputWriteTarget: true,
             outputWriteSource: true,
@@ -406,5 +481,34 @@ describe('settings-saved-options-core', () => {
         assert.strictEqual(on.transubStationEnabled, true);
         assert.strictEqual(on.transubStationUrl, 'http://192.168.31.107:8787');
         assert.strictEqual(on.transubStationModel, 'Sakura-14B');
+    });
+
+    it('persists timingAlign / timingAlignModel (ForcedAligner preset)', () => {
+        const def = saved.assembleSavedOptionsFromFields({}, norm);
+        assert.strictEqual(def.timingAlign, true);
+        assert.strictEqual(def.timingAlignModel, 'firered');
+
+        const align = saved.assembleSavedOptionsFromFields({
+            timingAlign: true,
+            timingAlignModel: 'qwen3-forced-aligner-0.6b',
+        }, norm);
+        assert.strictEqual(align.timingAlign, true);
+        assert.strictEqual(align.timingAlignModel, 'qwen3-forced-aligner-0.6b');
+
+        const firered = saved.assembleSavedOptionsFromFields({
+            timingAlignModel: 'firered-vad',
+        }, norm);
+        assert.strictEqual(firered.timingAlignModel, 'firered');
+    });
+
+    it('persists singingKaraoke (粤语歌曲 preset)', () => {
+        const def = saved.assembleSavedOptionsFromFields({}, norm);
+        assert.strictEqual(def.singingKaraoke, false);
+        const on = saved.assembleSavedOptionsFromFields({ singingKaraoke: true }, norm);
+        assert.strictEqual(on.singingKaraoke, true);
+        const viaPreset = saved.assembleSavedOptionsFromFields({
+            activePresetId: 'zh-yue-qwen3-song',
+        }, norm);
+        assert.strictEqual(viaPreset.singingKaraoke, true);
     });
 });

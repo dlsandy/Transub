@@ -45,6 +45,7 @@
                 targetLang: input.targetLang || input.subtitleTargetLang,
                 chineseSubtitleVariant: input.chineseSubtitleVariant,
                 language: input.language,
+                vramGb: input.vramGb,
             }) || '').trim();
         }
         const installed = asIds(input.installedIds);

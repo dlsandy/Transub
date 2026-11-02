@@ -12,9 +12,11 @@ const {
     normalizeInstallPath,
 } = require('./transwithai-options');
 
-const VALID_DEVICES = new Set(['cuda', 'cpu', 'auto', 'cuda_low_vram', 'cuda_batch', 'amd', 'modal']);
+const VALID_DEVICES = new Set([
+    'cuda', 'cpu', 'auto', 'cuda_low_vram', 'cuda_batch', 'amd', 'intel', 'xpu', 'modal',
+]);
 const VALID_LOG_LEVELS = new Set(['DEBUG', 'INFO', 'WARNING', 'ERROR']);
-const VALID_LANGUAGES = new Set(['auto', 'ja', 'zh', 'en']);
+const VALID_LANGUAGES = new Set(['auto', 'ja', 'zh', 'en', 'ko', 'yue']);
 const VALID_TASKS = new Set(['translate', 'transcribe', 'dual']);
 
 function normalizeTask(value) {
@@ -95,7 +97,7 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
                 };
             }
         })(),
-        engineProfile: String(merged.engineProfile || 'balanced').trim() || 'balanced',
+        engineProfile: String(merged.engineProfile || 'quality').trim() || 'quality',
         engineAsrModel: String(merged.engineAsrModel || 'sensevoice-small').trim(),
         engineMtModel: (() => {
             const id = String(merged.engineMtModel || '').trim();
@@ -122,7 +124,23 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
                 return 'llm';
             }
         })(),
-        engineVadModel: String(merged.engineVadModel || 'fsmn-vad').trim(),
+        engineVadModel: String(merged.engineVadModel || 'firered-vad').trim(),
+        timingAlign: merged.timingAlign !== false,
+        timingAlignModel: (() => {
+            try {
+                const { normalizeTimingAlignModel } = require('../src/js/settings-options-normalize-core');
+                return normalizeTimingAlignModel(merged.timingAlignModel);
+            } catch {
+                const raw = String(merged.timingAlignModel || 'firered').trim().toLowerCase().replace(/_/g, '-');
+                if (raw === 'ten' || raw === 'ten-vad') return 'ten';
+                if (raw === 'qwen3-forced-aligner-0.6b' || raw.startsWith('qwen3-forced')) {
+                    return 'qwen3-forced-aligner-0.6b';
+                }
+                return 'firered';
+            }
+        })(),
+        singingKaraoke: !!merged.singingKaraoke
+            || String(merged.activePresetId || '').trim() === 'zh-yue-qwen3-song',
         engineAutoStart: merged.engineAutoStart !== false,
         installPath: normalizeInstallPath(merged.installPath),
         device: VALID_DEVICES.has(merged.device) ? merged.device : 'cuda',
@@ -142,18 +160,18 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         maxBatchSize: Math.max(1, Math.min(32, Number(merged.maxBatchSize) || 8)),
         beamSize: Math.max(1, Math.min(20, Number(merged.beamSize) || 5)),
         language: VALID_LANGUAGES.has(language) ? language : 'auto',
-        vadThreshold: Math.max(0.1, Math.min(0.9, Number(merged.vadThreshold) || 0.5)),
+        vadThreshold: Math.max(0.1, Math.min(0.9, Number(merged.vadThreshold) || 0.3)),
         vadMinSpeechDurationMs: Math.max(0, Math.min(5000, (() => {
             const n = Number(merged.vadMinSpeechDurationMs);
-            return Number.isFinite(n) ? n : 300;
+            return Number.isFinite(n) ? n : 120;
         })())),
         vadMinSilenceDurationMs: Math.max(0, Math.min(5000, (() => {
             const n = Number(merged.vadMinSilenceDurationMs);
-            return Number.isFinite(n) ? n : 100;
+            return Number.isFinite(n) ? n : 280;
         })())),
         vadSpeechPadMs: Math.max(0, Math.min(2000, (() => {
             const n = Number(merged.vadSpeechPadMs);
-            return Number.isFinite(n) ? n : 200;
+            return Number.isFinite(n) ? n : 120;
         })())),
         maxInitialTimestamp: Math.max(0, Math.min(60, Number(merged.maxInitialTimestamp) || 30)),
         repetitionPenalty: Math.max(1, Math.min(2, Number(merged.repetitionPenalty) || 1.1)),
@@ -168,8 +186,8 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             if (!Number.isFinite(n) || n <= 0) return null;
             return Math.max(0.1, Math.min(30, n));
         })(),
-        glossaryPromptEnabled: merged.glossaryPromptEnabled !== false,
-        glossaryMtEnabled: merged.glossaryMtEnabled !== false,
+        glossaryPromptEnabled: !!merged.glossaryPromptEnabled,
+        glossaryMtEnabled: !!merged.glossaryMtEnabled,
         chineseSubtitleVariant: (() => {
             try {
                 const chinese = require('../src/js/subtitle-chinese-core');
@@ -182,6 +200,23 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             if (v === 'traditional-tw' || v === 'tw') return 'traditional-tw';
             if (v === 'traditional-hk' || v === 'hk') return 'traditional-hk';
             return 'simplified';
+        })(),
+        subtitleTargetChip: (() => {
+            try {
+                const norm = require('../src/js/settings-options-normalize-core');
+                if (typeof norm.normalizeSubtitleTargetChipValue === 'function') {
+                    const chip = norm.normalizeSubtitleTargetChipValue(merged.subtitleTargetChip);
+                    if (chip) return chip;
+                }
+            } catch { /* optional */ }
+            const raw = String(merged.subtitleTargetChip || '').trim().toLowerCase();
+            if (raw === 'source' || raw === 'original' || raw === 'transcribe') return 'source';
+            if (raw === 'traditional' || raw === 'traditional-tw' || raw === 'traditional-hk') return raw;
+            if (raw === 'en' || raw === 'ja' || raw === 'ko') return raw;
+            if (raw === 'simplified') return 'simplified';
+            // Legacy saves: no chip key → 原文 when task is transcribe.
+            const task = String(merged.task || '').trim();
+            return task === 'transcribe' ? 'source' : 'simplified';
         })(),
         subtitleTargetLang: (() => {
             try {
@@ -252,17 +287,17 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             && !!merged.mergeBilingualSubtitles,
         outputWriteTarget: (() => {
             const writeTarget = merged.outputWriteTarget !== false;
-            const writeSource = merged.outputWriteSource !== false;
+            const writeSource = merged.outputWriteSource === true;
             return writeTarget || !writeSource;
         })(),
-        outputWriteSource: merged.outputWriteSource !== false,
+        outputWriteSource: merged.outputWriteSource === true,
         targetSubtitleNaming: (() => {
             try {
                 const dual = require('../src/js/dual-subtitle-core');
                 return dual.normalizeTargetSubtitleNaming(merged.targetSubtitleNaming);
             } catch {
                 const raw = String(merged.targetSubtitleNaming || '').trim().toLowerCase();
-                return (raw === 'media' || raw === 'same' || raw === 'video') ? 'media' : 'lang';
+                return (raw === 'lang' || raw === 'suffix' || raw === 'tagged') ? 'lang' : 'media';
             }
         })(),
         insertSoftwareCredit: merged.insertSoftwareCredit !== false,
@@ -317,15 +352,98 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         smartTranslatePlotPolish: merged.smartTranslatePlotPolish !== false,
         smartTranslateFaithfulVerify: merged.smartTranslateFaithfulVerify !== false,
         smartTranslateAddressConsistency: merged.smartTranslateAddressConsistency !== false,
+        jevDecisionMode: (() => {
+            try {
+                const jev = require('../src/js/jev-decision-core');
+                return jev.normalizeJevDecisionMode(merged.jevDecisionMode);
+            } catch {
+                const s = String(merged.jevDecisionMode == null ? 'auto' : merged.jevDecisionMode)
+                    .trim().toLowerCase();
+                return (s === 'off' || s === 'false' || s === '0' || s === 'no') ? 'off' : 'auto';
+            }
+        })(),
+        jevDecisionEndpoint: (() => {
+            try {
+                const jev = require('../src/js/jev-decision-core');
+                return jev.normalizeJevEndpointPref(
+                    merged.jevDecisionEndpoint || merged.jevEndpoint || 'local',
+                );
+            } catch {
+                return String(merged.jevDecisionEndpoint || merged.jevEndpoint || 'local').trim() || 'local';
+            }
+        })(),
+        jevDecisionMinConfidence: (() => {
+            try {
+                const jev = require('../src/js/jev-decision-core');
+                return jev.clampJevMinConfidence(merged.jevDecisionMinConfidence);
+            } catch {
+                const n = Number(merged.jevDecisionMinConfidence);
+                if (!Number.isFinite(n)) return 0.65;
+                return Math.max(0.5, Math.min(0.99, Math.round(n * 100) / 100));
+            }
+        })(),
         asrSecondOpinion: (() => {
             const raw = merged.asrSecondOpinion;
             if (raw === false || raw === 0) return 'off';
             if (raw === true || raw === 1) return 'on';
             const s = String(raw == null ? 'auto' : raw).trim().toLowerCase();
-            if (s === 'false' || s === '0' || s === 'off' || s === 'no') return 'off';
-            if (s === 'true' || s === '1' || s === 'on' || s === 'always') return 'on';
+            if (s === 'auto') return 'auto';
+            if (s === 'on' || s === 'always' || s === 'true' || s === '1') return 'on';
+            if (s === 'off' || s === 'false' || s === '0' || s === 'no') return 'off';
             return 'auto';
         })(),
+        hyMtWindowLines: (() => {
+            try {
+                const hymt = require('../src/js/hymt-translate-core');
+                const pref = hymt.normalizeHyMtWindowLinesOption?.(merged.hyMtWindowLines);
+                return pref === 'auto' || pref == null ? 'auto' : String(pref);
+            } catch {
+                const s = String(merged.hyMtWindowLines == null ? 'auto' : merged.hyMtWindowLines)
+                    .trim().toLowerCase();
+                if (!s || s === 'auto' || s === 'default') return 'auto';
+                const n = Number(s);
+                if (Number.isFinite(n) && n >= 1) return String(Math.max(1, Math.min(4, Math.round(n))));
+                return 'auto';
+            }
+        })(),
+        sensevoiceRichTags: (() => {
+            try {
+                const rich = require('../src/js/sensevoice-rich-tags-core');
+                return rich.normalizeSensevoiceRichTagsMode(merged.sensevoiceRichTags);
+            } catch {
+                const v = String(merged.sensevoiceRichTags || 'sidecar').trim().toLowerCase();
+                return (v === 'off' || v === 'sdh') ? v : 'sidecar';
+            }
+        })(),
+        sensevoiceEmotionMtStyle: (() => {
+            try {
+                const emo = require('../src/js/sensevoice-emotion-mt-style-core');
+                return emo.normalizeSensevoiceEmotionMtStyle(merged.sensevoiceEmotionMtStyle);
+            } catch {
+                const v = String(merged.sensevoiceEmotionMtStyle || 'off').trim().toLowerCase();
+                if (v === 'hint') return 'hint';
+                if (v === 'hint+polish' || v === 'hint_polish' || v === 'polish') return 'hint+polish';
+                return 'off';
+            }
+        })(),
+        sensevoiceSdhExport: !!merged.sensevoiceSdhExport,
+        glossaryPromptInjectMode: (() => {
+            try {
+                const gloss = require('../src/js/subtitle-glossary-core');
+                return gloss.normalizeGlossaryPromptInjectMode(merged.glossaryPromptInjectMode);
+            } catch {
+                return 'hitOnly';
+            }
+        })(),
+        glossaryAlwaysCharacterMax: (() => {
+            try {
+                const gloss = require('../src/js/subtitle-glossary-core');
+                return gloss.clampGlossaryAlwaysCharacterMax(merged.glossaryAlwaysCharacterMax);
+            } catch {
+                return 8;
+            }
+        })(),
+        glossaryConditionalPostReplace: merged.glossaryConditionalPostReplace !== false,
         qualityPipelineMode: (() => {
             try {
                 const { normalizeQualityPipelineMode } = require('../src/js/quality-pipeline-policy-core');
@@ -344,11 +462,10 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
                 return clampPostQcLoopMaxPasses(merged.postQcLoopMaxPasses);
             } catch {
                 const n = Number(merged.postQcLoopMaxPasses);
-                if (!Number.isFinite(n)) return 1;
+                if (!Number.isFinite(n)) return 2;
                 return Math.max(0, Math.min(2, Math.round(n)));
             }
         })(),
-        asrBadPoolDrafts: merged.asrBadPoolDrafts !== false,
         asrSemanticRepair: (() => {
             const raw = merged.asrSemanticRepair;
             if (raw === false || raw === 0) return 'off';
@@ -374,11 +491,32 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             return null;
         })(),
         filmAudioEnhance: !!merged.filmAudioEnhance,
+        enhanceForVadOnly: !!merged.filmAudioEnhance && !!merged.enhanceForVadOnly,
         filmVadPreset: !!merged.filmVadPreset && !merged.filmAudioEnhance,
         filmVadThreshold: merged.filmVadThreshold ?? null,
         filmVadMinSpeechDurationMs: merged.filmVadMinSpeechDurationMs ?? null,
         filmVadMinSilenceDurationMs: merged.filmVadMinSilenceDurationMs ?? null,
         filmHallucinationSilenceThreshold: merged.filmHallucinationSilenceThreshold ?? null,
+        filmDemucsAutoSplitMinutes: (() => {
+            try {
+                const { clampFilmDemucsAutoSplitMinutes } = require('../src/js/settings-options-normalize-core');
+                return clampFilmDemucsAutoSplitMinutes(merged.filmDemucsAutoSplitMinutes);
+            } catch {
+                const n = Number(merged.filmDemucsAutoSplitMinutes);
+                if (!Number.isFinite(n)) return 120;
+                return Math.max(0, Math.min(720, Math.round(n)));
+            }
+        })(),
+        filmDemucsChunkMinutes: (() => {
+            try {
+                const { clampFilmDemucsChunkMinutes } = require('../src/js/settings-options-normalize-core');
+                return clampFilmDemucsChunkMinutes(merged.filmDemucsChunkMinutes);
+            } catch {
+                const n = Number(merged.filmDemucsChunkMinutes);
+                if (!Number.isFinite(n)) return 60;
+                return Math.max(10, Math.min(240, Math.round(n)));
+            }
+        })(),
         neuralDiarize: !!merged.neuralDiarize,
         vadEnabled: merged.vadEnabled !== false,
         vadSensitive: !!merged.vadSensitive,
@@ -397,9 +535,9 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
                 const { normalizeQwenAsrBatchMode } = require('../src/js/qwen-asr-batch-core');
                 return normalizeQwenAsrBatchMode(merged.qwenAsrBatchMode);
             } catch {
-                const v = String(merged.qwenAsrBatchMode || 'auto').trim().toLowerCase();
-                if (v === 'conservative' || v === 'aggressive') return v;
-                return 'auto';
+                const v = String(merged.qwenAsrBatchMode || 'aggressive').trim().toLowerCase();
+                if (v === 'conservative' || v === 'auto') return v;
+                return 'aggressive';
             }
         })(),
         vadMaxSingleSegmentMs: (() => {
@@ -482,10 +620,10 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             return (raw === 'editor' || raw === 'subtitle-editor') ? 'editor' : 'generator';
         })(),
         subtitleEditorBackend: (() => {
-            const raw = String(merged.subtitleEditorBackend ?? 'auto').trim().toLowerCase();
+            const raw = String(merged.subtitleEditorBackend ?? 'electron').trim().toLowerCase();
             if (raw === 'external' || raw === 'native' || raw === 'csharp') return 'external';
-            if (raw === 'electron' || raw === 'builtin' || raw === 'internal') return 'electron';
-            return 'auto';
+            if (raw === 'auto') return 'auto';
+            return 'electron';
         })(),
         subtitleEditorPath: String(merged.subtitleEditorPath || '').trim(),
         uiLocale: (() => {
@@ -511,6 +649,7 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         postBatchQc: merged.postBatchQc !== false,
         postBatchQcFixMode: (() => {
             const raw = String(merged.postBatchQcFixMode || '').trim().toLowerCase();
+            if (!raw) return 'smart';
             return (raw === 'fix' || raw === 'smart') ? raw : 'none';
         })(),
         qcSilenceSplitChars: (() => {
@@ -528,7 +667,7 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         qcSmartSemanticReview: merged.qcSmartSemanticReview !== false,
         qcSmartIntensity: (() => {
             const v = String(merged.qcSmartIntensity || '').trim().toLowerCase();
-            return (v === 'medium' || v === 'strong') ? v : 'light';
+            return (v === 'light' || v === 'strong') ? v : 'medium';
         })(),
         qcSmartMaxRetranscribeRanges: (() => {
             const n = Number(merged.qcSmartMaxRetranscribeRanges);

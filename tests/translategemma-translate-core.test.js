@@ -11,8 +11,10 @@ describe('translategemma-translate-core', () => {
         assert.ok(tg.isTranslateGemmaModel('translategemma-4b'));
         assert.ok(tg.isTranslateGemmaModel('translategemma-12b'));
         assert.ok(tg.isTranslateGemmaModel('translategemma'));
+        assert.ok(tg.isTranslateGemmaSubModel('translategemma-4-sub-e2b'));
         assert.ok(tg.isTranslateGemmaSubModel('translategemma-4-sub-e4b'));
         assert.ok(tg.isTranslateGemmaModel('translategemma-4-sub-e4b'));
+        assert.strictEqual(tg.isTranslateGemmaOfficialModel('translategemma-4-sub-e2b'), false);
         assert.strictEqual(tg.isTranslateGemmaOfficialModel('translategemma-4-sub-e4b'), false);
         assert.ok(tg.isTranslateGemmaOfficialModel('translategemma-4b'));
         assert.strictEqual(tg.isTranslateGemmaModel('gemma3-4b'), false);
@@ -45,6 +47,22 @@ describe('translategemma-translate-core', () => {
             tg.resolveTranslateGemmaInferenceOptions({ modelId: 'translategemma-4-sub-e4b' }).preferSerialChunks,
             true,
         );
+    });
+
+    it('yue→zh uses Cantonese→Mandarin natural prompt', () => {
+        const msgs = tg.buildTranslateGemmaChatMessages(
+            [{ index: 0, text: '拥有呢个世界一切嘅' }],
+            {
+                modelId: 'translategemma-4b',
+                language: 'yue',
+                subtitleTargetLang: 'zh-Hans',
+            },
+        );
+        assert.strictEqual(msgs.length, 1);
+        assert.match(msgs[0].content, /Cantonese|Mandarin/i);
+        assert.ok(msgs[0].content.includes('拥有呢个世界一切嘅'));
+        assert.strictEqual(tg.normalizeTranslateGemmaLangCode('zh-yue', 'source'), 'yue');
+        assert.strictEqual(tg.languageDisplayName('yue'), 'Cantonese');
     });
 
     it('normalizes source/target language codes', () => {
@@ -232,6 +250,28 @@ describe('translategemma-translate-core', () => {
         // Real self-intro: keep clean 我是X / casual 哦 佑佳; reject 你-addressing / translator stubs
         assert.ok(tg.isJaSelfIntroSource('お、祐佳です'));
         assert.strictEqual(tg.isJaSelfIntroSource('感じでした'), false);
+        assert.strictEqual(tg.isJaSelfIntroSource('お姉ちゃんだよ…'), false);
+        assert.strictEqual(tg.isJaSelfIntroSource('美人だよ。'), false);
+        assert.strictEqual(tg.isJaSelfIntroSource('なに買ったんだよ。'), false);
+        assert.strictEqual(tg.isJaSelfIntroSource('どんな姉ちゃんでも好きだよ'), false);
+        assert.strictEqual(tg.isJaSelfIntroSource('舐めてみたいです…'), false);
+        assert.strictEqual(tg.isJaSelfIntroSource('おまえ、どんだけクズだよ。'), false);
+        assert.strictEqual(
+            tg.looksLikeTranslateGemmaIdentityEcho('お姉ちゃんだよ…', '언니야…'),
+            false,
+        );
+        assert.strictEqual(
+            tg.looksLikeTranslateGemmaIdentityEcho('どんな姉ちゃんでも好きだよ', '어떤 언니든 좋아해'),
+            false,
+        );
+        assert.strictEqual(
+            tg.finalizeTranslateGemmaCue('美人だよ。', '미인이야.'),
+            '미인이야.',
+        );
+        assert.strictEqual(
+            tg.finalizeTranslateGemmaCue('舐めてみたいです…', '핥아보고 싶어요…'),
+            '핥아보고 싶어요…',
+        );
         assert.strictEqual(
             tg.looksLikeTranslateGemmaIdentityEcho('お、祐佳です', '我是祐佳'),
             false,

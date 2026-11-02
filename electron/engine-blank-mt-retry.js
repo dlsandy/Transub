@@ -693,7 +693,7 @@ function blankRetryCollectOptions(options = {}) {
     };
 }
 
-function mergeRetranslatedCues(zhCues, translatedCues, sourcePairs, mtSanitize, options = {}) {
+async function mergeRetranslatedCues(zhCues, translatedCues, sourcePairs, mtSanitize, options = {}) {
     const map = new Map();
     (translatedCues || []).forEach((c) => {
         const text = String(c?.text ?? '');
@@ -733,6 +733,8 @@ function mergeRetranslatedCues(zhCues, translatedCues, sourcePairs, mtSanitize, 
         }
     } catch { /* optional */ }
     let changed = 0;
+    const pendingKeepSwap = [];
+    const mergeOpts = { ...options, _layaKeepSwapPending: pendingKeepSwap };
     const cues = (zhCues || []).map((c) => {
         const idx = Number(c.index);
         if (!Number.isInteger(idx) || !map.has(idx)) return c;
@@ -742,7 +744,7 @@ function mergeRetranslatedCues(zhCues, translatedCues, sourcePairs, mtSanitize, 
         const priorWasLiteralBlank = isLiteralBlank(prior);
         if (mtSanitize?.sanitizeMtCueText && src) {
             const cleaned = mtSanitize.sanitizeMtCueText(text, src, {
-                ...options,
+                ...mergeOpts,
                 subtitleTargetLang: targetFields.subtitleTargetLang,
                 targetLang: targetFields.targetLang,
                 targetLanguage: targetFields.targetLanguage,
@@ -825,19 +827,30 @@ function mergeRetranslatedCues(zhCues, translatedCues, sourcePairs, mtSanitize, 
             }
         }
         // Hy-MT quality re-MT: only keep if score improves (错翻→更好).
+        // Ambiguous both-bad → Laya keep_old / keep_new.
         if (mayZhFill && qualityGuard?.assessHyMtCueQuality
             && (qualityByIndex.has(idx) || options.includeHyMtQuality)) {
-            const before = qualityGuard.assessHyMtCueQuality(String(c.text ?? ''), src, options);
-            const after = qualityGuard.assessHyMtCueQuality(text, src, options);
-            if (!after.ok) {
-                if (before.ok) return c;
-                const improved = (after.reasons?.length || 99) < (before.reasons?.length || 0)
+            const beforeQ = qualityGuard.assessHyMtCueQuality(String(c.text ?? ''), src, options);
+            const afterQ = qualityGuard.assessHyMtCueQuality(text, src, options);
+            if (!afterQ.ok) {
+                if (beforeQ.ok) return c;
+                const improved = (afterQ.reasons?.length || 99) < (beforeQ.reasons?.length || 0)
                     || (
-                        /blank|blankish|under|under_long|echo/.test((before.reasons || []).join(','))
+                        /blank|blankish|under|under_long|echo/.test((beforeQ.reasons || []).join(','))
                         && !/^(?:\.\.\.|……|…)+$/.test(String(text || '').trim())
                         && !mtSanitize?.isBlankOrPunctTranslation?.(text, src, options)
                     );
-                if (!improved) return c;
+                if (!improved) {
+                    pendingKeepSwap.push({
+                        index: idx,
+                        oldText: String(c.text ?? ''),
+                        newText: String(text ?? ''),
+                        sourceText: src,
+                        id: `k${idx}`,
+                        candidateText: text,
+                    });
+                    return c;
+                }
             }
         }
         if (String(c.text ?? '') !== String(text ?? '')) {
@@ -846,6 +859,28 @@ function mergeRetranslatedCues(zhCues, translatedCues, sourcePairs, mtSanitize, 
         }
         return c;
     });
+
+    if (pendingKeepSwap.length) {
+        try {
+            const { runKeepSwapGate } = require('./jev-laya-pipelines');
+            const decided = await runKeepSwapGate(pendingKeepSwap, options, {
+                onLog: options.onLog,
+            });
+            const acceptIds = new Set((decided.accept || []).map((x) => String(x.id)));
+            if (acceptIds.size) {
+                const byIdx = new Map(cues.map((c, i) => [Number(c.index), i]));
+                for (const p of pendingKeepSwap) {
+                    if (!acceptIds.has(String(p.id))) continue;
+                    const i = byIdx.get(Number(p.index));
+                    if (i == null) continue;
+                    const next = String(p.candidateText ?? p.newText ?? '').trim();
+                    if (!next || cues[i].text === next) continue;
+                    cues[i] = { ...cues[i], text: next };
+                    changed += 1;
+                }
+            }
+        } catch { /* soft-fail keep old */ }
+    }
     return { cues, changed };
 }
 
@@ -1064,7 +1099,7 @@ async function runBlankMtRetryForSubtitlePair(ctx = {}) {
                     }
                 }
                 if (prefilled.length) {
-                    const prefMerged = mergeRetranslatedCues(
+                    const prefMerged = await mergeRetranslatedCues(
                         currentCues,
                         prefilled,
                         prefilled.map((u) => ({
@@ -1100,7 +1135,7 @@ async function runBlankMtRetryForSubtitlePair(ctx = {}) {
                             index: u.index,
                             sourceText: workPairs.find((p) => Number(p.index) === Number(u.index))?.sourceText || '',
                         }));
-                        const prefMerged = mergeRetranslatedCues(
+                        const prefMerged = await mergeRetranslatedCues(
                             currentCues,
                             part.prefilled,
                             prefPairs,
@@ -1162,7 +1197,47 @@ async function runBlankMtRetryForSubtitlePair(ctx = {}) {
             break;
         }
 
-        const batch = workPairs.slice(0, maxCuesPerRound);
+        // Laya Score: prioritize blank/underfill cues (always when ≥8, not only over cap).
+        let rankedPairs = workPairs;
+        if (workPairs.length >= 4) {
+            try {
+                const { runScoreRank, pipe } = require('./jev-laya-pipelines');
+                const scoreMap = await runScoreRank(
+                    workPairs.slice(0, 48).map((p) => ({
+                        index: p.index,
+                        text: String(p.zhCue?.text ?? p.text ?? ''),
+                        sourceText: p.sourceText,
+                        id: `s${p.index}`,
+                        reasons: 'blank_underfill',
+                    })),
+                    options,
+                    {
+                        task: 'blank_retry_rank',
+                        instructionsLead: [
+                            'Score how urgently this blank/under-translated cue needs another MT pass (skip→must).',
+                            'Prefer cues whose source is real dialogue words over moan/filler-only JA.',
+                        ].join(' '),
+                        signal: ctx.signal,
+                    },
+                );
+                if (scoreMap.size) {
+                    const heuristic = {};
+                    for (const p of workPairs) {
+                        heuristic[p.index] = String(p.sourceText || '').replace(/\s+/g, '').length;
+                    }
+                    const order = pipe.mergeScoreReorder(
+                        workPairs.map((p) => Number(p.index)),
+                        scoreMap,
+                        heuristic,
+                    );
+                    const byIdx = new Map(workPairs.map((p) => [Number(p.index), p]));
+                    rankedPairs = order.map((i) => byIdx.get(i)).filter(Boolean);
+                    onLog?.(`空白重译 · ${path.basename(zhPath)} · Laya Score 优先 ${Math.min(maxCuesPerRound, rankedPairs.length)}/${workPairs.length}`);
+                }
+            } catch { /* soft-fail keep length sort */ }
+        }
+
+        const batch = rankedPairs.slice(0, maxCuesPerRound);
         for (const p of batch) attemptedThisPass.add(Number(p.index));
         onLog?.(`空白重译 · ${path.basename(zhPath)} · 第 ${round + 1} 轮 ${batch.length} 条`);
 
@@ -1205,7 +1280,7 @@ async function runBlankMtRetryForSubtitlePair(ctx = {}) {
             const allow = new Set((win.pairs || []).map((p) => Number(p.index)));
             const translatedWin = (Array.isArray(oneMt.cues) ? oneMt.cues : [])
                 .filter((c) => allow.has(Number(c?.index)));
-            const winMerged = mergeRetranslatedCues(
+            const winMerged = await mergeRetranslatedCues(
                 currentCues,
                 translatedWin,
                 win.pairs,
@@ -1275,7 +1350,7 @@ async function runBlankMtRetryForSubtitlePair(ctx = {}) {
                 signal: ctx.signal,
             });
             if (singleWin?.ok) {
-                merged = mergeRetranslatedCues(
+                merged = await mergeRetranslatedCues(
                     currentCues,
                     Array.isArray(singleWin.cues) ? singleWin.cues : [],
                     batch,
@@ -1342,7 +1417,7 @@ async function runBlankMtRetryForSubtitlePair(ctx = {}) {
                         });
                     }
                     if (!oneRes?.ok) continue;
-                    const oneMerged = mergeRetranslatedCues(
+                    const oneMerged = await mergeRetranslatedCues(
                         currentCues,
                         (oneRes.cues || []).filter((c) => Number(c?.index) === Number(one.index)),
                         [one],
@@ -1412,7 +1487,7 @@ async function runBlankMtRetryForSubtitlePair(ctx = {}) {
                         });
                     }
                     if (!oneRes?.ok) continue;
-                    const oneMerged = mergeRetranslatedCues(
+                    const oneMerged = await mergeRetranslatedCues(
                         currentCues,
                         (oneRes.cues || []).filter((c) => Number(c?.index) === Number(one.index)),
                         [one],
