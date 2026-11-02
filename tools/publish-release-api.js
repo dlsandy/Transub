@@ -170,6 +170,14 @@ function shouldDropRemoteOnly(relPath) {
     if (p === 'AGENTS.md' || p === '.cursor' || p.startsWith('.cursor/')) return true;
     if (p === '_advanced' || p.startsWith('_advanced/')) return true;
     if (p === 'services' || p.startsWith('services/')) return true;
+    // Scratch / runtime stamps / misplaced root duplicates (must not linger on public remotes).
+    if (/^banas-data-.*\.json$/i.test(p)) return true;
+    if (/^i18n-phrase-.*-chunk.*\.json$/i.test(p)) return true;
+    if (p === 'engine-models-cache.json' || p === 'env-doctor-gate.json' || p === 'hf-endpoint-autopick.json') return true;
+    if (p === 'index.html' || p === 'subtitle-editor.html' || p === 'engine-blank-mt-retry.js') return true;
+    if (/^fix-amd-rocm-qwen-/i.test(p) || p.startsWith('tools/fix-amd-rocm-qwen-')) return true;
+    if (p.startsWith('tools/_probe-')) return true;
+    if (p.startsWith('tools/combo-plans-samples/') && /\.(zip|rar)$/i.test(p)) return true;
     return false;
 }
 
