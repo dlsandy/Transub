@@ -159,3 +159,22 @@ tools/_tmp-*
 *.bak-*
 tests/fixtures/mt-train-drafts/
 node_modules/.vite/
+
+# Runtime stamps / caches written beside the app (never source-control)
+engine-models-cache.json
+env-doctor-gate.json
+hf-endpoint-autopick.json
+
+# Local scratch dumps / probe / one-off hotfix kits at repo root
+banas-data-*.json
+i18n-phrase-*-chunk*.json
+/fix-amd-rocm-qwen-*
+/engine-blank-mt-retry.js
+/index.html
+/subtitle-editor.html
+tools/_probe-*.js
+tools/fix-amd-rocm-qwen-*
+
+# Combo-plan sample binaries (JSON plans + generate script may stay)
+tools/combo-plans-samples/*.zip
+tools/combo-plans-samples/*.rar
