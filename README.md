@@ -5,7 +5,7 @@
 **本地优先的 Windows 字幕工作台**  
 批量生成字幕 · 字幕多语翻译 · 精细编辑 · 字幕烧录 · 一键出片
 
-[![Release](https://img.shields.io/github/v/release/dlsandy/Transub?style=flat-square&color=0ea5e9)](https://github.com/dlsandy/Transub/releases) [![License](https://img.shields.io/badge/Core-MIT-22c55e?style=flat-square)](LICENSE) [![Downloads](https://img.shields.io/github/downloads/dlsandy/Transub/total?logo=github)](https://github.com/dlsandy/Transub/releases) [![Afdian](https://img.shields.io/badge/爱发电-支持本项目%20Pro-946ce6?style=flat-square)](https://afdian.com/a/transub)
+[![Release](https://img.shields.io/github/v/release/dlsandy/Transub?style=flat-square&color=0ea5e9)](https://github.com/dlsandy/Transub/releases) [![License](https://img.shields.io/badge/Core-MIT-22c55e?style=flat-square)](LICENSE) [![Downloads](https://img.shields.io/github/downloads/dlsandy/Transub/total?logo=github)](https://github.com/dlsandy/Transub/releases) [![Afdian](https://img.shields.io/badge/爱发电-支持本项目%20Pro-946ce6?style=flat-square)]([https://afdian.com/a/transub](https://afdian.com/item/41fef1a28bf211f189e252540025c377))
 
 [功能亮点](#功能亮点) · [普通版 / Pro](#普通版--pro-对比) · [快速开始](#快速开始) · [下载](#下载) · [许可](#许可)
 
